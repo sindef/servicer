@@ -15,19 +15,21 @@ import (
 const natsDriver = "servicer-nats"
 
 type natsParameters struct {
-	Replicas            *int32                  `json:"replicas,omitempty"`
-	JetStream           bool                    `json:"jetstream,omitempty"`
-	Streams             []natsStreamSpec        `json:"streams,omitempty"`
-	Consumers           []natsConsumerSpec      `json:"consumers,omitempty"`
-	AppCredentials      []natsAppCredentialSpec `json:"appCredentials,omitempty"`
-	StorageClass        string                  `json:"storageClass,omitempty"`
-	StorageSize         string                  `json:"storageSize,omitempty"`
-	MaxPayload          string                  `json:"maxPayload,omitempty"`
-	MemoryLimit         string                  `json:"memoryLimit,omitempty"`
-	PrimaryCluster      string                  `json:"primaryCluster,omitempty"`
-	StandbyClusters     []string                `json:"standbyClusters,omitempty"`
-	ServiceType         string                  `json:"serviceType,omitempty"`
-	ExternalDNSHostname string                  `json:"externalDnsHostname,omitempty"`
+	Replicas             *int32                  `json:"replicas,omitempty"`
+	JetStream            bool                    `json:"jetstream,omitempty"`
+	Streams              []natsStreamSpec        `json:"streams,omitempty"`
+	Consumers            []natsConsumerSpec      `json:"consumers,omitempty"`
+	AppCredentials       []natsAppCredentialSpec `json:"appCredentials,omitempty"`
+	StorageClass         string                  `json:"storageClass,omitempty"`
+	StorageSize          string                  `json:"storageSize,omitempty"`
+	MaxPayload           string                  `json:"maxPayload,omitempty"`
+	MemoryLimit          string                  `json:"memoryLimit,omitempty"`
+	PrimaryCluster       string                  `json:"primaryCluster,omitempty"`
+	StandbyClusters      []string                `json:"standbyClusters,omitempty"`
+	GatewayLagSeconds    map[string]int32        `json:"gatewayLagSeconds,omitempty"`
+	MaxGatewayLagSeconds *int32                  `json:"maxGatewayLagSeconds,omitempty"`
+	ServiceType          string                  `json:"serviceType,omitempty"`
+	ExternalDNSHostname  string                  `json:"externalDnsHostname,omitempty"`
 }
 
 // NATSContract describes the normalized platform contract for NATS-backed messaging services.
@@ -44,6 +46,7 @@ var NATSContract = ProductContract{
 	StatusSignals: []StatusSignalDescriptor{
 		{Key: "broker-readiness", DisplayName: "Broker Readiness", Description: "Whether all NATS broker members are ready.", Severity: HealthSeverityCritical},
 		{Key: "jetstream-health", DisplayName: "JetStream Health", Description: "Whether stream persistence and quorum are healthy when JetStream is enabled.", Severity: HealthSeverityWarning},
+		{Key: "gateway-health", DisplayName: "Gateway Health", Description: "Whether geo gateways are linked and replication lag is within threshold.", Severity: HealthSeverityWarning},
 		{Key: "credential-health", DisplayName: "Credential Health", Description: "Whether NATS credentials are projected and rotation-ready.", Severity: HealthSeverityWarning},
 	},
 	Actions: []ActionCapability{
@@ -387,6 +390,7 @@ func (a *NATSAdapter) Observe(_ context.Context, request ObserveRequest) (Normal
 	healthSignals := []HealthSignal{
 		{Key: "broker-readiness", Status: "Unknown", Severity: HealthSeverityCritical, Message: "NATS broker readiness has not been observed yet."},
 		{Key: "jetstream-health", Status: "Unknown", Severity: HealthSeverityWarning, Message: "JetStream health has not been observed yet."},
+		{Key: "gateway-health", Status: "N/A", Severity: HealthSeverityInfo, Message: "Single-cluster topology — NATS gateways are not applicable."},
 		{Key: "credential-health", Status: "Unknown", Severity: HealthSeverityWarning, Message: "NATS credentials have not been observed yet."},
 	}
 	if request.Runtime.Workload != nil && request.Runtime.Workload.Observed {
@@ -395,11 +399,11 @@ func (a *NATSAdapter) Observe(_ context.Context, request ObserveRequest) (Normal
 			phase = "Ready"
 			summary = fmt.Sprintf("NATS cluster is ready with %d/%d broker(s).", workload.ReadyReplicas, workload.DesiredReplicas)
 			healthSignals[0] = HealthSignal{Key: "broker-readiness", Status: "Ready", Severity: HealthSeverityInfo, Message: "All NATS brokers are ready."}
-			healthSignals[2] = HealthSignal{Key: "credential-health", Status: "Ready", Severity: HealthSeverityInfo, Message: "NATS credential Secret is present."}
+			healthSignals[3] = HealthSignal{Key: "credential-health", Status: "Ready", Severity: HealthSeverityInfo, Message: "NATS credential Secret is present."}
 		} else {
 			summary = fmt.Sprintf("Waiting for NATS readiness: %d/%d broker(s) ready.", workload.ReadyReplicas, workload.DesiredReplicas)
 			if request.Runtime.CredentialSecretPresent {
-				healthSignals[2] = HealthSignal{Key: "credential-health", Status: "Ready", Severity: HealthSeverityInfo, Message: "NATS credential Secret is present."}
+				healthSignals[3] = HealthSignal{Key: "credential-health", Status: "Ready", Severity: HealthSeverityInfo, Message: "NATS credential Secret is present."}
 			}
 		}
 	}
@@ -412,6 +416,9 @@ func (a *NATSAdapter) Observe(_ context.Context, request ObserveRequest) (Normal
 		healthSignals[1] = HealthSignal{Key: "jetstream-health", Status: "Configured", Severity: HealthSeverityInfo, Message: message}
 	} else {
 		healthSignals[1] = HealthSignal{Key: "jetstream-health", Status: "Disabled", Severity: HealthSeverityInfo, Message: "JetStream is not enabled for this plan."}
+	}
+	if planTopology(ctx) == "multi-region" {
+		healthSignals[2] = natsGatewayHealthSignal(params)
 	}
 
 	return NormalizedStatus{
@@ -606,6 +613,35 @@ func (a *NATSAdapter) primaryCluster(ctx ServiceContext, parameters natsParamete
 
 func natsGatewayAddress(ctx ServiceContext, clusterName string) string {
 	return fmt.Sprintf("%s-gateway.%s.%s.nats.servicer.local:7222", ctx.Instance.Name, ctx.Project.Name, clusterName)
+}
+
+func natsGatewayHealthSignal(parameters natsParameters) HealthSignal {
+	if len(parameters.StandbyClusters) == 0 {
+		return HealthSignal{Key: "gateway-health", Status: "Pending", Severity: HealthSeverityWarning, Message: "Geo topology requires at least one standby gateway peer."}
+	}
+	if len(parameters.GatewayLagSeconds) == 0 {
+		return HealthSignal{Key: "gateway-health", Status: "Configured", Severity: HealthSeverityInfo, Message: "NATS gateways are configured; replication lag has not been reported yet."}
+	}
+	maxAllowed := int32(30)
+	if parameters.MaxGatewayLagSeconds != nil && *parameters.MaxGatewayLagSeconds >= 0 {
+		maxAllowed = *parameters.MaxGatewayLagSeconds
+	}
+	worstCluster := ""
+	var worstLag int32
+	for _, standby := range parameters.StandbyClusters {
+		lag, ok := parameters.GatewayLagSeconds[standby]
+		if !ok {
+			return HealthSignal{Key: "gateway-health", Status: "Unknown", Severity: HealthSeverityWarning, Message: fmt.Sprintf("Gateway replication lag has not been reported for standby cluster %q.", standby)}
+		}
+		if lag >= worstLag {
+			worstCluster = standby
+			worstLag = lag
+		}
+	}
+	if worstLag > maxAllowed {
+		return HealthSignal{Key: "gateway-health", Status: "Degraded", Severity: HealthSeverityWarning, Message: fmt.Sprintf("Gateway replication lag on standby cluster %q is %ds, above %ds threshold.", worstCluster, worstLag, maxAllowed)}
+	}
+	return HealthSignal{Key: "gateway-health", Status: "Ready", Severity: HealthSeverityInfo, Message: fmt.Sprintf("NATS gateway replication lag is within threshold; worst standby %q is %ds.", worstCluster, worstLag)}
 }
 
 func (a *NATSAdapter) validateManagedResources(parameters natsParameters) []ValidationIssue {

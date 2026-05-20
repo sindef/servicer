@@ -113,6 +113,30 @@ func TestNATSAdapterRenderProducesGeoGatewayArtifacts(t *testing.T) {
 	}
 }
 
+func TestNATSAdapterObserveReportsGeoGatewayLag(t *testing.T) {
+	adapter := NewNATSAdapter()
+	ctx := sampleNATSContext(t)
+	ctx.Plan.Spec.Topology = "multi-region"
+	ctx.Plan.Spec.DefaultParameters = rawJSON(t, map[string]any{
+		"jetstream":            true,
+		"standbyClusters":      []string{"west-2"},
+		"gatewayLagSeconds":    map[string]int32{"west-2": 45},
+		"maxGatewayLagSeconds": 30,
+	})
+
+	status, err := adapter.Observe(context.Background(), ObserveRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Observe returned error: %v", err)
+	}
+	signal := natsHealthSignal(status.HealthSignals, "gateway-health")
+	if signal.Status != "Degraded" {
+		t.Fatalf("expected degraded gateway health, got %#v", signal)
+	}
+	if !strings.Contains(signal.Message, "45s") {
+		t.Fatalf("expected lag seconds in gateway message, got %q", signal.Message)
+	}
+}
+
 func sampleNATSContext(t *testing.T) ServiceContext {
 	t.Helper()
 	return ServiceContext{
@@ -172,4 +196,13 @@ func sampleNATSContext(t *testing.T) ServiceContext {
 			},
 		},
 	}
+}
+
+func natsHealthSignal(signals []HealthSignal, key string) HealthSignal {
+	for _, signal := range signals {
+		if signal.Key == key {
+			return signal
+		}
+	}
+	return HealthSignal{}
 }
