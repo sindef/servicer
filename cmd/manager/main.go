@@ -29,11 +29,21 @@ func main() {
 	var probeAddr string
 	var enableLeaderElection bool
 	var deliveryRoot string
+	var deliveryRepoURL string
+	var deliveryRepoRef string
+	var deliveryRepoPath string
+	var argoCDNamespace string
+	var argoCDProject string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
 	flag.StringVar(&deliveryRoot, "delivery-root", materializer.DefaultRoot, "Path where controller-owned generated delivery artifacts are written.")
+	flag.StringVar(&deliveryRepoURL, "delivery-repo-url", "", "Git repository URL that Argo CD should use for generated delivery content.")
+	flag.StringVar(&deliveryRepoRef, "delivery-repo-ref", "HEAD", "Git revision Argo CD should track for generated delivery content.")
+	flag.StringVar(&deliveryRepoPath, "delivery-repo-path", materializer.DefaultRoot, "Repository-relative root path for generated delivery content.")
+	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd", "Namespace where Argo CD Application resources are created.")
+	flag.StringVar(&argoCDProject, "argocd-project", "default", "Argo CD project used for Servicer-managed Applications.")
 
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
@@ -88,7 +98,7 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "unable to create project controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ServiceInstanceReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry, Materializer: materializer.New(deliveryRoot), Recorder: mgr.GetEventRecorderFor("servicer")}).SetupWithManager(mgr); err != nil {
+	if err := (&controllers.ServiceInstanceReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry, Materializer: materializer.New(deliveryRoot), Recorder: mgr.GetEventRecorderFor("servicer"), ArgoCDNamespace: argoCDNamespace, ArgoCDProject: argoCDProject, DeliveryRepoURL: deliveryRepoURL, DeliveryRepoRef: deliveryRepoRef, DeliveryRepoPath: deliveryRepoPath}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to create service instance controller")
 		os.Exit(1)
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,10 +30,15 @@ import (
 // ServiceInstanceReconciler reconciles ServiceInstance resources.
 type ServiceInstanceReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	Adapters     *adapters.Registry
-	Materializer *materializer.Materializer
-	Recorder     record.EventRecorder
+	Scheme           *runtime.Scheme
+	Adapters         *adapters.Registry
+	Materializer     *materializer.Materializer
+	Recorder         record.EventRecorder
+	ArgoCDNamespace  string
+	ArgoCDProject    string
+	DeliveryRepoURL  string
+	DeliveryRepoRef  string
+	DeliveryRepoPath string
 }
 
 const instanceFinalizer = "servicer.io/instance-cleanup"
@@ -245,6 +251,18 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "AwaitingRuntime", "Service instance runtime health has not yet been observed.")
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "ReconciliationProgressing", "Service instance has materialized successfully.")
 
+	if err := r.ensureArgoApplication(ctx, &project, &instance, materializeResult.Path); err != nil {
+		instance.Status.Phase = "Failed"
+		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationFailed", err.Error())
+		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ArgoApplicationFailed", "Argo CD application could not be reconciled.")
+		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
+				return ctrl.Result{}, updateErr
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult); err != nil {
 		if apierrors.IsNotFound(err) {
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionPending", "Credential projection is waiting for the delivered runtime namespace.")
@@ -282,6 +300,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	applyObservedStatus(&instance, normalized)
+	r.applyArgoObservedStatus(ctx, &instance)
 
 	if r.Recorder != nil && originalStatus.Phase != instance.Status.Phase {
 		eventType := corev1.EventTypeNormal
@@ -778,6 +797,124 @@ func applyObservedStatus(instance *platformv1alpha1.ServiceInstance, status adap
 	}
 }
 
+func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, project *platformv1alpha1.Project, instance *platformv1alpha1.ServiceInstance, packagePath string) error {
+	if instance == nil || project == nil {
+		return nil
+	}
+	if strings.TrimSpace(r.DeliveryRepoURL) == "" {
+		instance.Status.Sync.Message = "Delivery artifacts are materialized, but Argo CD application creation is disabled until delivery repo settings are configured."
+		return nil
+	}
+
+	var crd unstructured.Unstructured
+	crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+	if err := r.Get(ctx, types.NamespacedName{Name: "applications.argoproj.io"}, &crd); err != nil {
+		if apierrors.IsNotFound(err) {
+			instance.Status.Sync.Message = "Delivery artifacts are materialized, but Argo CD is not installed in the management cluster."
+			return nil
+		}
+		return err
+	}
+
+	namespace := firstNonEmptyTrimmed(r.ArgoCDNamespace, "argocd")
+	appName := argoApplicationName(project, instance)
+	sourcePath := strings.TrimPrefix(filepath.ToSlash(filepath.Join(firstNonEmptyTrimmed(r.DeliveryRepoPath, materializer.DefaultRoot), packagePath)), "/")
+
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
+	desired.SetName(appName)
+	desired.SetNamespace(namespace)
+	desired.SetLabels(map[string]string{
+		"servicer.io/managed-by":       "servicer",
+		"servicer.io/service-instance": instance.Name,
+		"servicer.io/project":          project.Name,
+	})
+	desired.Object["spec"] = map[string]any{
+		"project": firstNonEmptyTrimmed(r.ArgoCDProject, "default"),
+		"source": map[string]any{
+			"repoURL":        r.DeliveryRepoURL,
+			"targetRevision": firstNonEmptyTrimmed(r.DeliveryRepoRef, "HEAD"),
+			"path":           sourcePath,
+			"directory": map[string]any{
+				"recurse": true,
+			},
+		},
+		"destination": map[string]any{
+			"name":      instance.Status.Placement.ClusterName,
+			"namespace": instance.Status.Placement.Namespace,
+		},
+		"syncPolicy": map[string]any{
+			"automated": map[string]any{
+				"prune":    true,
+				"selfHeal": true,
+			},
+			"syncOptions": []string{
+				"CreateNamespace=true",
+			},
+		},
+	}
+
+	var existing unstructured.Unstructured
+	existing.SetGroupVersionKind(desired.GroupVersionKind())
+	err := r.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, &existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+
+	existing.Object["spec"] = desired.Object["spec"]
+	existing.SetLabels(mergeStringMaps(existing.GetLabels(), desired.GetLabels()))
+	return r.Update(ctx, &existing)
+}
+
+func (r *ServiceInstanceReconciler) applyArgoObservedStatus(ctx context.Context, instance *platformv1alpha1.ServiceInstance) {
+	if instance == nil || strings.TrimSpace(instance.Status.Sync.ApplicationName) == "" {
+		return
+	}
+	namespace := firstNonEmptyTrimmed(r.ArgoCDNamespace, "argocd")
+	app := &unstructured.Unstructured{}
+	app.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
+	if err := r.Get(ctx, types.NamespacedName{Name: instance.Status.Sync.ApplicationName, Namespace: namespace}, app); err != nil {
+		return
+	}
+
+	syncStatus, _, _ := unstructured.NestedString(app.Object, "status", "sync", "status")
+	healthStatus, _, _ := unstructured.NestedString(app.Object, "status", "health", "status")
+	healthMessage, _, _ := unstructured.NestedString(app.Object, "status", "health", "message")
+
+	switch strings.ToLower(syncStatus) {
+	case "synced":
+		instance.Status.Sync.Phase = string(adapters.SyncPhaseSynced)
+		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionTrue, "ArgoApplicationSynced", "Argo CD application reports synced status.")
+	case "outofsync":
+		instance.Status.Sync.Phase = string(adapters.SyncPhaseOutOfSync)
+		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationOutOfSync", "Argo CD application reports out-of-sync status.")
+	case "unknown":
+		instance.Status.Sync.Phase = string(adapters.SyncPhaseUnknown)
+	default:
+		if syncStatus != "" {
+			instance.Status.Sync.Phase = string(adapters.SyncPhasePending)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationProgressing", fmt.Sprintf("Argo CD application reports %q sync status.", syncStatus))
+		}
+	}
+
+	messageParts := make([]string, 0, 2)
+	if syncStatus != "" {
+		messageParts = append(messageParts, fmt.Sprintf("sync=%s", syncStatus))
+	}
+	if healthStatus != "" {
+		messageParts = append(messageParts, fmt.Sprintf("health=%s", healthStatus))
+	}
+	if len(messageParts) > 0 {
+		instance.Status.Sync.Message = strings.Join(messageParts, ", ")
+	}
+	if healthMessage != "" && instance.Status.Phase != "Ready" {
+		instance.Status.Health.Summary = healthMessage
+	}
+}
+
 func isPodReady(pod *corev1.Pod) bool {
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
@@ -797,6 +934,29 @@ func randomPassword() (string, error) {
 
 func argoApplicationName(project *platformv1alpha1.Project, instance *platformv1alpha1.ServiceInstance) string {
 	return fmt.Sprintf("%s-%s", project.Name, instance.Name)
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func mergeStringMaps(base, overlay map[string]string) map[string]string {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	merged := map[string]string{}
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range overlay {
+		merged[key] = value
+	}
+	return merged
 }
 
 func serviceInstanceContains(items []string, target string) bool {

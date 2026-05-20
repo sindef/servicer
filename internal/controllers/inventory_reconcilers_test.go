@@ -15,7 +15,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -455,8 +457,10 @@ func TestServiceInstanceReconcilerMaterializesCNPGArtifacts(t *testing.T) {
 		Materializer: materializer.New(deliveryRoot),
 	}
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db"}}); err != nil {
-		t.Fatalf("Reconcile returned error: %v", err)
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
 	}
 
 	var updated platformv1alpha1.ServiceInstance
@@ -490,6 +494,184 @@ func TestServiceInstanceReconcilerMaterializesCNPGArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "kind: Cluster") || !strings.Contains(string(content), "postgresql.cnpg.io/v1") {
 		t.Fatalf("expected CNPG cluster manifest, got:\n%s", string(content))
+	}
+}
+
+func TestServiceInstanceReconcilerEnsureArgoApplicationWhenConfigured(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	tenant := &platformv1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: platformv1alpha1.TenantSpec{
+			DisplayName:           "Acme Corp",
+			Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
+			QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "standard-tenant"},
+			AllowedServiceClasses: []string{"postgresql"},
+			Lifecycle:             platformv1alpha1.TenantLifecycleSpec{Phase: platformv1alpha1.TenantLifecyclePhaseActive},
+		},
+	}
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod", Generation: 1},
+		Spec: platformv1alpha1.ProjectSpec{
+			TenantRef:         platformv1alpha1.LocalObjectReference{Name: "acme"},
+			DisplayName:       "Acme Production",
+			Environment:       platformv1alpha1.EnvironmentProduction,
+			TargetSelector:    platformv1alpha1.TargetSelectorSpec{ClusterRef: &platformv1alpha1.LocalObjectReference{Name: "local-dev"}},
+			NamespaceStrategy: platformv1alpha1.NamespaceStrategySpec{Mode: platformv1alpha1.NamespaceStrategyDedicated, Prefix: "acme-prod"},
+		},
+		Status: platformv1alpha1.ProjectStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Placement:          platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ProjectReady", Message: "ready"},
+			},
+		},
+	}
+	serviceClass := &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Generation: 1},
+		Spec: platformv1alpha1.ServiceClassSpec{
+			DisplayName:       "PostgreSQL",
+			Driver:            "cnpg",
+			SupportedVersions: []string{"16"},
+			Published:         true,
+		},
+		Status: platformv1alpha1.ServiceClassStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	servicePlan := &platformv1alpha1.ServicePlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "postgresql-ha", Generation: 1},
+		Spec: platformv1alpha1.ServicePlanSpec{
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "postgresql"},
+			DisplayName:     "Standard HA",
+			Topology:        "high-availability",
+			DefaultVersion:  "16",
+		},
+		Status: platformv1alpha1.ServicePlanStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Status: platformv1alpha1.ClusterTargetStatus{
+			Reachable: true,
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+		},
+	}
+	appCRD := &unstructured.Unstructured{}
+	appCRD.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+	appCRD.SetName("applications.argoproj.io")
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef:      platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "postgresql"},
+			ServicePlanRef:  platformv1alpha1.LocalObjectReference{Name: "postgresql-ha"},
+			Version:         "16",
+			Exposure:        platformv1alpha1.ExposureSpec{Mode: platformv1alpha1.ExposureModeClusterInternal},
+			SecretPolicy:    platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeExternalSecret},
+		},
+	}
+
+	deliveryRoot := t.TempDir()
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(tenant, project, serviceClass, servicePlan, clusterTarget, appCRD, instance).
+			Build(),
+		Scheme:           scheme,
+		Materializer:     materializer.New(deliveryRoot),
+		ArgoCDNamespace:  "argocd",
+		ArgoCDProject:    "default",
+		DeliveryRepoURL:  "https://github.com/example/servicer-config.git",
+		DeliveryRepoRef:  "main",
+		DeliveryRepoPath: materializer.DefaultRoot,
+	}
+
+	instance.Status.Placement.ClusterName = "local-dev"
+	instance.Status.Placement.Namespace = "acme-prod-orders-db"
+	instance.Status.Sync.ApplicationName = "acme-prod-orders-db"
+	if err := reconciler.ensureArgoApplication(context.Background(), project, instance, "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db"); err != nil {
+		t.Fatalf("ensureArgoApplication returned error: %v", err)
+	}
+
+	app := &unstructured.Unstructured{}
+	app.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "acme-prod-orders-db", Namespace: "argocd"}, app); err != nil {
+		t.Fatalf("expected Argo application to be created: %v", err)
+	}
+	path, _, _ := unstructured.NestedString(app.Object, "spec", "source", "path")
+	repoURL, _, _ := unstructured.NestedString(app.Object, "spec", "source", "repoURL")
+	destName, _, _ := unstructured.NestedString(app.Object, "spec", "destination", "name")
+	if repoURL != "https://github.com/example/servicer-config.git" {
+		t.Fatalf("unexpected repoURL %q", repoURL)
+	}
+	if path != "generated/delivery/clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db" {
+		t.Fatalf("unexpected app source path %q", path)
+	}
+	if destName != "local-dev" {
+		t.Fatalf("unexpected destination name %q", destName)
+	}
+}
+
+func TestServiceInstanceReconcilerApplyArgoObservedStatus(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	app := &unstructured.Unstructured{}
+	app.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
+	app.SetName("acme-prod-orders-db")
+	app.SetNamespace("argocd")
+	app.Object["status"] = map[string]any{
+		"sync": map[string]any{
+			"status": "Synced",
+		},
+		"health": map[string]any{
+			"status":  "Healthy",
+			"message": "Application is healthy.",
+		},
+	}
+
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(app).
+			Build(),
+		Scheme:          scheme,
+		ArgoCDNamespace: "argocd",
+	}
+
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db", Generation: 2},
+		Status: platformv1alpha1.ServiceInstanceStatus{
+			Sync: platformv1alpha1.DeliverySyncStatus{
+				ApplicationName: "acme-prod-orders-db",
+				Phase:           string(adapters.SyncPhasePending),
+			},
+			Health: platformv1alpha1.HealthStatus{Summary: "Awaiting Argo"},
+		},
+	}
+
+	reconciler.applyArgoObservedStatus(context.Background(), instance)
+
+	if instance.Status.Sync.Phase != string(adapters.SyncPhaseSynced) {
+		t.Fatalf("expected synced phase, got %q", instance.Status.Sync.Phase)
+	}
+	if instance.Status.Sync.Message != "sync=Synced, health=Healthy" {
+		t.Fatalf("unexpected sync message %q", instance.Status.Sync.Message)
+	}
+	if !isStatusConditionTrue(instance.Status.Conditions, "Synced") {
+		t.Fatalf("expected Synced condition to be true")
 	}
 }
 
@@ -881,6 +1063,8 @@ func inventoryTestScheme(t *testing.T) *runtime.Scheme {
 	if err := platformv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme returned error: %v", err)
 	}
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "ApplicationList"}, &unstructured.UnstructuredList{})
 	return scheme
 }
 
