@@ -42,6 +42,7 @@ var ValkeyContract = ProductContract{
 	SupportsMultiCluster:    true,
 	TopologyModes: []string{
 		"single-cluster",
+		"multi-cluster-failover",
 		"multi-region",
 	},
 	StatusSignals: []StatusSignalDescriptor{
@@ -156,7 +157,7 @@ func (a *ValkeyAdapter) Render(_ context.Context, request RenderRequest) (Render
 	endpoints := []Endpoint{
 		{Name: "primary", Address: fmt.Sprintf("%s.%s.svc.cluster.local:6379", ctx.Instance.Name, namespace), Port: 6379, Protocol: "tcp", Visibility: EndpointVisibilityClusterInternal},
 	}
-	if ctx.Plan != nil && ctx.Plan.Spec.Topology == "multi-region" {
+	if isValkeyFailoverTopology(planTopology(ctx)) {
 		endpoints = append(endpoints, Endpoint{Name: "traffic", Address: fmt.Sprintf("%s.%s.cache.servicer.local:6379", ctx.Instance.Name, ctx.Project.Name), Port: 6379, Protocol: "tcp", Visibility: EndpointVisibilityPrivate})
 	}
 
@@ -186,7 +187,7 @@ type valkeyRenderClusterRole struct {
 func (a *ValkeyAdapter) renderClusterRoles(ctx ServiceContext, parameters valkeyParameters) []valkeyRenderClusterRole {
 	primaryCluster := a.primaryCluster(ctx, parameters)
 	roles := []valkeyRenderClusterRole{{cluster: primaryCluster, role: "primary"}}
-	if ctx.Plan == nil || ctx.Plan.Spec.Topology != "multi-region" {
+	if !isValkeyFailoverTopology(planTopology(ctx)) {
 		return roles
 	}
 	for _, standbyCluster := range a.standbyClusters(ctx, parameters) {
@@ -338,7 +339,7 @@ func (a *ValkeyAdapter) renderClusterArtifacts(ctx ServiceContext, parameters va
 		{name: "headless-service.yaml", body: headlessServiceManifest},
 		{name: "statefulset.yaml", body: statefulSetManifest},
 	}
-	if planTopology(ctx) == "multi-region" {
+	if isValkeyFailoverTopology(planTopology(ctx)) {
 		manifests = append(manifests, struct {
 			name string
 			body map[string]any
@@ -413,7 +414,7 @@ func (a *ValkeyAdapter) Observe(_ context.Context, request ObserveRequest) (Norm
 	endpoints := []Endpoint{
 		{Name: "primary", Address: fmt.Sprintf("%s.%s.svc.cluster.local:6379", ctx.Instance.Name, namespace), Port: 6379, Protocol: "tcp", Visibility: EndpointVisibilityClusterInternal},
 	}
-	if ctx.Plan != nil && ctx.Plan.Spec.Topology == "multi-region" {
+	if isValkeyFailoverTopology(planTopology(ctx)) {
 		endpoints = append(endpoints, Endpoint{Name: "traffic", Address: fmt.Sprintf("%s.%s.cache.servicer.local:6379", ctx.Instance.Name, ctx.Project.Name), Port: 6379, Protocol: "tcp", Visibility: EndpointVisibilityPrivate})
 	}
 
@@ -447,7 +448,7 @@ func (a *ValkeyAdapter) cacheTopologyStatus(ctx ServiceContext, parameters valke
 	status := &platformv1alpha1.CacheTopologyStatus{
 		Mode: planTopology(ctx),
 	}
-	if ctx.Plan.Spec.Topology != "multi-region" {
+	if !isValkeyFailoverTopology(planTopology(ctx)) {
 		status.PrimaryCluster = instanceCluster(ctx)
 		status.FailoverReadiness = "Unavailable"
 		status.Message = "Failover is unavailable for single-cluster Valkey plans."
@@ -524,7 +525,7 @@ func (a *ValkeyAdapter) Delete(_ context.Context, request DeleteRequest) (Delete
 
 func (a *ValkeyAdapter) SupportedActions(_ context.Context, ctx ServiceContext) []ActionCapability {
 	actions := append([]ActionCapability(nil), a.Contract().Actions...)
-	if ctx.Plan != nil && ctx.Plan.Spec.Topology == "multi-region" {
+	if isValkeyFailoverTopology(planTopology(ctx)) {
 		return actions
 	}
 	filtered := actions[:0]
@@ -611,13 +612,13 @@ func (a *ValkeyAdapter) validateParameters(ctx ServiceContext, parameters valkey
 	if parameters.Persistence == "persistent" && parameters.StorageSize == "" {
 		issues = append(issues, ValidationIssue{Path: "parameters.storageSize", Message: "storageSize is required when persistence is persistent", Severity: HealthSeverityCritical})
 	}
-	if ctx.Plan != nil && ctx.Plan.Spec.Topology == "multi-region" {
+	if isValkeyFailoverTopology(planTopology(ctx)) {
 		primaryCluster := a.primaryCluster(ctx, parameters)
 		if primaryCluster == "" {
-			issues = append(issues, ValidationIssue{Path: "parameters.primaryCluster", Message: "primaryCluster is required for multi-region Valkey plans when project placement is unresolved", Severity: HealthSeverityCritical})
+			issues = append(issues, ValidationIssue{Path: "parameters.primaryCluster", Message: "primaryCluster is required for failover Valkey plans when project placement is unresolved", Severity: HealthSeverityCritical})
 		}
 		if len(parameters.StandbyClusters) == 0 {
-			issues = append(issues, ValidationIssue{Path: "parameters.standbyClusters", Message: "standbyClusters must include at least one standby for multi-region Valkey plans", Severity: HealthSeverityCritical})
+			issues = append(issues, ValidationIssue{Path: "parameters.standbyClusters", Message: "standbyClusters must include at least one standby for failover Valkey plans", Severity: HealthSeverityCritical})
 		}
 		// Sentinel gossips on pod IPs across clusters; a cross-cluster network fabric is required.
 		issues = append(issues, requiresPodMesh(ctx)...)
@@ -692,6 +693,10 @@ func planTopology(ctx ServiceContext) string {
 		return ""
 	}
 	return ctx.Plan.Spec.Topology
+}
+
+func isValkeyFailoverTopology(topology string) bool {
+	return topology == "multi-cluster-failover" || topology == "multi-region"
 }
 
 func (a *ValkeyAdapter) valkeyConfig(parameters valkeyParameters, role, primaryEndpoint string) string {
