@@ -29,9 +29,9 @@ Commit: `7ee64be`
 
 ## Domain API
 
-### [~] NamespaceClaim CRD
-**Plan 002** — `NamespaceClaim` now has an API type, generated CRD, controller, and BFF list endpoint. It currently reconciles through a backing namespace `ServiceInstance`, which gives it real delivery behavior without a bespoke runtime path yet. A dedicated request/detail UX and richer product-specific API are still open.  
-Commit: `73cdb41`
+### [x] NamespaceClaim CRD
+**Plan 002** — `NamespaceClaim` now has an API type, generated CRD, controller, dedicated BFF list/detail/write endpoints, and first-class web UX for requesting, inspecting, editing, and deleting namespace claims. It still reconciles through a backing namespace `ServiceInstance`, but the product-specific API and request/detail experience are now in place.  
+Commit: `260deb3`
 
 ### [x] VirtualMachineClaim CRD
 **Plan 002** — `VirtualMachineClaim` now has an API type, generated CRD, webhook coverage, BFF list endpoint, and controller path that creates a backing `virtual-machine` `ServiceInstance`, maps image and power-state intent into KubeVirt parameters, and mirrors runtime/artifact/sync/health status back to the claim.
