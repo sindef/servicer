@@ -14,8 +14,8 @@ Implementation notes in this review are current as of 2026-05-20.
 ## Critical gaps
 
 ### [~] Argo CD Application creation
-**Plan 003** — The controller can now auto-create and update Argo CD `Application` resources for a `ServiceInstance` when delivery repo settings are configured on the manager, and it reads Argo sync/health back into instance status. This is still partial: it depends on configured repo metadata, does not yet create `ApplicationSet` resources, and does not solve multi-cluster fan-out or repo publication by itself.  
-Commit: `597a51c`
+**Plan 003** — The controller can now auto-create and update Argo CD `Application` resources for a `ServiceInstance`, publish generated artifacts into a configured Git worktree path, and read Argo sync/health back into instance status. This is still partial: Git push/publication beyond the local worktree is not yet automated, and `ApplicationSet`-driven multi-cluster fan-out is still open.  
+Commit: `e8c9ed4`
 
 ### [~] OIDC / real authentication
 **Plans 005, 006** — Backend auth is no longer header-only: the BFF now supports OIDC JWT validation with issuer/client-id configuration, roles/groups claim extraction, and an explicit opt-in demo-header fallback for local/dev use. Frontend login still falls back to demo mode and there is not yet a browser redirect/session flow.  
@@ -60,8 +60,8 @@ Commit: `7ee64be`
 **Plan 003** — `ServiceInstance.Spec.SecretPolicy.DeliveryMode` has an `external-secret` enum value but no handler. All credentials are written as plain Kubernetes Secrets. No Vault client, no External Secrets Operator integration.
 
 ### [~] Sync and health status from Argo CD
-**Plan 003** — Runtime observation is part of the main reconcile path, and Argo CD `Application` sync/health is now ingested into `ServiceInstance.Status.Sync` when a managed `Application` exists. This remains partial because `ApplicationSet`/multi-cluster fan-out and durable delivery-repo publication are still open.  
-Commit: `597a51c`
+**Plan 003** — Runtime observation is part of the main reconcile path, and Argo CD `Application` sync/health is ingested into `ServiceInstance.Status.Sync` when a managed `Application` exists. This remains partial because `ApplicationSet`/multi-cluster fan-out and remote Git publication are still open.  
+Commit: `e8c9ed4`
 
 ---
 
