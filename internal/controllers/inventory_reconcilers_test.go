@@ -583,6 +583,171 @@ func TestServiceInstanceReconcilerRejectsTenantPolicyViolation(t *testing.T) {
 	}
 }
 
+func TestPolicyReconcilerMarksUserDefinedPolicyReady(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	policy := &platformv1alpha1.Policy{
+		ObjectMeta: metav1.ObjectMeta{Name: "require-private-ingress"},
+		Spec: platformv1alpha1.PolicySpec{
+			DisplayName: "Require Private Ingress",
+			TargetKinds: []platformv1alpha1.PolicyTargetKind{platformv1alpha1.PolicyTargetServiceInstance},
+			Rules: []platformv1alpha1.PolicyRule{{
+				Name:     "forbid-public",
+				Path:     "spec.exposure.mode",
+				Operator: platformv1alpha1.PolicyOperatorEquals,
+				Value:    "public-ingress",
+				Message:  "public ingress is not allowed",
+			}},
+		},
+	}
+	reconciler := &PolicyReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.Policy{}).
+			WithObjects(policy).
+			Build(),
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "require-private-ingress"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updated platformv1alpha1.Policy
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "require-private-ingress"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "Ready" {
+		t.Fatalf("expected phase Ready, got %q", updated.Status.Phase)
+	}
+	if updated.Status.RuleCount != 1 {
+		t.Fatalf("expected one accepted rule, got %#v", updated.Status)
+	}
+}
+
+func TestServiceInstanceReconcilerRejectsCustomPolicyViolation(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	policy := &platformv1alpha1.Policy{
+		ObjectMeta: metav1.ObjectMeta{Name: "require-backup-profile"},
+		Spec: platformv1alpha1.PolicySpec{
+			DisplayName: "Require backup profile",
+			TargetKinds: []platformv1alpha1.PolicyTargetKind{platformv1alpha1.PolicyTargetServiceInstance},
+			Rules: []platformv1alpha1.PolicyRule{{
+				Name:     "backup-profile-present",
+				Path:     "parameters.backupProfile",
+				Operator: platformv1alpha1.PolicyOperatorEmpty,
+				Message:  "backupProfile must be set by policy",
+			}},
+		},
+	}
+	tenant := &platformv1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: platformv1alpha1.TenantSpec{
+			DisplayName:           "Acme Corp",
+			Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
+			QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "standard-tenant"},
+			AllowedServiceClasses: []string{"postgresql"},
+			PolicyRefs:            []platformv1alpha1.PolicyReference{{Name: "require-backup-profile"}},
+			Lifecycle:             platformv1alpha1.TenantLifecycleSpec{Phase: platformv1alpha1.TenantLifecyclePhaseActive},
+		},
+	}
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod", Generation: 1},
+		Spec: platformv1alpha1.ProjectSpec{
+			TenantRef:         platformv1alpha1.LocalObjectReference{Name: "acme"},
+			DisplayName:       "Acme Production",
+			Environment:       platformv1alpha1.EnvironmentProduction,
+			TargetSelector:    platformv1alpha1.TargetSelectorSpec{ClusterRef: &platformv1alpha1.LocalObjectReference{Name: "local-dev"}},
+			NamespaceStrategy: platformv1alpha1.NamespaceStrategySpec{Mode: platformv1alpha1.NamespaceStrategyDedicated, Prefix: "acme-prod"},
+		},
+		Status: platformv1alpha1.ProjectStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Placement:          platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ProjectReady", Message: "ready"},
+			},
+		},
+	}
+	serviceClass := &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Generation: 1},
+		Spec: platformv1alpha1.ServiceClassSpec{
+			DisplayName:       "PostgreSQL",
+			Driver:            "cnpg",
+			SupportedVersions: []string{"16"},
+			Published:         true,
+		},
+		Status: platformv1alpha1.ServiceClassStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	servicePlan := &platformv1alpha1.ServicePlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "postgresql-ha", Generation: 1},
+		Spec: platformv1alpha1.ServicePlanSpec{
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "postgresql"},
+			DisplayName:     "Standard HA",
+			DefaultVersion:  "16",
+		},
+		Status: platformv1alpha1.ServicePlanStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Status: platformv1alpha1.ClusterTargetStatus{
+			Reachable: true,
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+		},
+	}
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef:      platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "postgresql"},
+			ServicePlanRef:  platformv1alpha1.LocalObjectReference{Name: "postgresql-ha"},
+			Version:         "16",
+			Exposure:        platformv1alpha1.ExposureSpec{Mode: platformv1alpha1.ExposureModeClusterInternal},
+			SecretPolicy:    platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeExternalSecret},
+		},
+	}
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceInstance{}).
+			WithObjects(policy, tenant, project, serviceClass, servicePlan, clusterTarget, instance).
+			Build(),
+		Scheme:   scheme,
+		Adapters: registry,
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db"}}); err != nil {
+			t.Fatalf("Reconcile returned error: %v", err)
+		}
+	}
+	var updated platformv1alpha1.ServiceInstance
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "Failed" {
+		t.Fatalf("expected phase Failed, got %q", updated.Status.Phase)
+	}
+}
+
 func TestServiceInstanceReconcilerRejectsPlanConstraintViolation(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())

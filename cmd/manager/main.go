@@ -98,6 +98,10 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "unable to create tenant controller")
 		os.Exit(1)
 	}
+	if err := (&controllers.PolicyReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+		ctrl.Log.WithName("setup").Error(err, "unable to create policy controller")
+		os.Exit(1)
+	}
 	if err := (&controllers.ClusterTargetReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to create cluster target controller")
 		os.Exit(1)

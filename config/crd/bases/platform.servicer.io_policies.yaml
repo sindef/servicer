@@ -1,0 +1,116 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: policies.platform.servicer.io
+spec:
+  group: platform.servicer.io
+  names:
+    kind: Policy
+    listKind: PolicyList
+    plural: policies
+    shortNames:
+      - pol
+    singular: policy
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                  minLength: 1
+                description:
+                  type: string
+                targetKinds:
+                  type: array
+                  items:
+                    type: string
+                    enum:
+                      - ServiceInstance
+                rules:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      path:
+                        type: string
+                      operator:
+                        type: string
+                        enum:
+                          - equals
+                          - not-equals
+                          - in
+                          - not-in
+                          - exists
+                          - not-exists
+                          - gt
+                          - gte
+                          - lt
+                          - lte
+                          - empty
+                          - not-empty
+                      value:
+                        type: string
+                      values:
+                        type: array
+                        items:
+                          type: string
+                      message:
+                        type: string
+                    required:
+                      - name
+                      - operator
+                  minItems: 1
+              required:
+                - displayName
+                - targetKinds
+                - rules
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                phase:
+                  type: string
+                conditions:
+                  type: array
+                  items:
+                    x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                ruleCount:
+                  type: integer
+                  format: int32
+                targetKinds:
+                  type: array
+                  items:
+                    type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Targets
+          type: string
+          jsonPath: .status.targetKinds
+        - name: Rules
+          type: integer
+          jsonPath: .status.ruleCount
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
