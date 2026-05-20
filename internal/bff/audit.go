@@ -1,9 +1,12 @@
 package bff
 
 import (
+	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,24 +17,17 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	filter, err := auditFilterFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	events, err := s.auditEvents(r, actor)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if query != "" {
-		filtered := events[:0]
-		for _, event := range events {
-			if strings.Contains(strings.ToLower(event.Subject+" "+event.Action+" "+event.Actor+" "+event.Phase+" "+event.Reason+" "+event.Message+" "+event.Involved), query) {
-				filtered = append(filtered, event)
-			}
-		}
-		events = filtered
-	}
-	if len(events) > 100 {
-		events = events[:100]
-	}
+	events = filter.apply(events)
 	writeJSON(w, http.StatusOK, events)
 }
 
@@ -142,4 +138,93 @@ func eventTimestamp(event corev1.Event) string {
 		return timestamp(event.FirstTimestamp)
 	}
 	return timestamp(event.CreationTimestamp)
+}
+
+type auditFilter struct {
+	query     string
+	actor     string
+	eventType string
+	resource  string
+	action    string
+	phase     string
+	from      time.Time
+	to        time.Time
+	limit     int
+}
+
+func auditFilterFromRequest(r *http.Request) (auditFilter, error) {
+	filter := auditFilter{
+		query:     strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))),
+		actor:     strings.ToLower(strings.TrimSpace(r.URL.Query().Get("actor"))),
+		eventType: strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type"))),
+		resource:  strings.ToLower(strings.TrimSpace(r.URL.Query().Get("resource"))),
+		action:    strings.ToLower(strings.TrimSpace(r.URL.Query().Get("action"))),
+		phase:     strings.ToLower(strings.TrimSpace(r.URL.Query().Get("phase"))),
+		limit:     100,
+	}
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit <= 0 {
+			return auditFilter{}, errors.New("limit must be a positive integer")
+		}
+		if limit > 500 {
+			limit = 500
+		}
+		filter.limit = limit
+	}
+	if rawFrom := strings.TrimSpace(r.URL.Query().Get("from")); rawFrom != "" {
+		parsed, err := time.Parse(time.RFC3339, rawFrom)
+		if err != nil {
+			return auditFilter{}, errors.New("from must be RFC3339")
+		}
+		filter.from = parsed
+	}
+	if rawTo := strings.TrimSpace(r.URL.Query().Get("to")); rawTo != "" {
+		parsed, err := time.Parse(time.RFC3339, rawTo)
+		if err != nil {
+			return auditFilter{}, errors.New("to must be RFC3339")
+		}
+		filter.to = parsed
+	}
+	return filter, nil
+}
+
+func (f auditFilter) apply(events []AuditEventSummary) []AuditEventSummary {
+	filtered := make([]AuditEventSummary, 0, len(events))
+	for _, event := range events {
+		if f.query != "" && !strings.Contains(strings.ToLower(event.Subject+" "+event.Action+" "+event.Actor+" "+event.Phase+" "+event.Reason+" "+event.Message+" "+event.Involved), f.query) {
+			continue
+		}
+		if f.actor != "" && !strings.Contains(strings.ToLower(event.Actor), f.actor) {
+			continue
+		}
+		if f.eventType != "" && strings.ToLower(event.Type) != f.eventType {
+			continue
+		}
+		if f.resource != "" && !strings.Contains(strings.ToLower(event.Involved+" "+event.Subject), f.resource) {
+			continue
+		}
+		if f.action != "" && strings.ToLower(event.Action) != f.action {
+			continue
+		}
+		if f.phase != "" && strings.ToLower(event.Phase) != f.phase {
+			continue
+		}
+		if !f.from.IsZero() || !f.to.IsZero() {
+			eventTime, err := time.Parse(time.RFC3339, event.Time)
+			if err == nil {
+				if !f.from.IsZero() && eventTime.Before(f.from) {
+					continue
+				}
+				if !f.to.IsZero() && eventTime.After(f.to) {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, event)
+		if f.limit > 0 && len(filtered) >= f.limit {
+			break
+		}
+	}
+	return filtered
 }

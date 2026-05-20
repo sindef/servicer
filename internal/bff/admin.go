@@ -355,10 +355,10 @@ func (s *Server) handleRegisterServiceClass(w http.ResponseWriter, r *http.Reque
 			},
 		},
 		Spec: platformv1alpha1.ServiceClassSpec{
-			DisplayName:          contract.FriendlyName,
-			Driver:               contract.RuntimeDriver,
+			DisplayName:           contract.FriendlyName,
+			Driver:                contract.RuntimeDriver,
 			AllowsVersionOverride: contract.SupportsVersionOverride,
-			Published:            false,
+			Published:             false,
 		},
 	}
 	if err := s.client.Create(r.Context(), &sc); err != nil {

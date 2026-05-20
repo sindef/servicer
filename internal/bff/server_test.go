@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -174,6 +175,47 @@ func TestSubmitActionCreatesActionRequest(t *testing.T) {
 	}
 }
 
+func TestApproveActionUpdatesPendingApprovalRequest(t *testing.T) {
+	server := testServer(t)
+	body := []byte(`{"decision":"approve","reason":"looks good"}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/actions/session-cache-failover/approval", bytes.NewReader(body))
+	request.Header.Set("X-Servicer-User", "trent@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var action platformv1alpha1.ActionRequest
+	if err := server.client.Get(request.Context(), client.ObjectKey{Name: "session-cache-failover"}, &action); err != nil {
+		t.Fatalf("get action request: %v", err)
+	}
+	if action.Spec.Approval.Mode != platformv1alpha1.ApprovalModeApproved {
+		t.Fatalf("expected action approval mode approved, got %q", action.Spec.Approval.Mode)
+	}
+	if len(action.Spec.Approval.ApprovedBy) != 1 || action.Spec.Approval.ApprovedBy[0] != "trent@example.com" {
+		t.Fatalf("expected approver to be recorded, got %#v", action.Spec.Approval.ApprovedBy)
+	}
+}
+
+func TestApproveActionRejectsSelfApproval(t *testing.T) {
+	server := testServer(t)
+	body := []byte(`{"decision":"approve"}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/actions/session-cache-failover/approval", bytes.NewReader(body))
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAuditEndpointReturnsActionsAndEvents(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()
@@ -190,6 +232,30 @@ func TestAuditEndpointReturnsActionsAndEvents(t *testing.T) {
 	}
 	if len(events) == 0 || events[0].Action != "restart" {
 		t.Fatalf("expected restart action audit event, got %#v", events)
+	}
+}
+
+func TestAuditEndpointSupportsStructuredFilters(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/audit?type=ActionRequest&actor=alice@example.com&action=restart&phase=Succeeded&limit=1", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var events []AuditEventSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &events); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected one filtered event, got %#v", events)
+	}
+	if events[0].Type != "ActionRequest" || events[0].Action != "restart" || events[0].Actor != "alice@example.com" {
+		t.Fatalf("unexpected filtered event %#v", events[0])
 	}
 }
 
@@ -414,6 +480,7 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 			testNamespaceInstance(),
 			testBlockedYugabyteInstance(),
 			testAction(),
+			testPendingApprovalAction(),
 			testGrantAccessAction(),
 			testGrantAccessSecret(),
 			testValkeyCredentialSecret(),
@@ -673,8 +740,9 @@ func testAction() *platformv1alpha1.ActionRequest {
 	return &platformv1alpha1.ActionRequest{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-cache-restart", CreationTimestamp: now},
 		Spec: platformv1alpha1.ActionRequestSpec{
-			TargetRef: platformv1alpha1.TypedObjectReference{APIVersion: platformv1alpha1.GroupVersion.String(), Kind: "ServiceInstance", Name: "session-cache"},
-			Action:    "restart",
+			TargetRef:   platformv1alpha1.TypedObjectReference{APIVersion: platformv1alpha1.GroupVersion.String(), Kind: "ServiceInstance", Name: "session-cache"},
+			Action:      "restart",
+			RequestedBy: platformv1alpha1.RequestedBySpec{Subject: "alice@example.com"},
 		},
 		Status: platformv1alpha1.ActionRequestStatus{Phase: "Succeeded", CompletedAt: &now},
 	}
@@ -697,6 +765,26 @@ func testGrantAccessAction() *platformv1alpha1.ActionRequest {
 				Kind:       "Secret",
 				Name:       "servicer-access-bob-example-com-kubeconfig",
 				Namespace:  "acme-prod-team-space",
+			},
+		},
+	}
+}
+
+func testPendingApprovalAction() *platformv1alpha1.ActionRequest {
+	now := metav1.Now()
+	return &platformv1alpha1.ActionRequest{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-cache-failover", CreationTimestamp: now},
+		Spec: platformv1alpha1.ActionRequestSpec{
+			TargetRef:   platformv1alpha1.TypedObjectReference{APIVersion: platformv1alpha1.GroupVersion.String(), Kind: "ServiceInstance", Name: "session-cache"},
+			Action:      "failover",
+			Approval:    platformv1alpha1.ApprovalSpec{Mode: platformv1alpha1.ApprovalModeRequired},
+			RequestedBy: platformv1alpha1.RequestedBySpec{Subject: "alice@example.com"},
+		},
+		Status: platformv1alpha1.ActionRequestStatus{
+			Phase: "PendingApproval",
+			Result: platformv1alpha1.ActionResultStatus{
+				Code:    "approval-required",
+				Message: "Action request is waiting for approval.",
 			},
 		},
 	}

@@ -336,8 +336,10 @@ func TestServiceInstanceReconcilerRejectsUnpublishedServicePlan(t *testing.T) {
 		Adapters: registry,
 	}
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db"}}); err != nil {
-		t.Fatalf("Reconcile returned error: %v", err)
+	for i := 0; i < 3; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
 	}
 
 	var updated platformv1alpha1.ServiceInstance

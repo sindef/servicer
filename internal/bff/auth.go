@@ -1,6 +1,7 @@
 package bff
 
 import (
+	"context"
 	"net/http"
 	"strings"
 )
@@ -11,6 +12,8 @@ const (
 	roleServiceConsumer = "service-consumer"
 )
 
+type actorContextKey struct{}
+
 type actor struct {
 	Name   string
 	Roles  map[string]struct{}
@@ -18,6 +21,25 @@ type actor struct {
 }
 
 func actorFromRequest(r *http.Request) actor {
+	if actor, ok := actorFromContext(r.Context()); ok {
+		return actor
+	}
+	return actorFromHeaders(r)
+}
+
+func actorFromContext(ctx context.Context) (actor, bool) {
+	if ctx == nil {
+		return actor{}, false
+	}
+	value := ctx.Value(actorContextKey{})
+	if value == nil {
+		return actor{}, false
+	}
+	actor, ok := value.(actor)
+	return actor, ok
+}
+
+func actorFromHeaders(r *http.Request) actor {
 	name := strings.TrimSpace(r.Header.Get("X-Servicer-User"))
 	if name == "" {
 		name = "anonymous"
@@ -37,6 +59,10 @@ func actorFromRequest(r *http.Request) actor {
 		}
 	}
 	return actor{Name: name, Roles: roles, Groups: groups}
+}
+
+func withActor(r *http.Request, actor actor) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
 }
 
 func (a actor) hasAny(roles ...string) bool {

@@ -214,6 +214,11 @@ type ActionSubmitRequest struct {
 	Reason     string         `json:"reason,omitempty"`
 }
 
+type ActionApprovalRequest struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 type WriteResponse struct {
 	Name    string `json:"name"`
 	Message string `json:"message"`

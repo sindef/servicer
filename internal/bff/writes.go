@@ -153,6 +153,83 @@ func (s *Server) handleSubmitAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, WriteResponse{Name: action.Name, Message: "Action request submitted."})
 }
 
+func (s *Server) handleActionApproval(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action request name is required"})
+		return
+	}
+
+	var request ActionApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	decision := strings.ToLower(strings.TrimSpace(request.Decision))
+	if decision != "approve" && decision != "reject" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "decision must be approve or reject"})
+		return
+	}
+
+	var action platformv1alpha1.ActionRequest
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &action); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	var instance platformv1alpha1.ServiceInstance
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: action.Spec.TargetRef.Name}, &instance); err != nil {
+		writeError(w, err)
+		return
+	}
+	if !s.authorizeInstance(r.Context(), actor, &instance) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "action target is outside your authorized tenancy"})
+		return
+	}
+	if action.Spec.RequestedBy.Subject == actor.Name && !actor.isPlatformAdmin() {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "requesters may not self-approve their own action requests"})
+		return
+	}
+	if action.Status.Phase != "PendingApproval" && action.Spec.Approval.Mode != platformv1alpha1.ApprovalModeRequired {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "action request is not waiting for approval"})
+		return
+	}
+
+	if action.Annotations == nil {
+		action.Annotations = map[string]string{}
+	}
+	action.Annotations["servicer.io/approval-reviewed-by"] = actor.Name
+	action.Annotations["servicer.io/approval-reviewed-at"] = time.Now().UTC().Format(time.RFC3339)
+	if strings.TrimSpace(request.Reason) != "" {
+		action.Annotations["servicer.io/approval-reason"] = strings.TrimSpace(request.Reason)
+	}
+
+	if decision == "approve" {
+		action.Spec.Approval.Mode = platformv1alpha1.ApprovalModeApproved
+		if !stringInSlice(actor.Name, action.Spec.Approval.ApprovedBy) {
+			action.Spec.Approval.ApprovedBy = append(action.Spec.Approval.ApprovedBy, actor.Name)
+		}
+	} else {
+		action.Spec.Approval.Mode = platformv1alpha1.ApprovalModeRejected
+		action.Spec.Approval.ApprovedBy = nil
+	}
+
+	if err := s.client.Update(r.Context(), &action); err != nil {
+		writeError(w, err)
+		return
+	}
+	message := "Action request approved."
+	if decision == "reject" {
+		message = "Action request rejected."
+	}
+	writeJSON(w, http.StatusOK, WriteResponse{Name: action.Name, Message: message})
+}
+
 func (s *Server) handleDeleteProductRequest(w http.ResponseWriter, r *http.Request) {
 	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator)
 	if !ok {

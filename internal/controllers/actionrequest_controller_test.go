@@ -77,6 +77,27 @@ func TestActionRequestReconcilerRequiresApprovalWhenCapabilityDemandsIt(t *testi
 	}
 }
 
+func TestActionRequestReconcilerRejectsApprovedActionWithoutApproverIdentity(t *testing.T) {
+	action := actionRequestFixture("orders-db-failover-approved", string(adapters.ActionFailover), platformv1alpha1.ApprovalModeApproved)
+	action.Spec.Approval.ApprovedBy = nil
+	reconciler := newActionRequestReconciler(t, action)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db-failover-approved"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var actionRequest platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db-failover-approved"}, &actionRequest); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if actionRequest.Status.Phase != "Failed" {
+		t.Fatalf("expected phase Failed, got %q", actionRequest.Status.Phase)
+	}
+	if actionRequest.Status.Result.Code != "approval-invalid" {
+		t.Fatalf("expected result code approval-invalid, got %q", actionRequest.Status.Result.Code)
+	}
+}
+
 func TestActionRequestReconcilerAppliesValkeyScale(t *testing.T) {
 	reconciler := newValkeyActionRequestReconciler(t, valkeyActionRequestFixture("session-cache-scale", string(adapters.ActionScale), map[string]any{"replicas": 5}))
 

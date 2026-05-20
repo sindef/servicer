@@ -98,6 +98,14 @@ func (r *ActionRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		actionRequest.Status.Result.Retryable = false
 		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Ready", metav1.ConditionFalse, "ApprovalRejected", "Action request was rejected.")
 		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Failed", metav1.ConditionTrue, "ApprovalRejected", "Action request was rejected.")
+	} else if approvalApprovedWithoutApprover(&actionRequest, resolved.capability) {
+		actionRequest.Status.Phase = "Failed"
+		actionRequest.Status.OperationRef = nil
+		actionRequest.Status.Result.Code = "approval-invalid"
+		actionRequest.Status.Result.Message = "Action request approval is missing approver identity."
+		actionRequest.Status.Result.Retryable = false
+		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Ready", metav1.ConditionFalse, "ApprovalInvalid", "Action request approval metadata is incomplete.")
+		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Failed", metav1.ConditionTrue, "ApprovalInvalid", "Action request approval metadata is incomplete.")
 	} else {
 		executionResult, execErr := r.executeAction(ctx, resolved, &actionRequest)
 		if execErr != nil {
@@ -959,6 +967,16 @@ func approvalPending(actionRequest *platformv1alpha1.ActionRequest, capability a
 		return true
 	}
 	return capability.RequiresApproval && actionRequest.Spec.Approval.Mode != platformv1alpha1.ApprovalModeApproved
+}
+
+func approvalApprovedWithoutApprover(actionRequest *platformv1alpha1.ActionRequest, capability adapters.ActionCapability) bool {
+	if !capability.RequiresApproval {
+		return false
+	}
+	if actionRequest.Spec.Approval.Mode != platformv1alpha1.ApprovalModeApproved {
+		return false
+	}
+	return len(actionRequest.Spec.Approval.ApprovedBy) == 0
 }
 
 func actionCapability(capabilities []adapters.ActionCapability, action string) (adapters.ActionCapability, bool) {

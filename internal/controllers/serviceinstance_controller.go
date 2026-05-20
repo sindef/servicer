@@ -107,6 +107,9 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if !plan.Status.Published {
 		return r.handleValidationFailure(ctx, &instance, originalStatus, "ServicePlanUnpublished", fmt.Sprintf("Referenced ServicePlan %q is not published for provisioning.", plan.Name))
 	}
+	if result, handled, err := r.enforceProjectQuota(ctx, &instance, &project, originalStatus); handled || err != nil {
+		return result, err
+	}
 
 	clusterName := resolvedClusterName(&project)
 	instance.Status.Placement.ClusterName = clusterName
@@ -427,6 +430,48 @@ func summarizeValidationIssues(issues []adapters.ValidationIssue) string {
 		parts = append(parts, fmt.Sprintf("%s: %s", issue.Path, issue.Message))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func (r *ServiceInstanceReconciler) enforceProjectQuota(ctx context.Context, instance *platformv1alpha1.ServiceInstance, project *platformv1alpha1.Project, originalStatus platformv1alpha1.ServiceInstanceStatus) (ctrl.Result, bool, error) {
+	if project == nil {
+		return ctrl.Result{}, false, nil
+	}
+	maxServices := project.Spec.Quotas.MaxServices
+	maxNamespaces := project.Spec.Quotas.MaxNamespaces
+	if maxServices == nil && maxNamespaces == nil {
+		return ctrl.Result{}, false, nil
+	}
+
+	var instances platformv1alpha1.ServiceInstanceList
+	if err := r.List(ctx, &instances); err != nil {
+		return ctrl.Result{}, false, err
+	}
+
+	serviceCount := int32(0)
+	namespaces := map[string]struct{}{}
+	for _, item := range instances.Items {
+		if item.DeletionTimestamp != nil || item.Spec.ProjectRef.Name != project.Name {
+			continue
+		}
+		serviceCount++
+		namespace := item.Status.Placement.Namespace
+		if namespace == "" {
+			namespace = resolvedNamespace(project, &item)
+		}
+		if namespace != "" {
+			namespaces[namespace] = struct{}{}
+		}
+	}
+
+	if maxServices != nil && serviceCount > *maxServices {
+		result, err := r.handleValidationFailure(ctx, instance, originalStatus, "ProjectServiceQuotaExceeded", fmt.Sprintf("Project %q allows at most %d service instances; observed %d.", project.Name, *maxServices, serviceCount))
+		return result, true, err
+	}
+	if maxNamespaces != nil && int32(len(namespaces)) > *maxNamespaces {
+		result, err := r.handleValidationFailure(ctx, instance, originalStatus, "ProjectNamespaceQuotaExceeded", fmt.Sprintf("Project %q allows at most %d namespaces; observed %d.", project.Name, *maxNamespaces, len(namespaces)))
+		return result, true, err
+	}
+	return ctrl.Result{}, false, nil
 }
 
 func materializedArtifactStatus(result materializer.Result) platformv1alpha1.ArtifactStatus {

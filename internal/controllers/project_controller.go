@@ -29,6 +29,9 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	originalStatus := project.Status
 	project.Status.ObservedGeneration = project.Generation
 	project.Status.EffectiveQuota = project.Spec.Quotas
+	if err := r.populateUsageSummary(ctx, &project); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	var tenant platformv1alpha1.Tenant
 	if err := r.Get(ctx, client.ObjectKey{Name: project.Spec.TenantRef.Name}, &tenant); err != nil {
@@ -93,6 +96,31 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *ProjectReconciler) populateUsageSummary(ctx context.Context, project *platformv1alpha1.Project) error {
+	var instances platformv1alpha1.ServiceInstanceList
+	if err := r.List(ctx, &instances); err != nil {
+		return err
+	}
+
+	project.Status.UsageSummary = platformv1alpha1.UsageSummary{}
+	namespaces := map[string]struct{}{}
+	for _, instance := range instances.Items {
+		if instance.DeletionTimestamp != nil || instance.Spec.ProjectRef.Name != project.Name {
+			continue
+		}
+		project.Status.UsageSummary.ServiceInstances++
+		namespace := instance.Status.Placement.Namespace
+		if namespace == "" {
+			namespace = resolvedNamespace(project, &instance)
+		}
+		if namespace != "" {
+			namespaces[namespace] = struct{}{}
+		}
+	}
+	project.Status.UsageSummary.Namespaces = int32(len(namespaces))
+	return nil
 }
 
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {

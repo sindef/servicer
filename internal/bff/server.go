@@ -28,6 +28,7 @@ type Server struct {
 	client     client.Client
 	kubeHost   string
 	kubeClient *http.Client
+	auth       authenticator
 	handler    http.Handler
 }
 
@@ -37,6 +38,11 @@ func NewServer(client client.Client) *Server {
 
 func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server {
 	server := &Server{client: client}
+	auth, err := newAuthenticatorFromEnv(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	server.auth = auth
 	if restConfig != nil {
 		if httpClient, err := rest.HTTPClientFor(restConfig); err == nil {
 			server.kubeHost = strings.TrimRight(restConfig.Host, "/")
@@ -62,6 +68,7 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("PUT /api/instances/{name}", server.handleUpdateProductRequest)
 	mux.HandleFunc("DELETE /api/instances/{name}", server.handleDeleteProductRequest)
 	mux.HandleFunc("POST /api/instances/{name}/actions", server.handleSubmitAction)
+	mux.HandleFunc("POST /api/actions/{name}/approval", server.handleActionApproval)
 	mux.HandleFunc("GET /api/instances/{name}/actions/{action}/kubeconfig", server.handleDownloadNamespaceKubeconfig)
 	mux.HandleFunc("GET /api/audit", server.handleAudit)
 	mux.HandleFunc("GET /api/admin/clusters", server.handleListClusters)
@@ -77,12 +84,31 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /api/admin/serviceclasses", server.handleListServiceClasses)
 	mux.HandleFunc("POST /api/admin/serviceclasses", server.handleRegisterServiceClass)
 	mux.HandleFunc("PUT /api/admin/serviceclasses/{name}", server.handleUpdateServiceClass)
-	server.handler = withJSON(mux)
+	server.handler = withJSON(server.withAuthentication(mux))
 	return server
 }
 
 func (s *Server) Handler() http.Handler {
 	return s.handler
+}
+
+func (s *Server) withAuthentication(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if s.auth == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		actor, err := s.auth.Authenticate(r.Context(), r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication failed"})
+			return
+		}
+		next.ServeHTTP(w, withActor(r, actor))
+	})
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
