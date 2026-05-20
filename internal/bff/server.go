@@ -31,6 +31,7 @@ type Server struct {
 	kubeHost   string
 	kubeClient *http.Client
 	auth       authenticator
+	authConfig authSettings
 	metrics    *serverMetrics
 	auditStore *auditStore
 	handler    http.Handler
@@ -42,6 +43,11 @@ func NewServer(client client.Client) *Server {
 
 func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server {
 	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client)}
+	authConfig, err := authSettingsFromEnv()
+	if err != nil {
+		panic(err)
+	}
+	server.authConfig = authConfig
 	auth, err := newAuthenticatorFromEnv(context.Background())
 	if err != nil {
 		panic(err)
@@ -61,6 +67,8 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /apis", server.handleKubernetesRootProxy)
 	mux.HandleFunc("/apis/", server.handleKubernetesRootProxy)
 	mux.HandleFunc("GET /api/healthz", server.handleHealthz)
+	mux.HandleFunc("GET /api/auth/config", server.handleAuthConfig)
+	mux.HandleFunc("GET /api/auth/session", server.handleAuthSession)
 	mux.HandleFunc("GET /api/overview", server.handleOverview)
 	mux.HandleFunc("GET /api/tenants", server.handleTenants)
 	mux.HandleFunc("GET /api/projects", server.handleProjects)
@@ -109,7 +117,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) withAuthentication(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/healthz" || r.URL.Path == "/metrics" {
+		if r.URL.Path == "/api/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/api/auth/config" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -131,6 +139,35 @@ func (s *Server) withAuthentication(next http.Handler) http.Handler {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
+	response := AuthConfigResponse{
+		Mode:             s.authConfig.Mode,
+		AllowDemoHeaders: s.authConfig.AllowDemoHeaders,
+	}
+	if s.authConfig.OIDC != nil {
+		response.OIDC = &AuthOIDCConfig{
+			IssuerURL:    s.authConfig.OIDC.IssuerURL,
+			ClientID:     s.authConfig.OIDC.ClientID,
+			Scopes:       append([]string(nil), s.authConfig.OIDC.Scopes...),
+			RedirectPath: s.authConfig.OIDC.RedirectPath,
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
+	current := actorFromRequest(r)
+	response := AuthSessionResponse{
+		Mode:             s.authConfig.Mode,
+		Name:             current.Name,
+		Roles:            sortedKeys(current.Roles),
+		Groups:           sortedKeys(current.Groups),
+		Authenticated:    current.Name != "" && current.Name != "anonymous",
+		AllowDemoHeaders: s.authConfig.AllowDemoHeaders,
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {

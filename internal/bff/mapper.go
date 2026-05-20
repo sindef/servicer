@@ -336,3 +336,15 @@ func copyStringMap(source map[string]string) map[string]string {
 	}
 	return result
 }
+
+func sortedKeys(source map[string]struct{}) []string {
+	if len(source) == 0 {
+		return nil
+	}
+	items := make([]string, 0, len(source))
+	for key := range source {
+		items = append(items, key)
+	}
+	sort.Strings(items)
+	return items
+}

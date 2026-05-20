@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -47,6 +48,50 @@ func TestCatalogReturnsProductShapedEntries(t *testing.T) {
 	}
 	if namespaceEntry == nil || len(namespaceEntry.Plans) != 1 || len(namespaceEntry.Actions) == 0 {
 		t.Fatalf("expected namespace catalog entry with plans/actions, got %#v", entries)
+	}
+}
+
+func TestAuthConfigEndpointReturnsHeaderModeByDefault(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/config", nil)
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var config AuthConfigResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &config); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if config.Mode != "header" {
+		t.Fatalf("expected header auth mode, got %#v", config)
+	}
+}
+
+func TestAuthSessionEndpointReturnsActorContext(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator,service-consumer")
+	request.Header.Set("X-Servicer-Groups", "ops,acme")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var session AuthSessionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if session.Name != "alice@example.com" || !session.Authenticated {
+		t.Fatalf("unexpected auth session %#v", session)
+	}
+	if len(session.Roles) != 2 || len(session.Groups) != 2 {
+		t.Fatalf("expected roles and groups, got %#v", session)
 	}
 }
 
@@ -854,6 +899,19 @@ func testServer(t *testing.T) *Server {
 
 func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 	t.Helper()
+	for _, key := range []string{
+		"SERVICER_AUTH_MODE",
+		"SERVICER_AUTH_ALLOW_DEMO_HEADERS",
+		"SERVICER_OIDC_ISSUER_URL",
+		"SERVICER_OIDC_CLIENT_ID",
+		"SERVICER_OIDC_USERNAME_CLAIM",
+		"SERVICER_OIDC_ROLES_CLAIM",
+		"SERVICER_OIDC_GROUPS_CLAIM",
+		"SERVICER_OIDC_SCOPES",
+		"SERVICER_OIDC_REDIRECT_PATH",
+	} {
+		_ = os.Unsetenv(key)
+	}
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme returned error: %v", err)

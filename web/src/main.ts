@@ -10,12 +10,14 @@ import NamespaceClaimDetailPage from './pages/NamespaceClaimDetailPage.vue'
 import TenancyPage from './pages/TenancyPage.vue'
 import AuditPage from './pages/AuditPage.vue'
 import AdminPage from './pages/AdminPage.vue'
+import { initializeAuth } from './auth'
 import './styles.css'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'overview', component: OverviewPage },
+    { path: '/auth/callback', name: 'auth-callback', component: OverviewPage },
     { path: '/catalog', name: 'catalog', component: CatalogPage },
     { path: '/instances', name: 'instances', component: InstancesPage },
     { path: '/instances/:name', name: 'instance-detail', component: InstanceDetailPage, props: true },
@@ -26,5 +28,7 @@ const router = createRouter({
     { path: '/admin', name: 'admin', component: AdminPage }
   ]
 })
+
+await initializeAuth()
 
 createApp(App).use(router).mount('#app')

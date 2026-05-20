@@ -1,3 +1,5 @@
+import { authHeaders } from './auth'
+
 export interface OverviewResponse {
   tenants: number
   projects: number
@@ -302,21 +304,11 @@ export interface UpdateServiceClassRequest {
   defaultParameters?: Record<string, unknown>
 }
 
-function demoHeaders() {
-  return {
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-    'X-Servicer-User': localStorage.getItem('servicer.user') || 'demo@servicer.local',
-    'X-Servicer-Roles':
-      localStorage.getItem('servicer.roles') || 'platform-admin,tenant-operator,service-consumer'
-  }
-}
-
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
     headers: {
-      ...demoHeaders(),
+      ...authHeaders(),
       ...init.headers
     }
   })
@@ -329,7 +321,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 async function download(path: string): Promise<Blob> {
   const response = await fetch(path, {
-    headers: demoHeaders()
+    headers: authHeaders()
   })
   if (!response.ok) {
     const message = await response.text()

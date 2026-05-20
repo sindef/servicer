@@ -12,6 +12,22 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 )
 
+type authSettings struct {
+	Mode             string
+	AllowDemoHeaders bool
+	OIDC             *oidcSettings
+}
+
+type oidcSettings struct {
+	IssuerURL     string
+	ClientID      string
+	UsernameClaim string
+	RolesClaim    string
+	GroupsClaim   string
+	Scopes        []string
+	RedirectPath  string
+}
+
 type authenticator interface {
 	Authenticate(context.Context, *http.Request) (actor, error)
 	Mode() string
@@ -36,31 +52,25 @@ type oidcAuthenticator struct {
 }
 
 func newAuthenticatorFromEnv(ctx context.Context) (authenticator, error) {
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv("SERVICER_AUTH_MODE")))
-	if mode == "" || mode == "header" || mode == "demo" {
+	settings, err := authSettingsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if settings.Mode == "header" {
 		return headerAuthenticator{}, nil
 	}
-	if mode != "oidc" {
-		return nil, fmt.Errorf("unsupported SERVICER_AUTH_MODE %q", mode)
-	}
 
-	issuerURL := strings.TrimSpace(os.Getenv("SERVICER_OIDC_ISSUER_URL"))
-	clientID := strings.TrimSpace(os.Getenv("SERVICER_OIDC_CLIENT_ID"))
-	if issuerURL == "" || clientID == "" {
-		return nil, errors.New("SERVICER_OIDC_ISSUER_URL and SERVICER_OIDC_CLIENT_ID are required when SERVICER_AUTH_MODE=oidc")
-	}
-
-	provider, err := oidc.NewProvider(ctx, issuerURL)
+	provider, err := oidc.NewProvider(ctx, settings.OIDC.IssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("create OIDC provider: %w", err)
 	}
 
 	return &oidcAuthenticator{
-		verifier:      provider.Verifier(&oidc.Config{ClientID: clientID}),
-		usernameClaim: firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_OIDC_USERNAME_CLAIM")), "email", "preferred_username", "sub"),
-		rolesClaim:    firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_OIDC_ROLES_CLAIM")), "roles"),
-		groupsClaim:   firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_OIDC_GROUPS_CLAIM")), "groups"),
-		allowHeaders:  strings.EqualFold(strings.TrimSpace(os.Getenv("SERVICER_AUTH_ALLOW_DEMO_HEADERS")), "true"),
+		verifier:      provider.Verifier(&oidc.Config{ClientID: settings.OIDC.ClientID}),
+		usernameClaim: settings.OIDC.UsernameClaim,
+		rolesClaim:    settings.OIDC.RolesClaim,
+		groupsClaim:   settings.OIDC.GroupsClaim,
+		allowHeaders:  settings.AllowDemoHeaders,
 	}, nil
 }
 
@@ -164,4 +174,48 @@ func setFromClaim(value any) map[string]struct{} {
 		}
 	}
 	return set
+}
+
+func authSettingsFromEnv() (authSettings, error) {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("SERVICER_AUTH_MODE")))
+	if mode == "" || mode == "header" || mode == "demo" {
+		return authSettings{Mode: "header"}, nil
+	}
+	if mode != "oidc" {
+		return authSettings{}, fmt.Errorf("unsupported SERVICER_AUTH_MODE %q", mode)
+	}
+
+	issuerURL := strings.TrimSpace(os.Getenv("SERVICER_OIDC_ISSUER_URL"))
+	clientID := strings.TrimSpace(os.Getenv("SERVICER_OIDC_CLIENT_ID"))
+	if issuerURL == "" || clientID == "" {
+		return authSettings{}, errors.New("SERVICER_OIDC_ISSUER_URL and SERVICER_OIDC_CLIENT_ID are required when SERVICER_AUTH_MODE=oidc")
+	}
+
+	scopes := []string{"openid", "profile", "email"}
+	if rawScopes := strings.TrimSpace(os.Getenv("SERVICER_OIDC_SCOPES")); rawScopes != "" {
+		scopes = scopes[:0]
+		for _, scope := range strings.Fields(rawScopes) {
+			scope = strings.TrimSpace(scope)
+			if scope != "" {
+				scopes = append(scopes, scope)
+			}
+		}
+	}
+	if len(scopes) == 0 {
+		scopes = []string{"openid"}
+	}
+
+	return authSettings{
+		Mode:             "oidc",
+		AllowDemoHeaders: strings.EqualFold(strings.TrimSpace(os.Getenv("SERVICER_AUTH_ALLOW_DEMO_HEADERS")), "true"),
+		OIDC: &oidcSettings{
+			IssuerURL:     issuerURL,
+			ClientID:      clientID,
+			UsernameClaim: firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_OIDC_USERNAME_CLAIM")), "email", "preferred_username", "sub"),
+			RolesClaim:    firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_OIDC_ROLES_CLAIM")), "roles"),
+			GroupsClaim:   firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_OIDC_GROUPS_CLAIM")), "groups"),
+			Scopes:        scopes,
+			RedirectPath:  firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_OIDC_REDIRECT_PATH")), "/auth/callback"),
+		},
+	}, nil
 }

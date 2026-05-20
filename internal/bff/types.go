@@ -12,6 +12,28 @@ type OverviewResponse struct {
 	RecentActions  []ActionSummary `json:"recentActions"`
 }
 
+type AuthConfigResponse struct {
+	Mode             string          `json:"mode"`
+	AllowDemoHeaders bool            `json:"allowDemoHeaders,omitempty"`
+	OIDC             *AuthOIDCConfig `json:"oidc,omitempty"`
+}
+
+type AuthOIDCConfig struct {
+	IssuerURL    string   `json:"issuerUrl"`
+	ClientID     string   `json:"clientId"`
+	Scopes       []string `json:"scopes,omitempty"`
+	RedirectPath string   `json:"redirectPath,omitempty"`
+}
+
+type AuthSessionResponse struct {
+	Mode             string   `json:"mode"`
+	Name             string   `json:"name"`
+	Roles            []string `json:"roles,omitempty"`
+	Groups           []string `json:"groups,omitempty"`
+	Authenticated    bool     `json:"authenticated"`
+	AllowDemoHeaders bool     `json:"allowDemoHeaders,omitempty"`
+}
+
 type HealthBreakdown struct {
 	Ready        int32 `json:"ready"`
 	Provisioning int32 `json:"provisioning"`

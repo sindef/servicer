@@ -90,6 +90,7 @@ textarea {
 .nav {
   display: grid;
   gap: 4px;
+  margin-bottom: 20px;
 }
 
 .nav a {
@@ -102,6 +103,25 @@ textarea {
 .nav a.router-link-active {
   background: rgba(46, 196, 182, 0.12);
   color: var(--text);
+}
+
+.auth-panel {
+  display: grid;
+  gap: 8px;
+  padding: 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.auth-panel strong {
+  font-size: 13px;
+}
+
+.auth-panel small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .main {
@@ -251,6 +271,10 @@ h3 {
 
 .content-band h2 {
   margin-bottom: 8px;
+}
+
+.auth-splash {
+  max-width: 760px;
 }
 
 .band-health,
