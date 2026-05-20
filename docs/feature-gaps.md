@@ -13,8 +13,9 @@ Implementation notes in this review are current as of 2026-05-20.
 
 ## Critical gaps
 
-### [ ] Argo CD Application creation
-**Plan 003** — The materializer writes YAML artifacts to `generated/delivery/` on the local filesystem. In the demo environment a polling shell script (`hack/demo-sync-delivery.sh`) runs `kubectl apply -f` against those directories every 3 seconds, which is what drives the visible "sync". No `Application` or `ApplicationSet` object is ever created; no Argo CD API types are imported. The plan calls for a proper Argo CD delivery strategy — auto-created Applications, sync status reflected back into `ServiceInstance.Status.Sync`, and ApplicationSet-based multi-cluster fan-out — none of which is implemented. The current approach is a local dev shortcut that cannot work across real target clusters.
+### [~] Argo CD Application creation
+**Plan 003** — The controller can now auto-create and update Argo CD `Application` resources for a `ServiceInstance` when delivery repo settings are configured on the manager, and it reads Argo sync/health back into instance status. This is still partial: it depends on configured repo metadata, does not yet create `ApplicationSet` resources, and does not solve multi-cluster fan-out or repo publication by itself.  
+Commit: `597a51c`
 
 ### [~] OIDC / real authentication
 **Plans 005, 006** — Backend auth is no longer header-only: the BFF now supports OIDC JWT validation with issuer/client-id configuration, roles/groups claim extraction, and an explicit opt-in demo-header fallback for local/dev use. Frontend login still falls back to demo mode and there is not yet a browser redirect/session flow.  
@@ -59,8 +60,8 @@ Commit: `7ee64be`
 **Plan 003** — `ServiceInstance.Spec.SecretPolicy.DeliveryMode` has an `external-secret` enum value but no handler. All credentials are written as plain Kubernetes Secrets. No Vault client, no External Secrets Operator integration.
 
 ### [~] Sync and health status from Argo CD
-**Plan 003** — Runtime observation is now part of the main reconcile path and adapters’ `Observe()` methods are called, so runtime-ready state is not materialize-only anymore. Actual Argo CD `Application` sync/health state still is not read, because no Argo `Application` objects are created yet.  
-Commit: `7ee64be`
+**Plan 003** — Runtime observation is part of the main reconcile path, and Argo CD `Application` sync/health is now ingested into `ServiceInstance.Status.Sync` when a managed `Application` exists. This remains partial because `ApplicationSet`/multi-cluster fan-out and durable delivery-repo publication are still open.  
+Commit: `597a51c`
 
 ---
 
