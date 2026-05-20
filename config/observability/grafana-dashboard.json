@@ -1,0 +1,65 @@
+{
+  "title": "Servicer Control Plane",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["servicer", "control-plane"],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "BFF Request Rate",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "sum(rate(servicer_bff_http_requests_total[5m]))", "legendFormat": "req/s"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "BFF 5xx Error Ratio",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "servicer:bff_request_error_ratio5m", "legendFormat": "5xx ratio"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "BFF p95 Latency",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "servicer:bff_request_p95_latency_seconds5m", "legendFormat": "p95"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auth and Upstream Failures",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "increase(servicer_bff_authentication_failures_total[10m])", "legendFormat": "auth failures"},
+        {"expr": "increase(servicer_bff_upstream_failures_total[10m])", "legendFormat": "upstream failures"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Controller Reconcile Errors",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "sum by (controller) (rate(controller_runtime_reconcile_errors_total[5m]))", "legendFormat": "{{controller}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Controller Reconcile Latency p95",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (controller, le) (rate(controller_runtime_reconcile_time_seconds_bucket[5m])))",
+          "legendFormat": "{{controller}}"
+        }
+      ]
+    }
+  ]
+}

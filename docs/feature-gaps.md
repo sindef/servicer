@@ -101,6 +101,6 @@ Commit: `7ee64be`
 **Plan 006** — Best-effort control-plane snapshot tooling now exists via `hack/control-plane-backup.sh` for backup/restore of Servicer CRDs, `servicer-system` runtime state, Servicer-managed Argo CD Applications, and local generated delivery artifacts. This is still partial: it is not full etcd backup, has no scheduled automation, and has not yet been packaged into release workflows.  
 Commit: `6db1e38`
 
-### [~] Metrics, SLOs, dashboards, and alerting
-**Plan 006** — `cmd/manager` still exposes controller-runtime metrics, and the BFF now exposes a Prometheus `/metrics` surface with request totals, request latency, authentication failures, and upstream proxy failure counters. This is still partial: controller-specific business metrics, dashboard packs, alert rules, and explicit SLOs are still open.  
+### [x] Metrics, SLOs, dashboards, and alerting
+**Plan 006** — `cmd/manager` exposes controller-runtime metrics, the BFF exposes Prometheus request/auth/upstream metrics, and `config/observability` now includes Prometheus SLO recording/alert rules plus a Grafana dashboard pack for BFF availability, latency, auth failures, upstream failures, and controller reconcile health.  
 Commit: `a714a01`
