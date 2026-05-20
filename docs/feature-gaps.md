@@ -79,8 +79,8 @@ Commit: `e8c9ed4`
 ### [~] KubeVirt adapter
 **Plans 004 stretch, 006** — Servicer now has a first-pass `virtual-machine` product contract, KubeVirt-backed adapter, sample catalog entries, deterministic rendering for a namespace, cloud-init Secret, and KubeVirt `VirtualMachine`, and `VirtualMachineClaim` routes through a backing adapter-managed `ServiceInstance`. This is still partial: runtime observation is shallow and persistent DataVolume workflows are not wired yet.
 
-### [~] Backup config wiring — PostgreSQL and MySQL
-**Plan 004** — PostgreSQL/CNPG backup object-store wiring is implemented and rendered into CNPG backup manifests. MySQL still only consumes the coarse `backupProfile` contract and does not yet materialize a real backup execution/storage pipeline.  
+### [x] Backup config wiring — PostgreSQL and MySQL
+**Plan 004** — PostgreSQL/CNPG backup object-store wiring is implemented and rendered into CNPG backup manifests. MySQL now materializes `backupProfile` into a backup PVC and scheduled `mysqldump` `CronJob` with profile-derived schedule and retention metadata.  
 Commit: `7ee64be`
 
 ### [x] NATS geo multi-cluster

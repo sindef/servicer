@@ -33,6 +33,10 @@ func TestMySQLAdapterRenderProducesStatefulSetManifest(t *testing.T) {
 		"orders_mysql",
 		"servicer.io/mysql-mode: single-primary",
 		"storage: 100Gi",
+		"kind: CronJob",
+		"name: orders-mysql-backup",
+		"mysqldump -h orders-mysql.acme-prod-orders-mysql.svc.cluster.local",
+		"servicer.io/backup-profile: daily-7d",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("expected rendered output to contain %q:\n%s", expected, rendered)

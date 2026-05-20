@@ -134,7 +134,7 @@ func (a *MySQLAdapter) Render(_ context.Context, request RenderRequest) (RenderR
 	primaryCluster := a.primaryCluster(ctx, params)
 	clusterRoles := a.renderClusterRoles(ctx, params)
 	packagePaths := make([]string, 0, len(clusterRoles))
-	artifacts := make([]RenderedArtifact, 0, len(clusterRoles)*5)
+	artifacts := make([]RenderedArtifact, 0, len(clusterRoles)*8)
 	for _, role := range clusterRoles {
 		packagePath := mysqlPackagePath(ctx, role.cluster)
 		packagePaths = append(packagePaths, packagePath)
@@ -612,6 +612,19 @@ func (a *MySQLAdapter) renderClusterArtifacts(ctx ServiceContext, params mysqlPa
 		{name: "configmap.yaml", body: configManifest},
 		{name: "statefulset.yaml", body: statefulSetManifest},
 	}
+	if params.BackupProfile != "" {
+		backupPVC, backupCronJob := a.backupManifests(ctx, params, version, databaseName, namespace, authSecretName, labels)
+		manifests = append(manifests,
+			struct {
+				name string
+				body map[string]any
+			}{name: "backup-pvc.yaml", body: backupPVC},
+			struct {
+				name string
+				body map[string]any
+			}{name: "backup-cronjob.yaml", body: backupCronJob},
+		)
+	}
 	result := make([]RenderedArtifact, 0, len(manifests))
 	for _, manifest := range manifests {
 		content, err := yaml.Marshal(manifest.body)
@@ -624,6 +637,79 @@ func (a *MySQLAdapter) renderClusterArtifacts(ctx ServiceContext, params mysqlPa
 		})
 	}
 	return result, nil
+}
+
+func (a *MySQLAdapter) backupManifests(ctx ServiceContext, params mysqlParameters, version, databaseName, namespace, authSecretName string, labels map[string]string) (map[string]any, map[string]any) {
+	backupName := fmt.Sprintf("%s-backups", ctx.Instance.Name)
+	pvc := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "PersistentVolumeClaim",
+		"metadata": map[string]any{
+			"name":      backupName,
+			"namespace": namespace,
+			"labels":    labels,
+			"annotations": map[string]string{
+				"servicer.io/backup-profile": params.BackupProfile,
+			},
+		},
+		"spec": map[string]any{
+			"accessModes": []string{"ReadWriteOnce"},
+			"resources": map[string]any{
+				"requests": map[string]string{"storage": mysqlBackupStorageSize(params)},
+			},
+		},
+	}
+	if params.StorageClass != "" {
+		pvc["spec"].(map[string]any)["storageClassName"] = params.StorageClass
+	}
+
+	cronJob := map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "CronJob",
+		"metadata": map[string]any{
+			"name":      fmt.Sprintf("%s-backup", ctx.Instance.Name),
+			"namespace": namespace,
+			"labels":    labels,
+			"annotations": map[string]string{
+				"servicer.io/backup-profile": params.BackupProfile,
+				"servicer.io/retention-days": mysqlBackupRetentionDays(params.BackupProfile),
+			},
+		},
+		"spec": map[string]any{
+			"schedule":                   mysqlBackupSchedule(params.BackupProfile),
+			"successfulJobsHistoryLimit": int32(3),
+			"failedJobsHistoryLimit":     int32(3),
+			"jobTemplate": map[string]any{
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"restartPolicy": "OnFailure",
+							"containers": []map[string]any{{
+								"name":  "mysqldump",
+								"image": fmt.Sprintf("mysql:%s", version),
+								"env": []map[string]any{
+									{"name": "MYSQL_USER", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": authSecretName, "key": "username"}}},
+									{"name": "MYSQL_PASSWORD", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": authSecretName, "key": "password"}}},
+								},
+								"command": []string{"/bin/sh", "-c", fmt.Sprintf("set -eu; ts=$(date +%%Y%%m%%d%%H%%M%%S); mysqldump -h %s.%s.svc.cluster.local -u \"$MYSQL_USER\" -p\"$MYSQL_PASSWORD\" --single-transaction --databases %s | gzip > /backups/%s-${ts}.sql.gz", ctx.Instance.Name, namespace, databaseName, databaseName)},
+								"volumeMounts": []map[string]any{{
+									"name":      "backups",
+									"mountPath": "/backups",
+								}},
+							}},
+							"volumes": []map[string]any{{
+								"name": "backups",
+								"persistentVolumeClaim": map[string]string{
+									"claimName": backupName,
+								},
+							}},
+						},
+					},
+				},
+			},
+		},
+	}
+	return pvc, cronJob
 }
 
 func (a *MySQLAdapter) mysqlConfig(ctx ServiceContext, params mysqlParameters, role, primaryCluster, clusterName string) string {
@@ -666,6 +752,35 @@ func (a *MySQLAdapter) mysqlConfig(ctx ServiceContext, params mysqlParameters, r
 		)
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func mysqlBackupSchedule(profile string) string {
+	switch strings.TrimSpace(profile) {
+	case "hourly-24h":
+		return "0 * * * *"
+	case "weekly-4w":
+		return "0 3 * * 0"
+	default:
+		return "0 2 * * *"
+	}
+}
+
+func mysqlBackupRetentionDays(profile string) string {
+	switch strings.TrimSpace(profile) {
+	case "hourly-24h":
+		return "1"
+	case "weekly-4w":
+		return "28"
+	default:
+		return "7"
+	}
+}
+
+func mysqlBackupStorageSize(params mysqlParameters) string {
+	if params.StorageSize == "" {
+		return "20Gi"
+	}
+	return params.StorageSize
 }
 
 func (a *MySQLAdapter) galeraPeers(ctx ServiceContext, params mysqlParameters) []string {
