@@ -38,8 +38,8 @@ Commit: `73cdb41`
 Commit: `73cdb41`
 
 ### [~] ServiceBinding CRD
-**Plans 002, 004** — `ServiceBinding` now has an API type, generated CRD, controller, and BFF list endpoint. The controller can project source `ServiceInstance` credentials into a target namespace as a managed Secret. External secret/Vault-backed projection and richer target integration are still open.  
-Commit: `73cdb41`
+**Plans 002, 004** — `ServiceBinding` now has an API type, generated CRD, controller, and BFF list endpoint. The controller can project source `ServiceInstance` credentials into a target namespace either as a managed Secret or via External Secrets Operator resources (`ServiceAccount`, RBAC, `SecretStore`, `ExternalSecret`). Vault-backed projection and richer target integration are still open.  
+Commit: `6db1e38`
 
 ### [~] Admission webhooks
 **Plan 002** — `ServiceInstance`, `NamespaceClaim`, `ServiceBinding`, and `VirtualMachineClaim` now have validating/defaulting webhook handlers, first-pass webhook manifests, and an explicit `--enable-webhooks` manager flag for safe rollout. Coverage is still partial: the remaining CRDs do not yet have admission handlers, and certificate/service packaging for turnkey cluster install is still open.  
@@ -96,8 +96,9 @@ Commit: `7ee64be`
 **Plan 006** — `/api/audit` now supports structured filters (`type`, `actor`, `resource`, `action`, `phase`, `from`, `to`, `limit`) in addition to substring search. Durable retention is still open: Kubernetes Events still age out and there is not yet an audit-specific persistence store or retention policy.  
 Commit: `7ee64be`
 
-### [ ] Control-plane backup and restore
-**Plan 006** — No etcd backup, no CRD export/import, and no control-plane snapshot tooling. Database service adapters support a `backup` action, but Servicer itself is not backed up.
+### [~] Control-plane backup and restore
+**Plan 006** — Best-effort control-plane snapshot tooling now exists via `hack/control-plane-backup.sh` for backup/restore of Servicer CRDs, `servicer-system` runtime state, Servicer-managed Argo CD Applications, and local generated delivery artifacts. This is still partial: it is not full etcd backup, has no scheduled automation, and has not yet been packaged into release workflows.  
+Commit: `6db1e38`
 
 ### [~] Metrics, SLOs, dashboards, and alerting
 **Plan 006** — `cmd/manager` still exposes controller-runtime metrics, and the BFF now exposes a Prometheus `/metrics` surface with request totals, request latency, authentication failures, and upstream proxy failure counters. This is still partial: controller-specific business metrics, dashboard packs, alert rules, and explicit SLOs are still open.  
