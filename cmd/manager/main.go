@@ -7,6 +7,7 @@ import (
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"github.com/sindef/servicer/internal/adapters"
 	"github.com/sindef/servicer/internal/controllers"
+	"github.com/sindef/servicer/internal/deliveryrepo"
 	"github.com/sindef/servicer/internal/materializer"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -32,6 +33,8 @@ func main() {
 	var deliveryRepoURL string
 	var deliveryRepoRef string
 	var deliveryRepoPath string
+	var deliveryRepoWorktree string
+	var deliveryRepoAutoCommit bool
 	var argoCDNamespace string
 	var argoCDProject string
 
@@ -42,6 +45,8 @@ func main() {
 	flag.StringVar(&deliveryRepoURL, "delivery-repo-url", "", "Git repository URL that Argo CD should use for generated delivery content.")
 	flag.StringVar(&deliveryRepoRef, "delivery-repo-ref", "HEAD", "Git revision Argo CD should track for generated delivery content.")
 	flag.StringVar(&deliveryRepoPath, "delivery-repo-path", materializer.DefaultRoot, "Repository-relative root path for generated delivery content.")
+	flag.StringVar(&deliveryRepoWorktree, "delivery-repo-worktree", "", "Local Git worktree path where generated delivery content should be published.")
+	flag.BoolVar(&deliveryRepoAutoCommit, "delivery-repo-auto-commit", false, "Automatically create Git commits in the configured delivery repo worktree after publishing artifacts.")
 	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd", "Namespace where Argo CD Application resources are created.")
 	flag.StringVar(&argoCDProject, "argocd-project", "default", "Argo CD project used for Servicer-managed Applications.")
 
@@ -98,7 +103,7 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "unable to create project controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ServiceInstanceReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry, Materializer: materializer.New(deliveryRoot), Recorder: mgr.GetEventRecorderFor("servicer"), ArgoCDNamespace: argoCDNamespace, ArgoCDProject: argoCDProject, DeliveryRepoURL: deliveryRepoURL, DeliveryRepoRef: deliveryRepoRef, DeliveryRepoPath: deliveryRepoPath}).SetupWithManager(mgr); err != nil {
+	if err := (&controllers.ServiceInstanceReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry, Materializer: materializer.New(deliveryRoot), Publisher: deliveryrepo.New(deliveryRepoWorktree, deliveryRepoPath, deliveryRepoAutoCommit), Recorder: mgr.GetEventRecorderFor("servicer"), ArgoCDNamespace: argoCDNamespace, ArgoCDProject: argoCDProject, DeliveryRepoURL: deliveryRepoURL, DeliveryRepoRef: deliveryRepoRef, DeliveryRepoPath: deliveryRepoPath}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to create service instance controller")
 		os.Exit(1)
 	}

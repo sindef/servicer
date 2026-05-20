@@ -149,6 +149,14 @@ controller-gen object paths="./api/..."
 
 Services are delivered via Argo CD. Servicer CRDs are the authoritative source of desired state — not Git-first workflows. The controller materialises Argo `Application` objects from `ServiceInstance` specs.
 
+For Argo-backed delivery beyond the local demo flow, the manager can be configured with:
+
+- `--delivery-repo-url` for the Git repo Argo should track
+- `--delivery-repo-path` for the repo-relative root that receives generated packages
+- `--delivery-repo-worktree` for a local checked-out worktree that Servicer publishes into
+- `--delivery-repo-auto-commit` to create local Git commits after publication
+- `--argocd-namespace` and `--argocd-project` for managed `Application` placement
+
 ## Product Standards
 
 - [Product standards](docs/product-standards.md) - shared product contract rules, including relational database naming defaults and normalization

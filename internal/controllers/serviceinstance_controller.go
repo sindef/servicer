@@ -12,6 +12,7 @@ import (
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"github.com/sindef/servicer/internal/adapters"
+	"github.com/sindef/servicer/internal/deliveryrepo"
 	"github.com/sindef/servicer/internal/materializer"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +34,7 @@ type ServiceInstanceReconciler struct {
 	Scheme           *runtime.Scheme
 	Adapters         *adapters.Registry
 	Materializer     *materializer.Materializer
+	Publisher        *deliveryrepo.Publisher
 	Recorder         record.EventRecorder
 	ArgoCDNamespace  string
 	ArgoCDProject    string
@@ -232,6 +234,33 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return ctrl.Result{}, nil
 	}
+	publishedPath := materializeResult.Path
+	publishedCommit := ""
+	if r.Publisher != nil && r.Publisher.Enabled() {
+		publishResult, publishErr := r.Publisher.Publish(ctx, deliveryrepo.Request{
+			PackagePath:  renderResult.PackagePath,
+			PackagePaths: renderResult.PackagePaths,
+			Artifacts:    renderResult.Artifacts,
+			Revision:     materializeResult.Revision,
+			Message:      fmt.Sprintf("servicer: publish %s/%s", project.Name, instance.Name),
+		})
+		if publishErr != nil {
+			instance.Status.Phase = "Failed"
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "PublishFailed", publishErr.Error())
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "PublishFailed", "Delivery artifacts could not be published to the configured Git worktree.")
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "PublishFailed", "Delivery artifacts could not be published.")
+			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
+					return ctrl.Result{}, updateErr
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+		if publishResult.PublishedPath != "" {
+			publishedPath = publishResult.PublishedPath
+		}
+		publishedCommit = publishResult.Commit
+	}
 
 	instance.Status.Phase = "Materialized"
 	instance.Status.Runtime.Driver = renderResult.RuntimeDriver
@@ -244,6 +273,9 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		ApplicationName: argoApplicationName(&project, &instance),
 		Message:         "Delivery artifacts are materialized and ready for Argo CD reconciliation.",
 	}
+	if publishedCommit != "" {
+		instance.Status.Sync.Message = fmt.Sprintf("%s Published commit %s.", instance.Status.Sync.Message, shortCommit(publishedCommit))
+	}
 	instance.Status.Health.Summary = fmt.Sprintf("Materialized %d artifact(s) for %s.", len(renderResult.Artifacts), renderResult.RuntimeDriver)
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Placed", metav1.ConditionTrue, "PlacementResolved", "Service instance placement resolved.")
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionTrue, "ArtifactsMaterialized", "Delivery artifacts materialized successfully.")
@@ -251,7 +283,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "AwaitingRuntime", "Service instance runtime health has not yet been observed.")
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "ReconciliationProgressing", "Service instance has materialized successfully.")
 
-	if err := r.ensureArgoApplication(ctx, &project, &instance, materializeResult.Path); err != nil {
+	if err := r.ensureArgoApplication(ctx, &project, &instance, publishedPath); err != nil {
 		instance.Status.Phase = "Failed"
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationFailed", err.Error())
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ArgoApplicationFailed", "Argo CD application could not be reconciled.")
@@ -957,6 +989,14 @@ func mergeStringMaps(base, overlay map[string]string) map[string]string {
 		merged[key] = value
 	}
 	return merged
+}
+
+func shortCommit(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
 }
 
 func serviceInstanceContains(items []string, target string) bool {
