@@ -18,8 +18,8 @@ Implementation notes in this review are current as of 2026-05-20.
 Commit: `e8c9ed4`
 
 ### [~] OIDC / real authentication
-**Plans 005, 006** — Backend auth is no longer header-only: the BFF now supports OIDC JWT validation with issuer/client-id configuration, roles/groups claim extraction, and an explicit opt-in demo-header fallback for local/dev use. Frontend login still falls back to demo mode and there is not yet a browser redirect/session flow.  
-Commit: `7ee64be`
+**Plans 005, 006** — Backend auth is no longer header-only: the BFF now supports OIDC JWT validation with issuer/client-id configuration, roles/groups claim extraction, lightweight auth/session introspection endpoints, and an explicit opt-in demo-header fallback for local/dev use. The frontend now bootstraps auth mode from the BFF, performs browser OIDC code+PKCE login, stores an authenticated browser session token, and supports sign-out. This is still partial: there is no refresh-token rotation, no server-managed cookie session, and browser logout is still provider-metadata dependent.  
+Commit: `0081bad`
 
 ### [x] Approvals workflow
 **Plan 006** — `ActionRequest` approval is now enforced end to end. Sensitive actions stop in `PendingApproval`, the BFF exposes an approval/rejection path for approver roles, self-approval is blocked for non-admins, and the controller refuses “approved” actions that do not carry approver identity.  
