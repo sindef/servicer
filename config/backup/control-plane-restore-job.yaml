@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: servicer-control-plane-restore
+  namespace: servicer-system
+  labels:
+    app.kubernetes.io/name: servicer
+    app.kubernetes.io/component: restore
+  annotations:
+    servicer.io/backup-path: /backups/servicer-YYYYMMDD-HHMMSS
+spec:
+  template:
+    spec:
+      serviceAccountName: servicer-control-plane-backup
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: ghcr.io/sindef/servicer-tools:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: BACKUP_PATH
+              value: /backups/servicer-YYYYMMDD-HHMMSS
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              test "$BACKUP_PATH" != "/backups/servicer-YYYYMMDD-HHMMSS"
+              /workspace/hack/control-plane-backup.sh restore "$BACKUP_PATH"
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: servicer-control-plane-backups

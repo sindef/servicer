@@ -97,8 +97,8 @@ Commit: `7ee64be`
 **Plan 006** — `/api/audit` supports structured filters (`type`, `actor`, `resource`, `action`, `phase`, `from`, `to`, `limit`) in addition to substring search, and the BFF now mirrors audit summaries into a labelled ConfigMap-backed audit store with `SERVICER_AUDIT_NAMESPACE` and `SERVICER_AUDIT_RETENTION_DAYS` retention controls.  
 Commit: `7ee64be`
 
-### [~] Control-plane backup and restore
-**Plan 006** — Best-effort control-plane snapshot tooling now exists via `hack/control-plane-backup.sh` for backup/restore of Servicer CRDs, `servicer-system` runtime state, Servicer-managed Argo CD Applications, and local generated delivery artifacts. This is still partial: it is not full etcd backup, has no scheduled automation, and has not yet been packaged into release workflows.  
+### [x] Control-plane backup and restore
+**Plan 006** — Best-effort control-plane snapshot tooling exists via `hack/control-plane-backup.sh`, and `config/backup` now packages RBAC, a backup PVC, scheduled backup `CronJob`, and restore `Job` template for Servicer CRDs, `servicer-system` runtime state, Servicer-managed Argo CD Applications, and generated delivery artifacts.  
 Commit: `6db1e38`
 
 ### [x] Metrics, SLOs, dashboards, and alerting
