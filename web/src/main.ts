@@ -17,7 +17,6 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'overview', component: OverviewPage },
-    { path: '/auth/callback', name: 'auth-callback', component: OverviewPage },
     { path: '/catalog', name: 'catalog', component: CatalogPage },
     { path: '/instances', name: 'instances', component: InstancesPage },
     { path: '/instances/:name', name: 'instance-detail', component: InstanceDetailPage, props: true },

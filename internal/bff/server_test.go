@@ -909,6 +909,8 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 		"SERVICER_OIDC_GROUPS_CLAIM",
 		"SERVICER_OIDC_SCOPES",
 		"SERVICER_OIDC_REDIRECT_PATH",
+		"SERVICER_OIDC_END_SESSION_URL",
+		"SERVICER_SESSION_SECRET",
 	} {
 		_ = os.Unsetenv(key)
 	}

@@ -15,6 +15,8 @@ type OverviewResponse struct {
 type AuthConfigResponse struct {
 	Mode             string          `json:"mode"`
 	AllowDemoHeaders bool            `json:"allowDemoHeaders,omitempty"`
+	LoginPath        string          `json:"loginPath,omitempty"`
+	LogoutPath       string          `json:"logoutPath,omitempty"`
 	OIDC             *AuthOIDCConfig `json:"oidc,omitempty"`
 }
 
