@@ -80,6 +80,7 @@ func main() {
 		adapters.NewNATSAdapter(),
 		adapters.NewK8ssandraAdapter(),
 		adapters.NewYugabyteAdapter(),
+		adapters.NewKubeVirtAdapter(),
 		adapters.NewArgoApplicationAdapter(),
 	)
 	if err != nil {

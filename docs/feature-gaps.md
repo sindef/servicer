@@ -76,8 +76,8 @@ Commit: `e8c9ed4`
 ### [~] K8ssandra / Cassandra adapter
 **Plan 004** — Cassandra now has a first-pass K8ssandra-backed `ServiceAdapter`, sample catalog entries, requestable catalog exposure, and deterministic manifest rendering for single- and multi-datacenter topologies. This is still partial: action execution is queued/placeholder only, runtime observation is workload-level rather than operator-deep, and richer backup/repair orchestration remains open.
 
-### [ ] KubeVirt adapter
-**Plans 004 stretch, 006** — No adapter code, no contract definition, no API types imported. Mentioned only in plan docs and the README roadmap.
+### [~] KubeVirt adapter
+**Plans 004 stretch, 006** — Servicer now has a first-pass `virtual-machine` product contract, KubeVirt-backed adapter, sample catalog entries, and deterministic rendering for a namespace, cloud-init Secret, and KubeVirt `VirtualMachine`. This is still partial: runtime observation is shallow, persistent DataVolume workflows are not wired yet, and `VirtualMachineClaim` still needs to route through the adapter-backed service path.
 
 ### [~] Backup config wiring — PostgreSQL and MySQL
 **Plan 004** — PostgreSQL/CNPG backup object-store wiring is implemented and rendered into CNPG backup manifests. MySQL still only consumes the coarse `backupProfile` contract and does not yet materialize a real backup execution/storage pipeline.  

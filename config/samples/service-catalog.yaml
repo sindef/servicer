@@ -508,6 +508,35 @@ spec:
 apiVersion: platform.servicer.io/v1alpha1
 kind: ServiceClass
 metadata:
+  name: virtual-machine
+spec:
+  displayName: Virtual Machine
+  category: compute
+  driver: kubevirt
+  capabilityFlags:
+    - cloud-init
+    - power-actions
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: virtual-machine-dev
+spec:
+  serviceClassRef:
+    name: virtual-machine
+  displayName: Development VM
+  tier: development
+  topology: single-vm
+  defaultParameters:
+    cpu: "1"
+    memory: 1Gi
+    storageSize: 20Gi
+    runStrategy: RerunOnFailure
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
   name: argo-application
 spec:
   displayName: Argo CD Application

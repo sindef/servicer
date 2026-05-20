@@ -8,6 +8,7 @@ var knownServiceClasses = []ServiceClass{
 	ServiceClassNATS,
 	ServiceClassK8ssandra,
 	ServiceClassYugabyte,
+	ServiceClassKubeVirt,
 	ServiceClassArgoApp,
 }
 
@@ -40,6 +41,8 @@ func KnownContract(serviceClass ServiceClass) (ProductContract, bool) {
 		return K8ssandraContract, true
 	case ServiceClassYugabyte:
 		return YugabyteContract, true
+	case ServiceClassKubeVirt:
+		return KubeVirtContract, true
 	case ServiceClassArgoApp:
 		return ArgoApplicationContract, true
 	default:

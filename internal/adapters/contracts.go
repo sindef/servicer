@@ -18,6 +18,7 @@ const (
 	ServiceClassNATS       ServiceClass = "nats"
 	ServiceClassK8ssandra  ServiceClass = "cassandra"
 	ServiceClassYugabyte   ServiceClass = "yugabyte"
+	ServiceClassKubeVirt   ServiceClass = "virtual-machine"
 	ServiceClassArgoApp    ServiceClass = "argo-application"
 )
 
@@ -68,6 +69,10 @@ const (
 	ActionPause             ActionName = "pause"
 	ActionResume            ActionName = "resume"
 	ActionRepair            ActionName = "repair"
+	ActionStart             ActionName = "start"
+	ActionStop              ActionName = "stop"
+	ActionReboot            ActionName = "reboot"
+	ActionSnapshot          ActionName = "snapshot"
 	ActionDeleteStream      ActionName = "delete-stream"
 	ActionPurgeStream       ActionName = "purge-stream"
 	ActionDeleteConsumer    ActionName = "delete-consumer"
