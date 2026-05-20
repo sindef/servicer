@@ -99,5 +99,6 @@ Commit: `7ee64be`
 ### [ ] Control-plane backup and restore
 **Plan 006** — No etcd backup, no CRD export/import, and no control-plane snapshot tooling. Database service adapters support a `backup` action, but Servicer itself is not backed up.
 
-### [ ] Metrics, SLOs, dashboards, and alerting
-**Plan 006** — `cmd/manager` exposes controller-runtime metrics, but there is still no meaningful Servicer-specific metrics surface, BFF Prometheus instrumentation, dashboard pack, alert rules, or SLO layer. This remains operationally open.
+### [~] Metrics, SLOs, dashboards, and alerting
+**Plan 006** — `cmd/manager` still exposes controller-runtime metrics, and the BFF now exposes a Prometheus `/metrics` surface with request totals, request latency, authentication failures, and upstream proxy failure counters. This is still partial: controller-specific business metrics, dashboard packs, alert rules, and explicit SLOs are still open.  
+Commit: `a714a01`
