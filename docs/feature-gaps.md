@@ -30,19 +30,20 @@ Commit: `7ee64be`
 ## Domain API
 
 ### [~] NamespaceClaim CRD
-**Plan 002** — A first-pass `NamespaceClaim` API type and generated CRD now exist in `api/v1alpha1/` and `config/crd/bases/`. Controller, BFF, and end-to-end delivery behavior are still open.  
-Commit: `da663a7`
+**Plan 002** — `NamespaceClaim` now has an API type, generated CRD, controller, and BFF list endpoint. It currently reconciles through a backing namespace `ServiceInstance`, which gives it real delivery behavior without a bespoke runtime path yet. A dedicated request/detail UX and richer product-specific API are still open.  
+Commit: `73cdb41`
 
 ### [~] VirtualMachineClaim CRD
-**Plan 002** — A first-pass `VirtualMachineClaim` API type and generated CRD now exist. Runtime adapter, controller behavior, and KubeVirt integration are still open.  
-Commit: `da663a7`
+**Plan 002** — `VirtualMachineClaim` now has an API type, generated CRD, controller scaffold, and BFF list endpoint. It is accepted and surfaced by the control plane, but still stops in `PendingDriver` until a KubeVirt-backed runtime adapter exists.  
+Commit: `73cdb41`
 
 ### [~] ServiceBinding CRD
-**Plans 002, 004** — A first-pass `ServiceBinding` API type and generated CRD now exist. Binding controller behavior, secure projection, and BFF endpoints remain open.  
-Commit: `da663a7`
+**Plans 002, 004** — `ServiceBinding` now has an API type, generated CRD, controller, and BFF list endpoint. The controller can project source `ServiceInstance` credentials into a target namespace as a managed Secret. External secret/Vault-backed projection and richer target integration are still open.  
+Commit: `73cdb41`
 
-### [ ] Admission webhooks
-**Plan 002** — Validation and defaulting webhooks are planned for all CRDs. CRD types have `kubebuilder` marker annotations for static schema validation only. No `ValidatingWebhookConfiguration`, no `MutatingWebhookConfiguration`, and no admission handler code exist.
+### [~] Admission webhooks
+**Plan 002** — `ServiceInstance`, `NamespaceClaim`, `ServiceBinding`, and `VirtualMachineClaim` now have validating/defaulting webhook handlers, first-pass webhook manifests, and an explicit `--enable-webhooks` manager flag for safe rollout. Coverage is still partial: the remaining CRDs do not yet have admission handlers, and certificate/service packaging for turnkey cluster install is still open.  
+Commit: `73cdb41`
 
 ---
 
