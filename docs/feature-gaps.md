@@ -49,8 +49,8 @@ Commit: `73cdb41`
 
 ## Tenancy and policy
 
-### [~] Quota enforcement
-**Plan 002** — `Project.Spec.Quotas.MaxServices` and `MaxNamespaces` are now checked during `ServiceInstance` reconciliation, and project usage summaries are populated from current instances. `Tenant.Spec.QuotaProfileRef` still is not resolved into inherited quotas, so quota-profile-driven enforcement remains open.  
+### [x] Quota enforcement
+**Plan 002** — `Project.Spec.Quotas.MaxServices` and `MaxNamespaces` are checked during `ServiceInstance` reconciliation, project usage summaries are populated from current instances, and `Tenant.Spec.QuotaProfileRef` now resolves curated inherited project quotas with project-local overrides.  
 Commit: `7ee64be`
 
 ### [~] Policy engine

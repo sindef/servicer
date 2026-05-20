@@ -118,7 +118,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if policyErrs := evaluateInstancePolicies(&instance, &tenant, &project, &plan); len(policyErrs) > 0 {
 		return r.handleValidationFailure(ctx, &instance, originalStatus, "PolicyViolation", policyErrs.ToAggregate().Error())
 	}
-	if result, handled, err := r.enforceProjectQuota(ctx, &instance, &project, originalStatus); handled || err != nil {
+	if result, handled, err := r.enforceProjectQuota(ctx, &instance, &project, &tenant, originalStatus); handled || err != nil {
 		return result, err
 	}
 
@@ -504,12 +504,16 @@ func summarizeValidationIssues(issues []adapters.ValidationIssue) string {
 	return strings.Join(parts, "; ")
 }
 
-func (r *ServiceInstanceReconciler) enforceProjectQuota(ctx context.Context, instance *platformv1alpha1.ServiceInstance, project *platformv1alpha1.Project, originalStatus platformv1alpha1.ServiceInstanceStatus) (ctrl.Result, bool, error) {
+func (r *ServiceInstanceReconciler) enforceProjectQuota(ctx context.Context, instance *platformv1alpha1.ServiceInstance, project *platformv1alpha1.Project, tenant *platformv1alpha1.Tenant, originalStatus platformv1alpha1.ServiceInstanceStatus) (ctrl.Result, bool, error) {
 	if project == nil {
 		return ctrl.Result{}, false, nil
 	}
-	maxServices := project.Spec.Quotas.MaxServices
-	maxNamespaces := project.Spec.Quotas.MaxNamespaces
+	quota := project.Status.EffectiveQuota
+	if quota.MaxServices == nil && quota.MaxNamespaces == nil {
+		quota = effectiveProjectQuota(project, tenant)
+	}
+	maxServices := quota.MaxServices
+	maxNamespaces := quota.MaxNamespaces
 	if maxServices == nil && maxNamespaces == nil {
 		return ctrl.Result{}, false, nil
 	}

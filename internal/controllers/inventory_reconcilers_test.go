@@ -239,6 +239,106 @@ func TestProjectReconcilerWaitsForClusterTargetReadiness(t *testing.T) {
 	}
 }
 
+func TestProjectReconcilerAppliesTenantQuotaProfile(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod"},
+		Spec: platformv1alpha1.ProjectSpec{
+			TenantRef:         platformv1alpha1.LocalObjectReference{Name: "acme"},
+			DisplayName:       "Acme Production",
+			Environment:       platformv1alpha1.EnvironmentProduction,
+			TargetSelector:    platformv1alpha1.TargetSelectorSpec{ClusterRef: &platformv1alpha1.LocalObjectReference{Name: "local-dev"}},
+			NamespaceStrategy: platformv1alpha1.NamespaceStrategySpec{Mode: platformv1alpha1.NamespaceStrategyDedicated, Prefix: "acme-prod"},
+			Quotas:            platformv1alpha1.ProjectQuotasSpec{MaxNamespaces: int32PtrTest(4)},
+		},
+	}
+	tenant := &platformv1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: platformv1alpha1.TenantSpec{
+			DisplayName:           "Acme Corp",
+			Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
+			QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "tiny"},
+			AllowedServiceClasses: []string{"postgresql"},
+			Lifecycle:             platformv1alpha1.TenantLifecycleSpec{Phase: platformv1alpha1.TenantLifecyclePhaseActive},
+		},
+	}
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev", Generation: 1},
+		Status: platformv1alpha1.ClusterTargetStatus{
+			ObservedGeneration: 1,
+			Reachable:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ClusterValidated", Message: "ready"},
+			},
+		},
+	}
+	reconciler := &ProjectReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.Project{}).
+			WithObjects(project, tenant, clusterTarget).
+			Build(),
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "acme-prod"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updated platformv1alpha1.Project
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "acme-prod"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.EffectiveQuota.MaxServices == nil || *updated.Status.EffectiveQuota.MaxServices != 1 {
+		t.Fatalf("expected inherited maxServices 1, got %#v", updated.Status.EffectiveQuota)
+	}
+	if updated.Status.EffectiveQuota.MaxNamespaces == nil || *updated.Status.EffectiveQuota.MaxNamespaces != 4 {
+		t.Fatalf("expected project maxNamespaces override 4, got %#v", updated.Status.EffectiveQuota)
+	}
+}
+
+func TestServiceInstanceReconcilerRejectsInheritedQuotaExceeded(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	registry, err := adapters.NewRegistry(adapters.NewValkeyAdapter())
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fixture := valkeyInventoryFixture()
+	fixture.tenant.Spec.QuotaProfileRef = platformv1alpha1.LocalObjectReference{Name: "tiny"}
+	fixture.project.Status.EffectiveQuota = platformv1alpha1.ProjectQuotasSpec{}
+	existing := fixture.instance.DeepCopy()
+	existing.Name = "existing-cache"
+	existing.Status.Placement.Namespace = "acme-prod-existing-cache"
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceInstance{}).
+			WithObjects(fixture.tenant, fixture.project, fixture.serviceClass, fixture.servicePlan, fixture.clusterTarget, existing, fixture.instance).
+			Build(),
+		Scheme:       scheme,
+		Adapters:     registry,
+		Materializer: materializer.New(t.TempDir()),
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
+	}
+
+	var updated platformv1alpha1.ServiceInstance
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "session-cache"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "Failed" {
+		t.Fatalf("expected quota failure, got phase %q", updated.Status.Phase)
+	}
+	failed := statusConditionByType(updated.Status.Conditions, "Failed")
+	if failed == nil || !strings.Contains(failed.Message, "allows at most 1 service instances") {
+		t.Fatalf("expected inherited quota message, got %#v", updated.Status.Conditions)
+	}
+}
+
 func TestServiceInstanceReconcilerRejectsUnpublishedServicePlan(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
@@ -1557,4 +1657,13 @@ func valkeyInventoryFixture() valkeyFixture {
 
 func int32PtrTest(value int32) *int32 {
 	return &value
+}
+
+func statusConditionByType(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }

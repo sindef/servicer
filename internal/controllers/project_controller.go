@@ -28,7 +28,6 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	originalStatus := project.Status
 	project.Status.ObservedGeneration = project.Generation
-	project.Status.EffectiveQuota = project.Spec.Quotas
 	if err := r.populateUsageSummary(ctx, &project); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -37,6 +36,7 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err := r.Get(ctx, client.ObjectKey{Name: project.Spec.TenantRef.Name}, &tenant); err != nil {
 		return r.handleDependencyError(ctx, &project, originalStatus, "TenantUnavailable", fmt.Sprintf("Referenced Tenant %q is not available.", project.Spec.TenantRef.Name), err)
 	}
+	project.Status.EffectiveQuota = effectiveProjectQuota(&project, &tenant)
 
 	if tenant.Spec.Lifecycle.Phase != platformv1alpha1.TenantLifecyclePhaseActive {
 		project.Status.Phase = "Failed"
