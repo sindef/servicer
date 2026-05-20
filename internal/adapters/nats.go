@@ -519,7 +519,7 @@ func (a *NATSAdapter) replicas(ctx ServiceContext, parameters natsParameters) in
 }
 
 func (a *NATSAdapter) natsConfig(ctx ServiceContext, parameters natsParameters, clusterName string, gatewayClusters []string) string {
-	config := fmt.Sprintf("port: 4222\nhttp: 8222\nmax_payload: %s\ninclude /etc/nats-auth/users.conf\n", parameters.MaxPayload)
+	config := fmt.Sprintf("port: 4222\nhttp: 8222\nmax_payload: %s\ninclude ../nats-auth/users.conf\n", parameters.MaxPayload)
 	config += fmt.Sprintf("server_name: %s-%s\n", ctx.Instance.Name, sanitizeK8ssandraName(clusterName))
 	config += "cluster {\n"
 	config += fmt.Sprintf("  name: %s\n", clusterName)

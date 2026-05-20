@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# hack/demo-setup.sh — one-time setup for the Servicer K8s demo.
+# hack/demo-setup.sh — manage the Servicer K8s demo environment.
 #
-# Creates two Kind clusters:
+# Usage:
+#   ./hack/demo-setup.sh [up]   — create clusters, build images, deploy (default)
+#   ./hack/demo-setup.sh down   — destroy both Kind clusters completely
+#
+# Clusters:
 #   servicer-app    — runs the Servicer platform (manager, bff, web, syncer)
 #   servicer-target — the managed cluster where delivery artifacts land
-#
-# Builds all four container images, loads them into servicer-app, installs
-# CRDs, applies the service catalog and demo tenancy, and patches the
-# local-dev-kubeconfig Secret so the syncer can reach servicer-target from
-# inside a pod.
-#
-# Run once, then open http://localhost:5173
-# Re-run to rebuild images and redeploy without touching the clusters.
 set -euo pipefail
+
+CMD="${1:-up}"
+if [[ "${CMD}" != "up" && "${CMD}" != "down" ]]; then
+  echo "Usage: $0 [up|down]" >&2
+  exit 1
+fi
 
 APP_CLUSTER="${APP_CLUSTER:-servicer-app}"
 TARGET_CLUSTER="${TARGET_CLUSTER:-servicer-target}"
@@ -27,6 +29,20 @@ require() {
 require kind
 require kubectl
 require docker
+
+# ── Down ──────────────────────────────────────────────────────────────────────
+if [[ "${CMD}" == "down" ]]; then
+  for cluster in "${APP_CLUSTER}" "${TARGET_CLUSTER}"; do
+    if kind get clusters 2>/dev/null | grep -qx "${cluster}"; then
+      echo "Deleting Kind cluster '${cluster}'..."
+      kind delete cluster --name "${cluster}"
+    else
+      echo "Kind cluster '${cluster}' not found; skipping."
+    fi
+  done
+  echo "Done."
+  exit 0
+fi
 
 mkdir -p generated
 
@@ -122,6 +138,5 @@ echo ""
 echo "To rebuild and redeploy after code changes:"
 echo "  ./hack/demo-setup.sh"
 echo ""
-echo "Teardown:"
-echo "  kind delete cluster --name ${APP_CLUSTER}"
-echo "  kind delete cluster --name ${TARGET_CLUSTER}"
+echo "To tear everything down:"
+echo "  ./hack/demo-setup.sh down"

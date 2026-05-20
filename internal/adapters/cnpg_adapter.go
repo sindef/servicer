@@ -280,7 +280,13 @@ func (a *CNPGAdapter) Observe(_ context.Context, request ObserveRequest) (Normal
 		},
 	}
 
-	if w := request.Runtime.Workload; w != nil && w.Observed {
+	if request.Runtime.Blocked {
+		status.Phase = "Blocked"
+		status.Summary = firstNonEmptyTrimmedAdapter(request.Runtime.Message, "CloudNative PG operator (postgresql.cnpg.io/v1) is not installed in the target cluster.")
+		status.Sync.Phase = SyncPhaseMaterialized
+		status.Sync.Message = status.Summary
+		status.HealthSignals[0] = HealthSignal{Key: "primary-ready", Status: "Blocked", Severity: HealthSeverityCritical, Message: status.Summary}
+	} else if w := request.Runtime.Workload; w != nil && w.Observed {
 		if w.DesiredReplicas > 0 && w.ReadyReplicas >= w.DesiredReplicas {
 			status.Phase = "Ready"
 			status.Summary = fmt.Sprintf("PostgreSQL cluster healthy: %d/%d instances ready.", w.ReadyReplicas, w.DesiredReplicas)

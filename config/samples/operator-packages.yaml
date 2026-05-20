@@ -1,0 +1,63 @@
+# Operator package catalog for the local-dev demo environment.
+# These entries describe operators the platform can ensure are installed
+# on ClusterTargets that declare them as required.
+#
+# Source URLs point at kustomize overlays in this repo under
+# config/operators/<name>/. ArgoCD will reconcile them when a
+# ClusterTarget is onboarded and ArgoCD is available; the syncer
+# applies them directly otherwise.
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: OperatorPackage
+metadata:
+  name: cnpg
+spec:
+  displayName: CloudNative PG
+  description: >-
+    The CloudNativePG operator manages PostgreSQL clusters on Kubernetes.
+    Required for the postgresql service class.
+  version: "1.24"
+  targetNamespace: cnpg-system
+  probes:
+    - crd: clusters.postgresql.cnpg.io
+  source:
+    repoURL: https://github.com/cloudnative-pg/cloudnative-pg
+    path: releases/cnpg-1.24.0.yaml
+    targetRevision: release-1.24
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: OperatorPackage
+metadata:
+  name: yugabyte
+spec:
+  displayName: YugabyteDB Operator
+  description: >-
+    The YugabyteDB operator manages YBUniverse clusters on Kubernetes.
+    Required for the yugabyte service class.
+  version: "2.21"
+  targetNamespace: yb-operator
+  probes:
+    - crd: ybuniverses.operator.yugabyte.io
+  source:
+    repoURL: https://github.com/yugabyte/yugabyte-operator
+    path: config/default
+    targetRevision: main
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: OperatorPackage
+metadata:
+  name: external-secrets
+spec:
+  displayName: External Secrets Operator
+  description: >-
+    ESO synchronises secrets from external stores (Vault, AWS SM, etc.)
+    into Kubernetes. Required for cross-cluster credential projection.
+  version: "0.10"
+  targetNamespace: external-secrets
+  probes:
+    - crd: externalsecrets.external-secrets.io
+    - crd: secretstores.external-secrets.io
+  source:
+    repoURL: https://github.com/external-secrets/external-secrets
+    path: deploy/charts/external-secrets
+    targetRevision: v0.10.0

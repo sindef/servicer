@@ -15,7 +15,23 @@ rules:
   # Events
   - apiGroups: [""]
     resources: ["events"]
-    verbs: ["create", "patch"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  # Pods (observeRuntime pod health checks)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Apps workloads (observeRuntime StatefulSet/Deployment observation)
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "deployments", "replicasets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  # CRDs (operator detection: ArgoCD, YugabyteDB, etc.)
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  # ArgoCD Applications (operator package delivery)
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

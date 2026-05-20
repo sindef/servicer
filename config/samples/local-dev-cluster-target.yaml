@@ -37,3 +37,6 @@ spec:
     operator.nats: available
     operator.servicer-valkey: planned
     storageclass.default: standard
+  requiredPackages:
+    - cnpg
+    - external-secrets

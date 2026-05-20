@@ -104,6 +104,12 @@ spec:
               region:
                 description: Region identifies the logical region or site of the cluster.
                 type: string
+              requiredPackages:
+                description: RequiredPackages lists OperatorPackage names that the
+                  platform should ensure are installed on this cluster.
+                items:
+                  type: string
+                type: array
             required:
             - connectionRef
             - displayName
@@ -186,6 +192,35 @@ spec:
                   on the target cluster.
                 items:
                   type: string
+                type: array
+              packages:
+                description: Packages lists the observed installation state of each
+                  required OperatorPackage.
+                items:
+                  description: PackageStatus describes the observed installation state
+                    of one OperatorPackage on this cluster.
+                  properties:
+                    argoAppName:
+                      description: ArgoAppName is the name of the Argo CD Application
+                        created to install this package, if any.
+                      type: string
+                    lastProbeTime:
+                      description: LastProbeTime is when the CRD probes were last evaluated.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is a human-readable explanation of the current phase.
+                      type: string
+                    name:
+                      description: Name is the OperatorPackage resource name.
+                      type: string
+                    phase:
+                      description: Phase is the coarse lifecycle state of this package on the cluster.
+                      type: string
+                  required:
+                  - name
+                  - phase
+                  type: object
                 type: array
               phase:
                 description: Phase is the coarse lifecycle summary.

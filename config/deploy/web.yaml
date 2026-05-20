@@ -19,7 +19,11 @@ spec:
           imagePullPolicy: Never
           env:
             - name: BFF_URL
-              value: "http://bff.servicer-system.svc.cluster.local:8090/"
+              value: "http://bff.servicer-system.svc.cluster.local:8090"
+            - name: DEMO_USER
+              value: "demo-admin"
+            - name: DEMO_ROLES
+              value: "platform-admin,tenant-operator,service-consumer"
 ---
 # NodePort 5173 is mapped to host port 5173 via Kind extraPortMappings in
 # config/kind/app.yaml. service-node-port-range is expanded to 80-65535.
