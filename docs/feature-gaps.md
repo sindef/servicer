@@ -53,9 +53,9 @@ Commit: `73cdb41`
 **Plan 002** — `Project.Spec.Quotas.MaxServices` and `MaxNamespaces` are checked during `ServiceInstance` reconciliation, project usage summaries are populated from current instances, and `Tenant.Spec.QuotaProfileRef` now resolves curated inherited project quotas with project-local overrides.  
 Commit: `7ee64be`
 
-### [~] Policy engine
-**Plans 002, 004** — Tenant, project, and plan `PolicyRefs` are now evaluated during `ServiceInstance` reconciliation for curated platform rules such as `deny-public-ingress`, `require-external-secrets`, `require-backups`, and `protect-delete`. `ServicePlan.Spec.Constraints` are also now read for first-pass validation such as allowed exposure modes, allowed deletion policies, required secret delivery mode, replica ceilings, and backup-profile requirements. This is still partial: there is no standalone policy CRD, no CEL/OPA-style engine, and no user-defined policy bundle interpreter yet.  
-Commit: `03b77eb`
+### [x] Policy engine
+**Plans 002, 004** — Tenant, project, and plan `PolicyRefs` are now evaluated during `ServiceInstance` reconciliation for both curated platform rules and standalone cluster-scoped `Policy` objects. User-defined policies can now declare rule bundles against normalized instance fields such as `spec.exposure.mode`, `spec.secretPolicy.deliveryMode`, `spec.deletionPolicy`, and `parameters.*`, with deterministic operators for equality, membership, presence, emptiness, and numeric comparison. `ServicePlan.Spec.Constraints` continue to provide first-pass plan validation for allowed exposure modes, allowed deletion policies, required secret delivery mode, replica ceilings, and backup-profile requirements.  
+Commit: `85f267b`
 
 ---
 
