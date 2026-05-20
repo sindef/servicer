@@ -77,6 +77,8 @@ kubectl wait --for=condition=Established crd --all --timeout=120s
 # ── App manifests ─────────────────────────────────────────────────────────────
 echo "Applying deploy manifests..."
 kubectl apply -k config/deploy/
+kubectl rollout restart deployment/bff deployment/manager deployment/web -n servicer-system 2>/dev/null || true
+kubectl rollout status deployment/bff deployment/manager deployment/web -n servicer-system --timeout=120s 2>/dev/null || true
 
 # ── Service catalog + tenancy samples ─────────────────────────────────────────
 echo "Applying samples (catalog, tenancy)..."

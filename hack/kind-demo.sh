@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLUSTER_NAME="${CLUSTER_NAME:-servicer-demo}"
+CMD="${1:-up}"
+if [[ "${CMD}" != "up" && "${CMD}" != "down" ]]; then
+  echo "Usage: $0 [up|down]" >&2
+  exit 1
+fi
+
+APP_CLUSTER="${APP_CLUSTER:-servicer-app}"
+TARGET_CLUSTER="${TARGET_CLUSTER:-servicer-target}"
 KIND_IMAGE="${KIND_IMAGE:-kindest/node:v1.32.2}"
 BFF_ADDR="${BFF_ADDR:-127.0.0.1:8090}"
 BFF_TLS_ADDR="${BFF_TLS_ADDR:-127.0.0.1:8443}"
@@ -52,10 +59,25 @@ require go
 require npm
 require curl
 
-if ! kind get clusters | grep -qx "${CLUSTER_NAME}"; then
-  kind create cluster --name "${CLUSTER_NAME}" --image "${KIND_IMAGE}"
+if [[ "${CMD}" == "down" ]]; then
+  deleted=0
+  for cluster in "${APP_CLUSTER}" "${TARGET_CLUSTER}"; do
+    if kind get clusters 2>/dev/null | grep -qx "${cluster}"; then
+      kind delete cluster --name "${cluster}"
+      echo "Cluster '${cluster}' deleted."
+      (( deleted++ )) || true
+    else
+      echo "Cluster '${cluster}' not found; skipping."
+    fi
+  done
+  [[ ${deleted} -gt 0 ]] || echo "No clusters found; nothing to do."
+  exit 0
 fi
-kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null
+
+if ! kind get clusters | grep -qx "${APP_CLUSTER}"; then
+  kind create cluster --name "${APP_CLUSTER}" --image "${KIND_IMAGE}"
+fi
+kubectl config use-context "kind-${APP_CLUSTER}" >/dev/null
 kubectl label nodes --all \
   failure-domain.beta.kubernetes.io/region=local \
   failure-domain.beta.kubernetes.io/zone=local-a \
