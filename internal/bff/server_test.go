@@ -485,7 +485,7 @@ func TestNamespaceClaimsEndpointReturnsVisibleClaims(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &claims); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(claims) != 1 || claims[0].Name != "team-space-claim" {
+	if len(claims) != 2 || claims[0].Name != "team-space" || claims[1].Name != "team-space-claim" {
 		t.Fatalf("unexpected claims %#v", claims)
 	}
 }
@@ -511,6 +511,33 @@ func TestNamespaceClaimDetailReturnsSpecAndStatus(t *testing.T) {
 	}
 	if claim.Namespace != "acme-prod-team-space" || claim.Quotas["limits.memory"] != "8Gi" {
 		t.Fatalf("expected quota and namespace detail, got %#v", claim)
+	}
+}
+
+func TestNamespaceClaimDetailFallsBackToNamespaceInstance(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/namespaceclaims/team-space", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var claim NamespaceClaimDetail
+	if err := json.Unmarshal(response.Body.Bytes(), &claim); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if claim.Name != "team-space" || claim.ProjectName != "acme-prod" {
+		t.Fatalf("unexpected detail %#v", claim)
+	}
+	if claim.Quotas["requests.cpu"] != "2" || claim.Quotas["requests.memory"] != "8Gi" || claim.Quotas["pods"] != "40" {
+		t.Fatalf("expected namespace instance quotas, got %#v", claim.Quotas)
+	}
+	if claim.Labels["owner"] != "platform" {
+		t.Fatalf("expected namespace instance labels, got %#v", claim.Labels)
 	}
 }
 
@@ -572,6 +599,43 @@ func TestUpdateNamespaceClaimUpdatesSpec(t *testing.T) {
 	}
 }
 
+func TestUpdateNamespaceClaimUpdatesNamespaceInstanceWhenNoClaimExists(t *testing.T) {
+	server := testServer(t)
+	body := strings.NewReader(`{
+		"name":"team-space",
+		"projectName":"acme-prod",
+		"displayName":"Team Space",
+		"deletionPolicy":"orphan",
+		"quotas":{"requests.cpu":"3","requests.memory":"12Gi","pods":"60"},
+		"labels":{"owner":"shared-services"}
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/namespaceclaims/team-space", body)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var instance platformv1alpha1.ServiceInstance
+	if err := server.client.Get(request.Context(), client.ObjectKey{Name: "team-space"}, &instance); err != nil {
+		t.Fatalf("get updated namespace instance: %v", err)
+	}
+	params := parametersMap(instance)
+	if params["cpu"] != "3" || params["memory"] != "12Gi" || params["pods"] != "60" {
+		t.Fatalf("expected updated namespace instance params, got %#v", params)
+	}
+	labels, ok := params["labels"].(map[string]any)
+	if !ok || labels["owner"] != "shared-services" {
+		t.Fatalf("expected updated labels, got %#v", params["labels"])
+	}
+	if instance.Spec.DeletionPolicy != platformv1alpha1.DeletionPolicyOrphan {
+		t.Fatalf("expected orphan deletion policy, got %q", instance.Spec.DeletionPolicy)
+	}
+}
+
 func TestDeleteNamespaceClaimRequiresOperatorRole(t *testing.T) {
 	server := testServer(t)
 	forbidden := httptest.NewRecorder()
@@ -590,6 +654,24 @@ func TestDeleteNamespaceClaimRequiresOperatorRole(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDeleteNamespaceClaimDeletesNamespaceInstanceWhenNoClaimExists(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/namespaceclaims/team-space", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var instance platformv1alpha1.ServiceInstance
+	if err := server.client.Get(request.Context(), client.ObjectKey{Name: "team-space"}, &instance); err == nil {
+		t.Fatalf("expected namespace instance to be deleted")
 	}
 }
 
@@ -995,6 +1077,8 @@ func testNamespaceInstance() *platformv1alpha1.ServiceInstance {
 			ProjectRef:      platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
 			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "namespace"},
 			ServicePlanRef:  platformv1alpha1.LocalObjectReference{Name: "namespace-team"},
+			Parameters:      &apiextensionsv1.JSON{Raw: []byte(`{"cpu":"2","memory":"8Gi","pods":"40","labels":{"owner":"platform"}}`)},
+			DeletionPolicy:  platformv1alpha1.DeletionPolicyDelete,
 		},
 		Status: platformv1alpha1.ServiceInstanceStatus{
 			Phase:     "Ready",
@@ -1007,7 +1091,12 @@ func testNamespaceInstance() *platformv1alpha1.ServiceInstance {
 					Name:       "acme-prod-team-space",
 				},
 			},
-			Sync:   platformv1alpha1.DeliverySyncStatus{Phase: "Synced"},
+			Artifact: platformv1alpha1.ArtifactStatus{
+				Revision: "xyz789",
+				Path:     "clusters/east-1/tenants/acme/projects/acme-prod/services/team-space",
+				Count:    4,
+			},
+			Sync:   platformv1alpha1.DeliverySyncStatus{Phase: "Synced", Message: "Namespace product synced."},
 			Health: platformv1alpha1.HealthStatus{Summary: "Namespace is ready."},
 		},
 	}

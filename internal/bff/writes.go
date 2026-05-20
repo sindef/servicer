@@ -60,36 +60,65 @@ func (s *Server) handleUpdateNamespaceClaim(w http.ResponseWriter, r *http.Reque
 	}
 
 	var existing platformv1alpha1.NamespaceClaim
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
-		writeError(w, err)
-		return
-	}
-	var existingProject platformv1alpha1.Project
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: existing.Spec.ProjectRef.Name}, &existingProject); err != nil {
-		writeError(w, err)
-		return
-	}
-	if !s.authorizeProject(r.Context(), actor, &existingProject) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err == nil {
+		var existingProject platformv1alpha1.Project
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: existing.Spec.ProjectRef.Name}, &existingProject); err != nil {
+			writeError(w, err)
+			return
+		}
+		if !s.authorizeProject(r.Context(), actor, &existingProject) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
+			return
+		}
+
+		updated, err := s.namespaceClaimRequestToClaim(r, actor, request)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		existing.Spec = updated.Spec
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
+		}
+		existing.Annotations["servicer.io/updated-by"] = actor.Name
+		existing.Annotations["servicer.io/updated-at"] = time.Now().UTC().Format(time.RFC3339)
+		if err := s.client.Update(r.Context(), &existing); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, WriteResponse{Name: existing.Name, Message: "Namespace claim updated."})
 		return
 	}
 
-	updated, err := s.namespaceClaimRequestToClaim(r, actor, request)
+	var instance platformv1alpha1.ServiceInstance
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &instance); err != nil {
+		writeError(w, err)
+		return
+	}
+	if !isNamespaceInstance(instance) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "namespace claim was not found"})
+		return
+	}
+	if !s.authorizeInstance(r.Context(), actor, &instance) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
+		return
+	}
+	updatedInstance, err := s.namespaceClaimRequestToNamespaceInstance(r, actor, request)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	existing.Spec = updated.Spec
-	if existing.Annotations == nil {
-		existing.Annotations = map[string]string{}
+	instance.Spec = updatedInstance.Spec
+	if instance.Annotations == nil {
+		instance.Annotations = map[string]string{}
 	}
-	existing.Annotations["servicer.io/updated-by"] = actor.Name
-	existing.Annotations["servicer.io/updated-at"] = time.Now().UTC().Format(time.RFC3339)
-	if err := s.client.Update(r.Context(), &existing); err != nil {
+	instance.Annotations["servicer.io/updated-by"] = actor.Name
+	instance.Annotations["servicer.io/updated-at"] = time.Now().UTC().Format(time.RFC3339)
+	if err := s.client.Update(r.Context(), &instance); err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, WriteResponse{Name: existing.Name, Message: "Namespace claim updated."})
+	writeJSON(w, http.StatusOK, WriteResponse{Name: instance.Name, Message: "Namespace claim updated."})
 }
 
 func (s *Server) handleDeleteNamespaceClaim(w http.ResponseWriter, r *http.Request) {
@@ -103,26 +132,50 @@ func (s *Server) handleDeleteNamespaceClaim(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var claim platformv1alpha1.NamespaceClaim
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &claim); err != nil {
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &claim); err == nil {
+		var project platformv1alpha1.Project
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: claim.Spec.ProjectRef.Name}, &project); err != nil {
+			writeError(w, err)
+			return
+		}
+		if !s.authorizeProject(r.Context(), actor, &project) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
+			return
+		}
+		if claim.Annotations == nil {
+			claim.Annotations = map[string]string{}
+		}
+		claim.Annotations["servicer.io/deleted-by"] = actor.Name
+		claim.Annotations["servicer.io/deleted-at"] = time.Now().UTC().Format(time.RFC3339)
+		_ = s.client.Update(r.Context(), &claim)
+		if err := s.client.Delete(r.Context(), &claim); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, WriteResponse{Name: name, Message: "Namespace claim deletion requested."})
+		return
+	}
+
+	var instance platformv1alpha1.ServiceInstance
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &instance); err != nil {
 		writeError(w, err)
 		return
 	}
-	var project platformv1alpha1.Project
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: claim.Spec.ProjectRef.Name}, &project); err != nil {
-		writeError(w, err)
+	if !isNamespaceInstance(instance) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "namespace claim was not found"})
 		return
 	}
-	if !s.authorizeProject(r.Context(), actor, &project) {
+	if !s.authorizeInstance(r.Context(), actor, &instance) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
 		return
 	}
-	if claim.Annotations == nil {
-		claim.Annotations = map[string]string{}
+	if instance.Annotations == nil {
+		instance.Annotations = map[string]string{}
 	}
-	claim.Annotations["servicer.io/deleted-by"] = actor.Name
-	claim.Annotations["servicer.io/deleted-at"] = time.Now().UTC().Format(time.RFC3339)
-	_ = s.client.Update(r.Context(), &claim)
-	if err := s.client.Delete(r.Context(), &claim); err != nil {
+	instance.Annotations["servicer.io/deleted-by"] = actor.Name
+	instance.Annotations["servicer.io/deleted-at"] = time.Now().UTC().Format(time.RFC3339)
+	_ = s.client.Update(r.Context(), &instance)
+	if err := s.client.Delete(r.Context(), &instance); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -193,6 +246,38 @@ func (s *Server) namespaceClaimRequestToClaim(r *http.Request, actor actor, requ
 			DeletionPolicy: policy,
 		},
 	}, nil
+}
+
+func (s *Server) namespaceClaimRequestToNamespaceInstance(r *http.Request, actor actor, request NamespaceClaimRequest) (*platformv1alpha1.ServiceInstance, error) {
+	parameters := map[string]any{}
+	if cpu := strings.TrimSpace(request.Quotas["requests.cpu"]); cpu != "" {
+		parameters["cpu"] = cpu
+	}
+	if memory := strings.TrimSpace(request.Quotas["requests.memory"]); memory != "" {
+		parameters["memory"] = memory
+	}
+	if pods := strings.TrimSpace(request.Quotas["pods"]); pods != "" {
+		parameters["pods"] = pods
+	}
+	if len(request.Labels) > 0 {
+		parameters["labels"] = copyStringMap(request.Labels)
+	}
+	productRequest := ProductRequest{
+		Name:         request.Name,
+		ProjectName:  request.ProjectName,
+		ServiceClass: "namespace",
+		ServicePlan:  "namespace-team",
+		Parameters:   parameters,
+	}
+	instance, err := s.productRequestToInstance(r, actor, productRequest)
+	if err != nil {
+		return nil, err
+	}
+	instance.Spec.DeletionPolicy = platformv1alpha1.DeletionPolicy(strings.TrimSpace(request.DeletionPolicy))
+	if instance.Spec.DeletionPolicy == "" {
+		instance.Spec.DeletionPolicy = platformv1alpha1.DeletionPolicyDelete
+	}
+	return instance, nil
 }
 
 func (s *Server) handleUpdateProductRequest(w http.ResponseWriter, r *http.Request) {
