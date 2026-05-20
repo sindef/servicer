@@ -211,6 +211,24 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return ctrl.Result{}, nil
 	}
+	statusCredentialRefs := append([]platformv1alpha1.NamespacedObjectReference(nil), renderResult.CredentialRefs...)
+	if instance.Spec.SecretPolicy.DeliveryMode == platformv1alpha1.SecretDeliveryModeExternalSecret {
+		projectedRefs := projectedCredentialRefs(&instance, renderResult.CredentialRefs)
+		externalSecretArtifacts, projectionErr := renderExternalSecretArtifacts(&instance, renderResult.PackagePath, renderResult.CredentialRefs, projectedRefs)
+		if projectionErr != nil {
+			instance.Status.Phase = "Failed"
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "ExternalSecretRenderFailed", projectionErr.Error())
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ExternalSecretRenderFailed", "Credential projection artifacts could not be rendered.")
+			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
+					return ctrl.Result{}, updateErr
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+		renderResult.Artifacts = append(renderResult.Artifacts, externalSecretArtifacts...)
+		statusCredentialRefs = projectedRefs
+	}
 
 	m := r.Materializer
 	if m == nil {
@@ -266,7 +284,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	instance.Status.Runtime.Driver = renderResult.RuntimeDriver
 	instance.Status.Runtime.ObjectRef = renderResult.PrimaryResource
 	instance.Status.Endpoints = endpointStatus(renderResult.Endpoints)
-	instance.Status.CredentialRefs = append([]platformv1alpha1.NamespacedObjectReference(nil), renderResult.CredentialRefs...)
+	instance.Status.CredentialRefs = statusCredentialRefs
 	instance.Status.Artifact = materializedArtifactStatus(materializeResult)
 	instance.Status.Sync = platformv1alpha1.DeliverySyncStatus{
 		Phase:           string(adapters.SyncPhasePending),
