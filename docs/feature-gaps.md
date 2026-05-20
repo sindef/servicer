@@ -29,14 +29,17 @@ Commit: `7ee64be`
 
 ## Domain API
 
-### [ ] NamespaceClaim CRD
-**Plan 002** — Mentioned as a first-class resource alongside `ServiceInstance`. No type definition exists in `api/v1alpha1/`.
+### [~] NamespaceClaim CRD
+**Plan 002** — A first-pass `NamespaceClaim` API type and generated CRD now exist in `api/v1alpha1/` and `config/crd/bases/`. Controller, BFF, and end-to-end delivery behavior are still open.  
+Commit: `da663a7`
 
-### [ ] VirtualMachineClaim CRD
-**Plan 002** — Mentioned as a planned resource for KubeVirt-backed VMs. No type definition exists.
+### [~] VirtualMachineClaim CRD
+**Plan 002** — A first-pass `VirtualMachineClaim` API type and generated CRD now exist. Runtime adapter, controller behavior, and KubeVirt integration are still open.  
+Commit: `da663a7`
 
-### [ ] ServiceBinding CRD
-**Plans 002, 004** — Intended for secure credential sharing between service instances. No type definition, no controller, no BFF endpoint.
+### [~] ServiceBinding CRD
+**Plans 002, 004** — A first-pass `ServiceBinding` API type and generated CRD now exist. Binding controller behavior, secure projection, and BFF endpoints remain open.  
+Commit: `da663a7`
 
 ### [ ] Admission webhooks
 **Plan 002** — Validation and defaulting webhooks are planned for all CRDs. CRD types have `kubebuilder` marker annotations for static schema validation only. No `ValidatingWebhookConfiguration`, no `MutatingWebhookConfiguration`, and no admission handler code exist.
