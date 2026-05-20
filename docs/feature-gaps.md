@@ -53,8 +53,9 @@ Commit: `73cdb41`
 **Plan 002** — `Project.Spec.Quotas.MaxServices` and `MaxNamespaces` are now checked during `ServiceInstance` reconciliation, and project usage summaries are populated from current instances. `Tenant.Spec.QuotaProfileRef` still is not resolved into inherited quotas, so quota-profile-driven enforcement remains open.  
 Commit: `7ee64be`
 
-### [ ] Policy engine
-**Plans 002, 004** — `Tenant.Spec.PolicyRefs` and `Project.Spec.PolicyRefs` are defined but there is no policy evaluation engine. `ServicePlan.Spec.PolicyRefs` and `Constraints` fields also go unread.
+### [~] Policy engine
+**Plans 002, 004** — Tenant, project, and plan `PolicyRefs` are now evaluated during `ServiceInstance` reconciliation for curated platform rules such as `deny-public-ingress`, `require-external-secrets`, `require-backups`, and `protect-delete`. `ServicePlan.Spec.Constraints` are also now read for first-pass validation such as allowed exposure modes, allowed deletion policies, required secret delivery mode, replica ceilings, and backup-profile requirements. This is still partial: there is no standalone policy CRD, no CEL/OPA-style engine, and no user-defined policy bundle interpreter yet.  
+Commit: `03b77eb`
 
 ---
 
