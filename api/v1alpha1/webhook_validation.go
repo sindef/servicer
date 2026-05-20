@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -362,6 +363,17 @@ func defaultSecretPolicy(policy *SecretPolicySpec) {
 	if policy.DeliveryMode == "" {
 		policy.DeliveryMode = defaultSecretDelivery
 	}
+	if policy.DeliveryMode == SecretDeliveryModeExternalSecret && policy.ExternalSecretProvider == "" {
+		policy.ExternalSecretProvider = ExternalSecretProviderKubernetes
+	}
+	if policy.Vault != nil {
+		if policy.Vault.Path == "" {
+			policy.Vault.Path = "secret"
+		}
+		if policy.Vault.Version == "" {
+			policy.Vault.Version = "v2"
+		}
+	}
 }
 
 func defaultDeletion(policy *DeletionPolicy) {
@@ -430,10 +442,41 @@ func validateExposure(exposure ExposureSpec, path *field.Path) field.ErrorList {
 }
 
 func validateSecretPolicy(policy SecretPolicySpec, path *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
 	if policy.DeliveryMode == "" {
 		return field.ErrorList{field.Required(path.Child("deliveryMode"), "deliveryMode is required")}
 	}
-	return nil
+	if policy.ExternalSecretProvider != "" && policy.DeliveryMode != SecretDeliveryModeExternalSecret {
+		allErrs = append(allErrs, field.Forbidden(path.Child("externalSecretProvider"), "externalSecretProvider is only valid when deliveryMode=external-secret"))
+	}
+	if policy.DeliveryMode == SecretDeliveryModeExternalSecret {
+		switch policy.ExternalSecretProvider {
+		case "", ExternalSecretProviderKubernetes:
+			if policy.Vault != nil {
+				allErrs = append(allErrs, field.Forbidden(path.Child("vault"), "vault config requires externalSecretProvider=vault"))
+			}
+		case ExternalSecretProviderVault:
+			if policy.Vault == nil {
+				allErrs = append(allErrs, field.Required(path.Child("vault"), "vault config is required when externalSecretProvider=vault"))
+				return allErrs
+			}
+			if strings.TrimSpace(policy.Vault.Server) == "" {
+				allErrs = append(allErrs, field.Required(path.Child("vault", "server"), "server is required"))
+			}
+			if strings.TrimSpace(policy.Vault.Path) == "" {
+				allErrs = append(allErrs, field.Required(path.Child("vault", "path"), "path is required"))
+			}
+			if policy.Vault.Version != "" && policy.Vault.Version != "v1" && policy.Vault.Version != "v2" {
+				allErrs = append(allErrs, field.NotSupported(path.Child("vault", "version"), policy.Vault.Version, []string{"v1", "v2"}))
+			}
+			if strings.TrimSpace(policy.Vault.AuthSecretRef.Name) == "" {
+				allErrs = append(allErrs, field.Required(path.Child("vault", "authSecretRef", "name"), "name is required"))
+			}
+		default:
+			allErrs = append(allErrs, field.NotSupported(path.Child("externalSecretProvider"), policy.ExternalSecretProvider, []string{string(ExternalSecretProviderKubernetes), string(ExternalSecretProviderVault)}))
+		}
+	}
+	return allErrs
 }
 
 func validateDeletionPolicy(policy DeletionPolicy, path *field.Path) field.ErrorList {

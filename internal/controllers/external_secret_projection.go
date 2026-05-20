@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"github.com/sindef/servicer/internal/adapters"
@@ -40,6 +41,9 @@ func renderExternalSecretArtifacts(instance *platformv1alpha1.ServiceInstance, p
 	}
 
 	artifacts := make([]adapters.RenderedArtifact, 0, len(sourceRefs)+4)
+	if externalSecretProvider(instance.Spec.SecretPolicy) == platformv1alpha1.ExternalSecretProviderVault {
+		return renderVaultExternalSecretArtifacts(instance, packagePath, sourceRefs, projectedRefs)
+	}
 	serviceAccountName := fmt.Sprintf("%s-eso-reader", instance.Name)
 	storeBySourceNamespace := map[string]string{}
 	targetNamespace := firstNonEmptyTrimmed(instance.Status.Placement.Namespace)
@@ -228,6 +232,101 @@ func renderExternalSecretArtifacts(instance *platformv1alpha1.ServiceInstance, p
 	return artifacts, nil
 }
 
+func renderVaultExternalSecretArtifacts(instance *platformv1alpha1.ServiceInstance, packagePath string, sourceRefs, projectedRefs []platformv1alpha1.NamespacedObjectReference) ([]adapters.RenderedArtifact, error) {
+	vault := instance.Spec.SecretPolicy.Vault
+	if instance == nil || vault == nil {
+		return nil, nil
+	}
+	targetNamespace := firstNonEmptyTrimmed(instance.Status.Placement.Namespace)
+	if targetNamespace == "" {
+		targetNamespace = projectedRefs[0].Namespace
+	}
+	storeName := fmt.Sprintf("%s-vault", instance.Name)
+	authSecretNamespace := firstNonEmptyTrimmed(vault.AuthSecretRef.Namespace, targetNamespace)
+	secretStoreYAML, err := yaml.Marshal(map[string]any{
+		"apiVersion": externalSecretsAPIVersion,
+		"kind":       "SecretStore",
+		"metadata": map[string]any{
+			"name":      storeName,
+			"namespace": targetNamespace,
+			"labels": map[string]string{
+				"servicer.io/managed-by":       "servicer",
+				"servicer.io/service-instance": instance.Name,
+				"servicer.io/secret-delivery":  "external-secret",
+				"servicer.io/secret-provider":  "vault",
+			},
+		},
+		"spec": map[string]any{
+			"provider": map[string]any{
+				"vault": map[string]any{
+					"server":  vault.Server,
+					"path":    vault.Path,
+					"version": firstNonEmptyTrimmed(vault.Version, "v2"),
+					"auth": map[string]any{
+						"tokenSecretRef": map[string]any{
+							"name":      vault.AuthSecretRef.Name,
+							"key":       "token",
+							"namespace": authSecretNamespace,
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	artifacts := []adapters.RenderedArtifact{{
+		Path:    filepath.ToSlash(filepath.Join(packagePath, "credentials", "secretstore-vault.yaml")),
+		Content: secretStoreYAML,
+	}}
+	for i, sourceRef := range sourceRefs {
+		projectedRef := projectedRefs[i]
+		externalSecretYAML, err := yaml.Marshal(map[string]any{
+			"apiVersion": externalSecretsAPIVersion,
+			"kind":       "ExternalSecret",
+			"metadata": map[string]any{
+				"name":      projectedRef.Name,
+				"namespace": projectedRef.Namespace,
+				"labels": map[string]string{
+					"servicer.io/managed-by":       "servicer",
+					"servicer.io/service-instance": instance.Name,
+					"servicer.io/secret-delivery":  "external-secret",
+					"servicer.io/secret-provider":  "vault",
+				},
+			},
+			"spec": map[string]any{
+				"refreshInterval": "1h",
+				"secretStoreRef": map[string]any{
+					"kind": "SecretStore",
+					"name": storeName,
+				},
+				"target": map[string]any{
+					"name":           projectedRef.Name,
+					"creationPolicy": "Owner",
+					"deletionPolicy": "Delete",
+				},
+				"dataFrom": []map[string]any{
+					{
+						"extract": map[string]any{
+							"key": vaultRemoteSecretKey(vault.Path, sourceRef.Name),
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		artifacts = append(artifacts, adapters.RenderedArtifact{
+			Path:    filepath.ToSlash(filepath.Join(packagePath, "credentials", fmt.Sprintf("externalsecret-%s.yaml", projectedRef.Name))),
+			Content: externalSecretYAML,
+		})
+	}
+	sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].Path < artifacts[j].Path })
+	return artifacts, nil
+}
+
 func projectedCredentialName(name string) string {
 	return fmt.Sprintf("%s-projected", name)
 }
@@ -251,4 +350,23 @@ func uniqueSourceNamespaces(refs []platformv1alpha1.NamespacedObjectReference) [
 	}
 	sort.Strings(namespaces)
 	return namespaces
+}
+
+func externalSecretProvider(policy platformv1alpha1.SecretPolicySpec) platformv1alpha1.ExternalSecretProviderType {
+	if policy.ExternalSecretProvider == "" {
+		return platformv1alpha1.ExternalSecretProviderKubernetes
+	}
+	return policy.ExternalSecretProvider
+}
+
+func vaultRemoteSecretKey(mountPath, secretName string) string {
+	mountPath = strings.Trim(strings.TrimSpace(mountPath), "/")
+	secretName = strings.Trim(strings.TrimSpace(secretName), "/")
+	if mountPath == "" {
+		return secretName
+	}
+	if secretName == "" {
+		return mountPath
+	}
+	return mountPath + "/" + secretName
 }

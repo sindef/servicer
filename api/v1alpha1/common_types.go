@@ -153,6 +153,32 @@ const (
 type SecretPolicySpec struct {
 	// DeliveryMode selects the secret delivery pattern.
 	DeliveryMode SecretDeliveryMode `json:"deliveryMode"`
+	// ExternalSecretProvider selects the backing provider when deliveryMode=external-secret.
+	ExternalSecretProvider ExternalSecretProviderType `json:"externalSecretProvider,omitempty"`
+	// Vault configures Vault-backed projection when externalSecretProvider=vault.
+	Vault *VaultSecretProviderSpec `json:"vault,omitempty"`
+}
+
+// ExternalSecretProviderType identifies which provider ESO should use.
+// +kubebuilder:validation:Enum=kubernetes;vault
+type ExternalSecretProviderType string
+
+const (
+	ExternalSecretProviderKubernetes ExternalSecretProviderType = "kubernetes"
+	ExternalSecretProviderVault      ExternalSecretProviderType = "vault"
+)
+
+// VaultSecretProviderSpec describes a Vault provider configuration for ESO projection.
+type VaultSecretProviderSpec struct {
+	// Server is the Vault API base URL.
+	Server string `json:"server,omitempty"`
+	// Path is the Vault mount path that contains the credential secret.
+	Path string `json:"path,omitempty"`
+	// Version is the KV engine version used by the mount.
+	// +kubebuilder:validation:Enum=v1;v2
+	Version string `json:"version,omitempty"`
+	// AuthSecretRef points at the Secret containing the Vault token.
+	AuthSecretRef NamespacedObjectReference `json:"authSecretRef,omitempty"`
 }
 
 // DeletionPolicy identifies how a service instance should be removed.

@@ -30,6 +30,7 @@ func TestRenderExternalSecretArtifacts(t *testing.T) {
 	instance := &platformv1alpha1.ServiceInstance{}
 	instance.Name = "orders-db"
 	instance.Status.Placement.Namespace = "demo-prod-orders"
+	instance.Spec.SecretPolicy.DeliveryMode = platformv1alpha1.SecretDeliveryModeExternalSecret
 	sourceRefs := []platformv1alpha1.NamespacedObjectReference{
 		{Name: "orders-db-app", Namespace: "demo-prod-orders"},
 	}
@@ -62,5 +63,50 @@ func TestRenderExternalSecretArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(all, "remoteNamespace: demo-prod-orders") {
 		t.Fatalf("expected source namespace in SecretStore, got %s", all)
+	}
+}
+
+func TestRenderExternalSecretArtifactsVaultProvider(t *testing.T) {
+	instance := &platformv1alpha1.ServiceInstance{}
+	instance.Name = "orders-db"
+	instance.Status.Placement.Namespace = "demo-prod-orders"
+	instance.Spec.SecretPolicy = platformv1alpha1.SecretPolicySpec{
+		DeliveryMode:           platformv1alpha1.SecretDeliveryModeExternalSecret,
+		ExternalSecretProvider: platformv1alpha1.ExternalSecretProviderVault,
+		Vault: &platformv1alpha1.VaultSecretProviderSpec{
+			Server:  "https://vault.example.com",
+			Path:    "kv/apps",
+			Version: "v2",
+			AuthSecretRef: platformv1alpha1.NamespacedObjectReference{
+				Name:      "vault-token",
+				Namespace: "demo-prod-orders",
+			},
+		},
+	}
+	sourceRefs := []platformv1alpha1.NamespacedObjectReference{
+		{Name: "orders-db-app", Namespace: "demo-prod-orders"},
+	}
+	projectedRefs := projectedCredentialRefs(instance, sourceRefs)
+
+	artifacts, err := renderExternalSecretArtifacts(instance, "clusters/local-dev/projects/demo/orders-db", sourceRefs, projectedRefs)
+	if err != nil {
+		t.Fatalf("renderExternalSecretArtifacts returned error: %v", err)
+	}
+	if len(artifacts) != 2 {
+		t.Fatalf("expected 2 artifacts for vault projection, got %d", len(artifacts))
+	}
+	joined := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		joined = append(joined, artifact.Path+"\n"+string(artifact.Content))
+	}
+	all := strings.Join(joined, "\n---\n")
+	if !strings.Contains(all, "vault:") || !strings.Contains(all, "https://vault.example.com") {
+		t.Fatalf("expected vault provider config, got %s", all)
+	}
+	if !strings.Contains(all, "kv/apps/orders-db-app") {
+		t.Fatalf("expected vault remote key, got %s", all)
+	}
+	if strings.Contains(all, "kind: ServiceAccount") {
+		t.Fatalf("did not expect kubernetes-provider artifacts in vault mode: %s", all)
 	}
 }

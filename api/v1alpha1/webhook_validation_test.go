@@ -17,6 +17,9 @@ func TestServiceInstanceDefaulting(t *testing.T) {
 	if instance.Spec.SecretPolicy.DeliveryMode != SecretDeliveryModeExternalSecret {
 		t.Fatalf("expected default secret delivery %q, got %q", SecretDeliveryModeExternalSecret, instance.Spec.SecretPolicy.DeliveryMode)
 	}
+	if instance.Spec.SecretPolicy.ExternalSecretProvider != ExternalSecretProviderKubernetes {
+		t.Fatalf("expected default external secret provider %q, got %q", ExternalSecretProviderKubernetes, instance.Spec.SecretPolicy.ExternalSecretProvider)
+	}
 	if instance.Spec.DeletionPolicy != DeletionPolicyDelete {
 		t.Fatalf("expected default deletion policy %q, got %q", DeletionPolicyDelete, instance.Spec.DeletionPolicy)
 	}
@@ -86,5 +89,32 @@ func TestVirtualMachineClaimDefaultsAndValidatesPowerState(t *testing.T) {
 	}
 	if _, err := claim.ValidateCreate(context.Background(), claim); err == nil {
 		t.Fatal("expected validation error for unsupported powerState")
+	}
+}
+
+func TestServiceBindingRejectsVaultProviderWithoutConfig(t *testing.T) {
+	binding := &ServiceBinding{
+		Spec: ServiceBindingSpec{
+			ProjectRef: LocalObjectReference{Name: "demo"},
+			SourceRef: TypedObjectReference{
+				APIVersion: GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       "db",
+			},
+			TargetRef: TypedObjectReference{
+				APIVersion: "v1",
+				Kind:       "Namespace",
+				Name:       "app",
+				Namespace:  "demo-app",
+			},
+			SecretPolicy: SecretPolicySpec{
+				DeliveryMode:           SecretDeliveryModeExternalSecret,
+				ExternalSecretProvider: ExternalSecretProviderVault,
+			},
+		},
+	}
+
+	if _, err := binding.ValidateCreate(context.Background(), binding); err == nil {
+		t.Fatal("expected validation error for missing vault config")
 	}
 }

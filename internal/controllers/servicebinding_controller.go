@@ -174,6 +174,9 @@ func cloneSecretData(source map[string][]byte) map[string][]byte {
 func (r *ServiceBindingReconciler) ensureExternalSecretBindingProjection(ctx context.Context, binding *platformv1alpha1.ServiceBinding, sourceRef platformv1alpha1.NamespacedObjectReference, targetSecretName, targetNamespace string) error {
 	serviceAccountName := fmt.Sprintf("%s-eso-reader", binding.Name)
 	storeName := secretStoreName(binding.Name, sourceRef.Namespace)
+	if externalSecretProvider(binding.Spec.SecretPolicy) == platformv1alpha1.ExternalSecretProviderVault {
+		return r.ensureVaultExternalSecretBindingProjection(ctx, binding, sourceRef, targetSecretName, targetNamespace)
+	}
 
 	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
@@ -290,6 +293,75 @@ func (r *ServiceBindingReconciler) ensureExternalSecretBindingProjection(ctx con
 			map[string]any{
 				"extract": map[string]any{
 					"key": sourceRef.Name,
+				},
+			},
+		},
+	}
+	return createOrUpdateUnstructured(ctx, r.Client, externalSecret)
+}
+
+func (r *ServiceBindingReconciler) ensureVaultExternalSecretBindingProjection(ctx context.Context, binding *platformv1alpha1.ServiceBinding, sourceRef platformv1alpha1.NamespacedObjectReference, targetSecretName, targetNamespace string) error {
+	vault := binding.Spec.SecretPolicy.Vault
+	if vault == nil {
+		return fmt.Errorf("vault secret provider config is required")
+	}
+	storeName := fmt.Sprintf("%s-vault", binding.Name)
+	authSecretNamespace := firstNonEmptyTrimmed(vault.AuthSecretRef.Namespace, targetNamespace)
+	secretStore := &unstructured.Unstructured{}
+	secretStore.SetGroupVersionKind(schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "SecretStore"})
+	secretStore.SetName(storeName)
+	secretStore.SetNamespace(targetNamespace)
+	secretStore.SetLabels(map[string]string{
+		"servicer.io/managed-by":      "servicebinding-controller",
+		"servicer.io/service-binding": binding.Name,
+		"servicer.io/secret-delivery": "external-secret",
+		"servicer.io/secret-provider": "vault",
+	})
+	secretStore.Object["spec"] = map[string]any{
+		"provider": map[string]any{
+			"vault": map[string]any{
+				"server":  vault.Server,
+				"path":    vault.Path,
+				"version": firstNonEmptyTrimmed(vault.Version, "v2"),
+				"auth": map[string]any{
+					"tokenSecretRef": map[string]any{
+						"name":      vault.AuthSecretRef.Name,
+						"key":       "token",
+						"namespace": authSecretNamespace,
+					},
+				},
+			},
+		},
+	}
+	if err := createOrUpdateUnstructured(ctx, r.Client, secretStore); err != nil {
+		return err
+	}
+
+	externalSecret := &unstructured.Unstructured{}
+	externalSecret.SetGroupVersionKind(schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret"})
+	externalSecret.SetName(targetSecretName)
+	externalSecret.SetNamespace(targetNamespace)
+	externalSecret.SetLabels(map[string]string{
+		"servicer.io/managed-by":      "servicebinding-controller",
+		"servicer.io/service-binding": binding.Name,
+		"servicer.io/secret-delivery": "external-secret",
+		"servicer.io/secret-provider": "vault",
+	})
+	externalSecret.Object["spec"] = map[string]any{
+		"refreshInterval": "1h",
+		"secretStoreRef": map[string]any{
+			"kind": "SecretStore",
+			"name": storeName,
+		},
+		"target": map[string]any{
+			"name":           targetSecretName,
+			"creationPolicy": "Owner",
+			"deletionPolicy": "Delete",
+		},
+		"dataFrom": []any{
+			map[string]any{
+				"extract": map[string]any{
+					"key": vaultRemoteSecretKey(vault.Path, sourceRef.Name),
 				},
 			},
 		},
