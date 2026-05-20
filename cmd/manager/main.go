@@ -37,6 +37,7 @@ func main() {
 	var deliveryRepoAutoCommit bool
 	var argoCDNamespace string
 	var argoCDProject string
+	var enableWebhooks bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -49,6 +50,7 @@ func main() {
 	flag.BoolVar(&deliveryRepoAutoCommit, "delivery-repo-auto-commit", false, "Automatically create Git commits in the configured delivery repo worktree after publishing artifacts.")
 	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd", "Namespace where Argo CD Application resources are created.")
 	flag.StringVar(&argoCDProject, "argocd-project", "default", "Argo CD project used for Servicer-managed Applications.")
+	flag.BoolVar(&enableWebhooks, "enable-webhooks", false, "Enable admission webhooks for Servicer APIs.")
 
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
@@ -103,6 +105,18 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "unable to create project controller")
 		os.Exit(1)
 	}
+	if err := (&controllers.NamespaceClaimReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+		ctrl.Log.WithName("setup").Error(err, "unable to create namespace claim controller")
+		os.Exit(1)
+	}
+	if err := (&controllers.ServiceBindingReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+		ctrl.Log.WithName("setup").Error(err, "unable to create service binding controller")
+		os.Exit(1)
+	}
+	if err := (&controllers.VirtualMachineClaimReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+		ctrl.Log.WithName("setup").Error(err, "unable to create virtual machine claim controller")
+		os.Exit(1)
+	}
 	if err := (&controllers.ServiceInstanceReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry, Materializer: materializer.New(deliveryRoot), Publisher: deliveryrepo.New(deliveryRepoWorktree, deliveryRepoPath, deliveryRepoAutoCommit), Recorder: mgr.GetEventRecorderFor("servicer"), ArgoCDNamespace: argoCDNamespace, ArgoCDProject: argoCDProject, DeliveryRepoURL: deliveryRepoURL, DeliveryRepoRef: deliveryRepoRef, DeliveryRepoPath: deliveryRepoPath}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to create service instance controller")
 		os.Exit(1)
@@ -110,6 +124,24 @@ func main() {
 	if err := (&controllers.ActionRequestReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to create action request controller")
 		os.Exit(1)
+	}
+	if enableWebhooks {
+		if err := (&platformv1alpha1.ServiceInstance{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register service instance webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.NamespaceClaim{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register namespace claim webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.ServiceBinding{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register service binding webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.VirtualMachineClaim{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register virtual machine claim webhook")
+			os.Exit(1)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

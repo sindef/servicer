@@ -1054,6 +1054,82 @@ func TestServiceInstanceReconcilerGeneratesNATSCredentialSecretsAndAuthConfig(t 
 	}
 }
 
+func TestServiceBindingReconcilerProjectsSourceCredentials(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod"},
+		Status: platformv1alpha1.ProjectStatus{
+			Placement: platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+		},
+	}
+	source := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+		},
+		Status: platformv1alpha1.ServiceInstanceStatus{
+			Placement: platformv1alpha1.PlacementStatus{Namespace: "acme-prod-orders-db"},
+			CredentialRefs: []platformv1alpha1.NamespacedObjectReference{{
+				Name:      "orders-db-auth",
+				Namespace: "acme-prod-orders-db",
+			}},
+		},
+	}
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db-auth", Namespace: "acme-prod-orders-db"},
+		Data: map[string][]byte{
+			"username": []byte("orders"),
+			"password": []byte("supersecret"),
+		},
+	}
+	binding := &platformv1alpha1.ServiceBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-api"},
+		Spec: platformv1alpha1.ServiceBindingSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			SourceRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: platformv1alpha1.GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       "orders-db",
+			},
+			TargetRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: "v1",
+				Kind:       "Namespace",
+				Name:       "orders-api",
+				Namespace:  "acme-prod-api",
+			},
+			SecretPolicy: platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeDirectSecretRef},
+		},
+	}
+
+	reconciler := &ServiceBindingReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceBinding{}).
+			WithObjects(project, source, sourceSecret, binding).
+			Build(),
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-api"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var projected corev1.Secret
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-api-binding", Namespace: "acme-prod-api"}, &projected); err != nil {
+		t.Fatalf("expected projected secret: %v", err)
+	}
+	if string(projected.Data["username"]) != "orders" {
+		t.Fatalf("expected username copy, got %#v", projected.Data)
+	}
+	var updated platformv1alpha1.ServiceBinding
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-api"}, &updated); err != nil {
+		t.Fatalf("get binding: %v", err)
+	}
+	if updated.Status.Phase != "Ready" {
+		t.Fatalf("expected Ready phase, got %q", updated.Status.Phase)
+	}
+}
+
 func inventoryTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()

@@ -294,6 +294,48 @@ func TestInstancesListFiltersToAuthorizedTenancy(t *testing.T) {
 	}
 }
 
+func TestNamespaceClaimsEndpointReturnsVisibleClaims(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/namespaceclaims", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var claims []NamespaceClaimSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &claims); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(claims) != 1 || claims[0].Name != "team-space-claim" {
+		t.Fatalf("unexpected claims %#v", claims)
+	}
+}
+
+func TestServiceBindingsEndpointReturnsVisibleBindings(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/servicebindings", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var bindings []ServiceBindingSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &bindings); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(bindings) != 1 || bindings[0].Name != "orders-api" {
+		t.Fatalf("unexpected bindings %#v", bindings)
+	}
+}
+
 func TestCredentialDetailRejectsUnauthorizedTenantAccess(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()
@@ -478,6 +520,8 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 			testInstance(),
 			testOtherTenantInstance(),
 			testNamespaceInstance(),
+			testNamespaceClaim(),
+			testServiceBinding(),
 			testBlockedYugabyteInstance(),
 			testAction(),
 			testPendingApprovalAction(),
@@ -811,6 +855,52 @@ clusters:
   cluster:
     server: https://servicer.example.com/api/kubernetes/namespaces/acme-prod-team-space
 `),
+		},
+	}
+}
+
+func testNamespaceClaim() *platformv1alpha1.NamespaceClaim {
+	return &platformv1alpha1.NamespaceClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "team-space-claim"},
+		Spec: platformv1alpha1.NamespaceClaimSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+		},
+		Status: platformv1alpha1.NamespaceClaimStatus{
+			Phase: "Ready",
+			Placement: platformv1alpha1.PlacementStatus{
+				ClusterName: "east-1",
+				Namespace:   "acme-prod-team-space",
+			},
+			Health: platformv1alpha1.HealthStatus{Summary: "Namespace claim ready."},
+		},
+	}
+}
+
+func testServiceBinding() *platformv1alpha1.ServiceBinding {
+	return &platformv1alpha1.ServiceBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-api"},
+		Spec: platformv1alpha1.ServiceBindingSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			SourceRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: platformv1alpha1.GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       "session-cache",
+			},
+			TargetRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: "v1",
+				Kind:       "Namespace",
+				Name:       "orders-api",
+				Namespace:  "acme-prod-api",
+			},
+			SecretPolicy: platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeDirectSecretRef},
+		},
+		Status: platformv1alpha1.ServiceBindingStatus{
+			Phase: "Ready",
+			CredentialRefs: []platformv1alpha1.NamespacedObjectReference{{
+				Name:      "orders-api-binding",
+				Namespace: "acme-prod-api",
+			}},
+			Health: platformv1alpha1.HealthStatus{Summary: "Binding ready."},
 		},
 	}
 }

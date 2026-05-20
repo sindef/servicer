@@ -40,6 +40,36 @@ type ProjectSummary struct {
 	InstanceCount int32  `json:"instanceCount"`
 }
 
+type NamespaceClaimSummary struct {
+	Name        string `json:"name"`
+	ProjectName string `json:"projectName"`
+	Phase       string `json:"phase"`
+	ClusterName string `json:"clusterName,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
+	Health      string `json:"health,omitempty"`
+}
+
+type ServiceBindingSummary struct {
+	Name               string `json:"name"`
+	ProjectName        string `json:"projectName"`
+	Phase              string `json:"phase"`
+	SourceName         string `json:"sourceName"`
+	TargetName         string `json:"targetName"`
+	ProjectedSecret    string `json:"projectedSecret,omitempty"`
+	ProjectedNamespace string `json:"projectedNamespace,omitempty"`
+	Health             string `json:"health,omitempty"`
+}
+
+type VirtualMachineClaimSummary struct {
+	Name        string `json:"name"`
+	ProjectName string `json:"projectName"`
+	Class       string `json:"class"`
+	Image       string `json:"image"`
+	Phase       string `json:"phase"`
+	ClusterName string `json:"clusterName,omitempty"`
+	Health      string `json:"health,omitempty"`
+}
+
 type CatalogEntry struct {
 	Name         string        `json:"name"`
 	DisplayName  string        `json:"displayName"`
