@@ -165,6 +165,7 @@ func TestActionRequestReconcilerRotatesValkeyCredentials(t *testing.T) {
 func TestActionRequestReconcilerPromotesValkeyFailoverCandidate(t *testing.T) {
 	actionRequest := valkeyActionRequestFixture("session-cache-failover", string(adapters.ActionFailover), map[string]any{"candidateCluster": "west-2"})
 	actionRequest.Spec.Approval.Mode = platformv1alpha1.ApprovalModeApproved
+	actionRequest.Spec.Approval.ApprovedBy = []string{"manager@example.com"}
 	reconciler := newValkeyActionRequestReconciler(t, actionRequest)
 
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache-failover"}}); err != nil {
@@ -190,6 +191,7 @@ func TestActionRequestReconcilerPromotesValkeyFailoverCandidate(t *testing.T) {
 func TestActionRequestReconcilerResyncsValkeyStandby(t *testing.T) {
 	actionRequest := valkeyActionRequestFixture("session-cache-resync", string(adapters.ActionResyncStandby), map[string]any{"standbyCluster": "west-2"})
 	actionRequest.Spec.Approval.Mode = platformv1alpha1.ApprovalModeApproved
+	actionRequest.Spec.Approval.ApprovedBy = []string{"manager@example.com"}
 	reconciler := newValkeyActionRequestReconciler(t, actionRequest)
 
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache-resync"}}); err != nil {
@@ -209,6 +211,7 @@ func TestActionRequestReconcilerResyncsValkeyStandby(t *testing.T) {
 func TestActionRequestReconcilerRollsBackValkeyFailover(t *testing.T) {
 	actionRequest := valkeyActionRequestFixture("session-cache-rollback", string(adapters.ActionRollbackFailover), map[string]any{"targetPrimary": "east-1"})
 	actionRequest.Spec.Approval.Mode = platformv1alpha1.ApprovalModeApproved
+	actionRequest.Spec.Approval.ApprovedBy = []string{"manager@example.com"}
 	instance := valkeyServiceInstanceFixture()
 	instance.Status.CacheTopology.PrimaryCluster = "west-2"
 	instance.Status.CacheTopology.StandbyClusters = []platformv1alpha1.CacheStandbyStatus{
@@ -296,6 +299,7 @@ func TestActionRequestReconcilerPromotesMySQLFailoverCandidate(t *testing.T) {
 	actionRequest := valkeyActionRequestFixture("orders-mysql-failover", string(adapters.ActionFailover), map[string]any{"candidateCluster": "west-2"})
 	actionRequest.Spec.TargetRef.Name = "orders-mysql"
 	actionRequest.Spec.Approval.Mode = platformv1alpha1.ApprovalModeApproved
+	actionRequest.Spec.Approval.ApprovedBy = []string{"manager@example.com"}
 	reconciler := newMySQLActionRequestReconciler(t, mysqlServiceInstanceFixture(), actionRequest)
 
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-mysql-failover"}}); err != nil {
