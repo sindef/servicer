@@ -1,0 +1,455 @@
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
+  name: namespace
+spec:
+  displayName: Kubernetes Namespace
+  category: platform
+  driver: kubernetes-namespace
+  capabilityFlags:
+    - resource-quota
+    - baseline-policy
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: namespace-team
+spec:
+  serviceClassRef:
+    name: namespace
+  displayName: Team Namespace
+  tier: standard
+  topology: dedicated
+  defaultParameters:
+    cpu: "2"
+    memory: 4Gi
+    pods: "20"
+    defaultDenyIngress: true
+    labels:
+      platform.mnorris.dev/profile: workload
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
+  name: postgresql
+spec:
+  displayName: PostgreSQL
+  category: database
+  driver: cnpg
+  supportedVersions:
+    - "16"
+    - "15"
+  capabilityFlags:
+    - backups
+    - high-availability
+  allowsVersionOverride: true
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: postgresql-ha
+spec:
+  serviceClassRef:
+    name: postgresql
+  displayName: Standard HA
+  tier: standard
+  topology: single-cluster
+  defaultVersion: "16"
+  allowsVersionOverride: true
+  defaultParameters:
+    storageSize: 100Gi
+    backupProfile: daily-7d
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: postgresql-dev
+spec:
+  serviceClassRef:
+    name: postgresql
+  displayName: Development
+  tier: standard
+  topology: single-cluster
+  defaultVersion: "16"
+  allowsVersionOverride: true
+  defaultParameters:
+    instances: 1
+    storageSize: 20Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
+  name: mysql
+spec:
+  displayName: MySQL
+  category: database
+  driver: servicer-mysql
+  supportedVersions:
+    - "8.4"
+    - "8.0"
+  capabilityFlags:
+    - backups
+    - galera
+    - active-passive
+    - multi-region
+    - credential-rotation
+  allowsVersionOverride: true
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: mysql-ha
+spec:
+  serviceClassRef:
+    name: mysql
+  displayName: Standard HA
+  tier: standard
+  topology: single-cluster
+  defaultVersion: "8.4"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationMode: single-primary
+    replicas: 3
+    cpu: "1"
+    memory: 2Gi
+    storageSize: 100Gi
+    backupProfile: daily-7d
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: mysql-galera
+spec:
+  serviceClassRef:
+    name: mysql
+  displayName: Galera
+  tier: high-availability
+  topology: multi-region
+  defaultVersion: "8.4"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationMode: galera
+    replicas: 3
+    cpu: "1"
+    memory: 2Gi
+    storageSize: 100Gi
+    backupProfile: daily-7d
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: mysql-active-passive
+spec:
+  serviceClassRef:
+    name: mysql
+  displayName: Standard HA
+  tier: high-availability
+  topology: multi-region
+  defaultVersion: "8.4"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationMode: active-passive
+    replicas: 1
+    cpu: "1"
+    memory: 2Gi
+    storageSize: 100Gi
+    backupProfile: daily-7d
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: mysql-dev
+spec:
+  serviceClassRef:
+    name: mysql
+  displayName: Development
+  tier: development
+  topology: single-cluster
+  defaultVersion: "8.4"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationMode: single-primary
+    replicas: 1
+    cpu: "0.5"
+    memory: 1Gi
+    storageSize: 20Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: mysql-galera-single
+spec:
+  serviceClassRef:
+    name: mysql
+  displayName: Galera
+  tier: high-availability
+  topology: single-cluster
+  defaultVersion: "8.4"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationMode: galera
+    replicas: 3
+    cpu: "1"
+    memory: 2Gi
+    storageSize: 100Gi
+    backupProfile: daily-7d
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
+  name: valkey
+spec:
+  displayName: Valkey
+  category: cache
+  driver: servicer-valkey
+  supportedVersions:
+    - "8.0"
+  capabilityFlags:
+    - single-cluster
+    - multi-region
+    - servicer-owned-runtime
+    - credential-rotation
+  allowsVersionOverride: true
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: valkey-dev
+spec:
+  serviceClassRef:
+    name: valkey
+  displayName: Development
+  tier: development
+  topology: single-cluster
+  defaultVersion: "8.0"
+  allowsVersionOverride: true
+  defaultParameters:
+    memoryProfile: small
+    persistence: none
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: valkey-replicated
+spec:
+  serviceClassRef:
+    name: valkey
+  displayName: Standard HA
+  tier: standard
+  topology: single-cluster
+  defaultVersion: "8.0"
+  allowsVersionOverride: true
+  defaultParameters:
+    memoryProfile: medium
+    replicas: 3
+    persistence: persistent
+    storageSize: 10Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: valkey-failover
+spec:
+  serviceClassRef:
+    name: valkey
+  displayName: Sharded
+  tier: high-availability
+  topology: multi-region
+  defaultVersion: "8.0"
+  allowsVersionOverride: true
+  defaultParameters:
+    memoryProfile: medium
+    replicas: 3
+    persistence: persistent
+    storageSize: 10Gi
+    maxReplicationLagSeconds: 30
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: valkey-sharded
+spec:
+  serviceClassRef:
+    name: valkey
+  displayName: Sharded
+  tier: high-availability
+  topology: single-cluster
+  defaultVersion: "8.0"
+  allowsVersionOverride: true
+  defaultParameters:
+    memoryProfile: medium
+    replicas: 3
+    persistence: persistent
+    storageSize: 10Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: valkey-ha-geo
+spec:
+  serviceClassRef:
+    name: valkey
+  displayName: Standard HA
+  tier: high-availability
+  topology: multi-region
+  defaultVersion: "8.0"
+  allowsVersionOverride: true
+  defaultParameters:
+    memoryProfile: medium
+    replicas: 3
+    persistence: persistent
+    storageSize: 10Gi
+    maxReplicationLagSeconds: 30
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
+  name: nats
+spec:
+  displayName: NATS
+  category: messaging
+  driver: servicer-nats
+  supportedVersions:
+    - "2.10"
+  capabilityFlags:
+    - jetstream
+    - multi-region
+    - credential-rotation
+  allowsVersionOverride: true
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: nats-core
+spec:
+  serviceClassRef:
+    name: nats
+  displayName: Core
+  tier: standard
+  topology: single-cluster
+  defaultVersion: "2.10"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicas: 1
+    jetstream: false
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: nats-jetstream
+spec:
+  serviceClassRef:
+    name: nats
+  displayName: JetStream
+  tier: standard
+  topology: single-cluster
+  defaultVersion: "2.10"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicas: 3
+    jetstream: true
+    storageSize: 20Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: nats-geo
+spec:
+  serviceClassRef:
+    name: nats
+  displayName: Geo-Distributed
+  tier: high-availability
+  topology: multi-region
+  defaultVersion: "2.10"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicas: 3
+    jetstream: true
+    storageSize: 20Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
+  name: yugabyte
+spec:
+  displayName: YugabyteDB
+  category: database
+  driver: yb-operator
+  supportedVersions:
+    - "2.20.1.3-b3"
+    - "2.25.2.0-b359"
+  capabilityFlags:
+    - ysql
+    - ycql
+    - multi-region
+    - high-availability
+    - backups
+  allowsVersionOverride: true
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: yugabyte-dev
+spec:
+  serviceClassRef:
+    name: yugabyte
+  displayName: Development
+  tier: development
+  topology: single-cluster
+  defaultVersion: "2.20.1.3-b3"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationFactor: 1
+    masterReplicas: 1
+    tserverReplicas: 1
+    cpu: 500m
+    memory: 1Gi
+    storageSize: 10Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: yugabyte-ha
+spec:
+  serviceClassRef:
+    name: yugabyte
+  displayName: Standard HA
+  tier: standard
+  topology: single-cluster
+  defaultVersion: "2.20.1.3-b3"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationFactor: 3
+    masterReplicas: 3
+    tserverReplicas: 3
+    cpu: 1
+    memory: 2Gi
+    storageSize: 100Gi
+    backupProfile: daily-7d
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: yugabyte-geo
+spec:
+  serviceClassRef:
+    name: yugabyte
+  displayName: Geo-Distributed
+  tier: high-availability
+  topology: multi-region
+  defaultVersion: "2.20.1.3-b3"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicationFactor: 3
+    masterReplicas: 3
+    tserverReplicas: 3
+    cpu: 1
+    memory: 2Gi
+    storageSize: 100Gi
+    backupProfile: daily-7d

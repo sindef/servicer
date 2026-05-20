@@ -1,0 +1,70 @@
+domain: servicer.io
+layout:
+- go.kubebuilder.io/v4
+projectName: servicer
+repo: github.com/sindef/servicer
+resources:
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: servicer.io
+  group: platform
+  kind: ClusterTarget
+  path: github.com/sindef/servicer/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: servicer.io
+  group: platform
+  kind: Tenant
+  path: github.com/sindef/servicer/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: servicer.io
+  group: platform
+  kind: Project
+  path: github.com/sindef/servicer/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: servicer.io
+  group: platform
+  kind: ServiceClass
+  path: github.com/sindef/servicer/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: servicer.io
+  group: platform
+  kind: ServicePlan
+  path: github.com/sindef/servicer/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: servicer.io
+  group: platform
+  kind: ServiceInstance
+  path: github.com/sindef/servicer/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: servicer.io
+  group: platform
+  kind: ActionRequest
+  path: github.com/sindef/servicer/api/v1alpha1
+  version: v1alpha1
+version: "3"

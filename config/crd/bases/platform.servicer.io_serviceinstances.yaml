@@ -1,0 +1,425 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: serviceinstances.platform.servicer.io
+spec:
+  group: platform.servicer.io
+  names:
+    kind: ServiceInstance
+    listKind: ServiceInstanceList
+    plural: serviceinstances
+    shortNames:
+    - svcinst
+    singular: serviceinstance
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.projectRef.name
+      name: Project
+      type: string
+    - jsonPath: .spec.serviceClassRef.name
+      name: Class
+      type: string
+    - jsonPath: .spec.servicePlanRef.name
+      name: Plan
+      type: string
+    - jsonPath: .status.placement.clusterName
+      name: Cluster
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ServiceInstance is the common product API for operator-backed
+          services.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ServiceInstanceSpec defines the desired state of a ServiceInstance.
+            properties:
+              deletionPolicy:
+                description: DeletionPolicy defines how the instance should be removed.
+                enum:
+                - delete
+                - orphan
+                - snapshot
+                type: string
+              exposure:
+                description: Exposure defines how consumers reach the service.
+                properties:
+                  mode:
+                    description: Mode is the selected exposure pattern.
+                    enum:
+                    - cluster-internal
+                    - private-ingress
+                    - public-ingress
+                    type: string
+                required:
+                - mode
+                type: object
+              maintenancePolicy:
+                description: MaintenancePolicy references the desired maintenance
+                  behavior.
+                properties:
+                  windowRef:
+                    description: WindowRef points to a named maintenance window.
+                    properties:
+                      name:
+                        description: Name is the stable resource name.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              parameters:
+                description: Parameters holds adapter-specific configuration.
+                x-kubernetes-preserve-unknown-fields: true
+              projectRef:
+                description: ProjectRef references the owning project.
+                properties:
+                  name:
+                    description: Name is the stable resource name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              secretPolicy:
+                description: SecretPolicy defines how credentials are delivered.
+                properties:
+                  deliveryMode:
+                    description: DeliveryMode selects the secret delivery pattern.
+                    enum:
+                    - external-secret
+                    - direct-secret-ref
+                    - manual
+                    type: string
+                required:
+                - deliveryMode
+                type: object
+              serviceClassRef:
+                description: ServiceClassRef references the selected service class.
+                properties:
+                  name:
+                    description: Name is the stable resource name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              servicePlanRef:
+                description: ServicePlanRef references the selected service plan.
+                properties:
+                  name:
+                    description: Name is the stable resource name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              version:
+                description: Version optionally overrides the engine version when
+                  allowed.
+                type: string
+            required:
+            - exposure
+            - projectRef
+            - secretPolicy
+            - serviceClassRef
+            - servicePlanRef
+            type: object
+          status:
+            description: ServiceInstanceStatus defines the observed state of a ServiceInstance.
+            properties:
+              artifact:
+                description: Artifact captures derived delivery metadata.
+                properties:
+                  artifacts:
+                    description: Artifacts lists the deterministic files written for
+                      delivery.
+                    items:
+                      description: MaterializedArtifactStatus identifies one generated
+                        delivery artifact.
+                      properties:
+                        digest:
+                          description: Digest is the sha256 digest of the artifact
+                            content.
+                          type: string
+                        path:
+                          description: Path is the repository-relative artifact path.
+                          type: string
+                      type: object
+                    type: array
+                  count:
+                    description: Count is the number of artifacts in the materialized
+                      package.
+                    format: int32
+                    type: integer
+                  path:
+                    description: Path is the repository-relative package path for
+                      this instance.
+                    type: string
+                  revision:
+                    description: Revision is the generated artifact or repo revision
+                      currently materialized.
+                    type: string
+                type: object
+              cacheTopology:
+                description: CacheTopology captures operator-neutral cache topology
+                  state.
+                properties:
+                  failoverReadiness:
+                    description: FailoverReadiness summarizes whether a controlled
+                      failover can be attempted.
+                    type: string
+                  message:
+                    description: Message summarizes the current topology posture.
+                    type: string
+                  mode:
+                    description: Mode identifies the cache topology such as single-node,
+                      replicated, or multi-cluster-failover.
+                    type: string
+                  primaryCluster:
+                    description: PrimaryCluster is the current writable cluster for
+                      failover-oriented cache topologies.
+                    type: string
+                  standbyClusters:
+                    description: StandbyClusters summarizes standby cluster health
+                      and promotion posture.
+                    items:
+                      description: CacheStandbyStatus captures one standby cluster
+                        in a failover-oriented cache topology.
+                      properties:
+                        clusterName:
+                          description: ClusterName identifies the standby cluster.
+                          type: string
+                        lagObserved:
+                          description: LagObserved indicates whether replication lag
+                            has been observed for this standby.
+                          type: boolean
+                        message:
+                          description: Message summarizes this standby's posture.
+                          type: string
+                        ready:
+                          description: Ready indicates whether this standby passes
+                            current promotion preflight checks.
+                          type: boolean
+                        replicationLagSeconds:
+                          description: ReplicationLagSeconds is the observed or reported
+                            replication lag.
+                          format: int32
+                          type: integer
+                        resyncRequired:
+                          description: ResyncRequired indicates that the standby must
+                            be rebuilt from the active primary before promotion.
+                          type: boolean
+                      type: object
+                    type: array
+                  trafficEndpoint:
+                    description: TrafficEndpoint is the stable endpoint that should
+                      route to the current writable primary.
+                    type: string
+                  trafficPolicyRef:
+                    description: TrafficPolicyRef points at the generated traffic
+                      policy intent for delivery controllers.
+                    properties:
+                      apiVersion:
+                        description: APIVersion is the target object's apiVersion.
+                        minLength: 1
+                        type: string
+                      kind:
+                        description: Kind is the target object's kind.
+                        minLength: 1
+                        type: string
+                      name:
+                        description: Name is the target object's name.
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is optional for namespaced targets.
+                        type: string
+                    required:
+                    - apiVersion
+                    - kind
+                    - name
+                    type: object
+                type: object
+              conditions:
+                description: Conditions contains the current status conditions.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              credentialRefs:
+                description: CredentialRefs identifies related Kubernetes Secrets.
+                items:
+                  description: NamespacedObjectReference identifies a resource in
+                    a Kubernetes namespace.
+                  properties:
+                    name:
+                      description: Name is the resource name.
+                      minLength: 1
+                      type: string
+                    namespace:
+                      description: Namespace is the resource namespace.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+              endpoints:
+                additionalProperties:
+                  type: string
+                description: Endpoints summarizes the known consumer endpoints.
+                type: object
+              health:
+                description: Health summarizes the runtime condition.
+                properties:
+                  summary:
+                    description: Summary is the high-level health summary.
+                    type: string
+                type: object
+              observedGeneration:
+                description: ObservedGeneration is the most recent processed generation.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the coarse lifecycle summary.
+                type: string
+              placement:
+                description: Placement captures the resolved placement state.
+                properties:
+                  clusterName:
+                    description: ClusterName is the resolved target cluster.
+                    type: string
+                  namespace:
+                    description: Namespace is the resolved target namespace when relevant.
+                    type: string
+                type: object
+              runtime:
+                description: Runtime identifies the backing runtime object.
+                properties:
+                  driver:
+                    description: Driver is the selected runtime adapter, such as cnpg
+                      or servicer-valkey.
+                    type: string
+                  objectRef:
+                    description: ObjectRef points to the primary runtime object.
+                    properties:
+                      apiVersion:
+                        description: APIVersion is the target object's apiVersion.
+                        minLength: 1
+                        type: string
+                      kind:
+                        description: Kind is the target object's kind.
+                        minLength: 1
+                        type: string
+                      name:
+                        description: Name is the target object's name.
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is optional for namespaced targets.
+                        type: string
+                    required:
+                    - apiVersion
+                    - kind
+                    - name
+                    type: object
+                type: object
+              sync:
+                description: Sync summarizes readiness for Argo CD delivery.
+                properties:
+                  applicationName:
+                    description: ApplicationName identifies the future or current
+                      Argo CD Application.
+                    type: string
+                  message:
+                    description: Message summarizes the current sync handoff state.
+                    type: string
+                  phase:
+                    description: Phase captures whether generated artifacts are ready,
+                      synced, or blocked.
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
