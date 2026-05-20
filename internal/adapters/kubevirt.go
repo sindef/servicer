@@ -14,6 +14,7 @@ const (
 	kubeVirtRuntimeDriver = "kubevirt"
 	kubeVirtRuntimeAPI    = "kubevirt.io/v1"
 	kubeVirtRuntimeKind   = "VirtualMachine"
+	kubeVirtDataVolumeAPI = "cdi.kubevirt.io/v1beta1"
 )
 
 type kubeVirtParameters struct {
@@ -135,6 +136,33 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 			"userdata": a.cloudInitUserData(params),
 		},
 	}
+	rootDiskName := fmt.Sprintf("%s-rootdisk", ctx.Instance.Name)
+	dataVolumeManifest := map[string]any{
+		"apiVersion": kubeVirtDataVolumeAPI,
+		"kind":       "DataVolume",
+		"metadata": map[string]any{
+			"name":      rootDiskName,
+			"namespace": namespace,
+			"labels":    labels,
+			"annotations": map[string]string{
+				"servicer.io/source-image": params.Image,
+			},
+		},
+		"spec": map[string]any{
+			"source": map[string]any{
+				"registry": map[string]string{"url": params.Image},
+			},
+			"pvc": map[string]any{
+				"accessModes": []string{"ReadWriteOnce"},
+				"resources": map[string]any{
+					"requests": map[string]string{"storage": params.StorageSize},
+				},
+			},
+		},
+	}
+	if params.StorageClass != "" {
+		dataVolumeManifest["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = params.StorageClass
+	}
 	vmManifest := map[string]any{
 		"apiVersion": kubeVirtRuntimeAPI,
 		"kind":       kubeVirtRuntimeKind,
@@ -168,7 +196,7 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 					},
 					"networks": []map[string]any{{"name": "default", "pod": map[string]any{}}},
 					"volumes": []map[string]any{
-						{"name": "rootdisk", "containerDisk": map[string]string{"image": params.Image}},
+						{"name": "rootdisk", "dataVolume": map[string]string{"name": rootDiskName}},
 						{"name": "cloudinit", "cloudInitNoCloud": map[string]string{"secretRef": cloudInitName}},
 					},
 				},
@@ -183,6 +211,7 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 	}{
 		{name: "namespace.yaml", body: namespaceManifest},
 		{name: "cloudinit-secret.yaml", body: cloudInitManifest},
+		{name: "datavolume-rootdisk.yaml", body: dataVolumeManifest},
 		{name: "virtualmachine.yaml", body: vmManifest},
 	} {
 		content, err := yaml.Marshal(manifest.body)
@@ -237,7 +266,7 @@ func (a *KubeVirtAdapter) Observe(_ context.Context, request ObserveRequest) (No
 		HealthSignals: []HealthSignal{
 			{Key: "vm-ready", Status: phase, Severity: HealthSeverityCritical, Message: summary},
 			{Key: "guest-access", Status: "Configured", Severity: HealthSeverityInfo, Message: "Cloud-init bootstrap material is rendered."},
-			{Key: "storage-posture", Status: "Configured", Severity: HealthSeverityInfo, Message: "Root disk image intent is materialized."},
+			{Key: "storage-posture", Status: "Configured", Severity: HealthSeverityInfo, Message: "Persistent DataVolume root disk intent is materialized."},
 		},
 	}, nil
 }

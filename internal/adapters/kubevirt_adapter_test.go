@@ -46,9 +46,14 @@ func TestKubeVirtAdapterRenderProducesVirtualMachineManifest(t *testing.T) {
 	rendered := renderedArtifacts(result)
 	for _, expected := range []string{
 		"kind: VirtualMachine",
+		"kind: DataVolume",
 		"apiVersion: kubevirt.io/v1",
+		"apiVersion: cdi.kubevirt.io/v1beta1",
 		"runStrategy: Always",
-		"image: quay.io/containerdisks/ubuntu:22.04",
+		"url: quay.io/containerdisks/ubuntu:22.04",
+		"storage: 20Gi",
+		"dataVolume:",
+		"name: devbox-rootdisk",
 		"secretRef: devbox-cloudinit",
 		"cpu: \"2\"",
 		"memory: 4Gi",
