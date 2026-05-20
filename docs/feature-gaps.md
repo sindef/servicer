@@ -60,8 +60,9 @@ Commit: `7ee64be`
 
 ## Delivery and secrets
 
-### [ ] Vault / external secret projection
-**Plan 003** — `ServiceInstance.Spec.SecretPolicy.DeliveryMode` has an `external-secret` enum value but no handler. All credentials are written as plain Kubernetes Secrets. No Vault client, no External Secrets Operator integration.
+### [~] Vault / external secret projection
+**Plan 003** — `ServiceInstance.Spec.SecretPolicy.DeliveryMode=external-secret` now renders External Secrets Operator artifacts into the delivery tree: `ServiceAccount`, source-namespace RBAC, `SecretStore`, and `ExternalSecret` resources using the ESO Kubernetes provider. Published credential refs now point at projected target secrets rather than raw source secrets. This is still partial: Vault providers, turnkey ESO/operator packaging, and `ServiceBinding` external-secret delivery are still open.  
+Commit: `3db84a0`
 
 ### [~] Sync and health status from Argo CD
 **Plan 003** — Runtime observation is part of the main reconcile path, and Argo CD `Application` sync/health is ingested into `ServiceInstance.Status.Sync` when a managed `Application` exists. This remains partial because `ApplicationSet`/multi-cluster fan-out and remote Git publication are still open.  
