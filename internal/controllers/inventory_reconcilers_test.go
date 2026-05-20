@@ -703,10 +703,10 @@ func TestServiceInstanceReconcilerMaterializesCNPGArtifacts(t *testing.T) {
 	if updated.Status.Artifact.Revision == "" || updated.Status.Artifact.Revision == "local-render-preview" {
 		t.Fatalf("expected real artifact revision, got %q", updated.Status.Artifact.Revision)
 	}
-	if updated.Status.Artifact.Count != 2 || len(updated.Status.Artifact.Artifacts) != 2 {
-		t.Fatalf("expected 2 artifact records, got %#v", updated.Status.Artifact)
+	if updated.Status.Artifact.Count != 7 || len(updated.Status.Artifact.Artifacts) != 7 {
+		t.Fatalf("expected 7 artifact records including external-secret projection, got %#v", updated.Status.Artifact)
 	}
-	if updated.Status.Sync.Phase != string(adapters.SyncPhasePending) || updated.Status.Sync.ApplicationName != "acme-prod-orders-db" {
+	if updated.Status.Sync.Phase != string(adapters.SyncPhaseMaterialized) || updated.Status.Sync.ApplicationName != "acme-prod-orders-db" {
 		t.Fatalf("unexpected sync status: %#v", updated.Status.Sync)
 	}
 
@@ -999,8 +999,10 @@ func TestServiceInstanceReconcilerMaterializesValkeyArtifacts(t *testing.T) {
 		Materializer: materializer.New(deliveryRoot),
 	}
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache"}}); err != nil {
-		t.Fatalf("Reconcile returned error: %v", err)
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
 	}
 
 	var updated platformv1alpha1.ServiceInstance
@@ -1087,8 +1089,10 @@ func TestServiceInstanceReconcilerObservesReadyValkeyRuntime(t *testing.T) {
 		Materializer: materializer.New(t.TempDir()),
 	}
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache"}}); err != nil {
-		t.Fatalf("Reconcile returned error: %v", err)
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
 	}
 
 	var updated platformv1alpha1.ServiceInstance
@@ -1104,7 +1108,7 @@ func TestServiceInstanceReconcilerObservesReadyValkeyRuntime(t *testing.T) {
 	if updated.Status.Sync.Phase != string(adapters.SyncPhaseSynced) {
 		t.Fatalf("expected sync phase Synced after runtime observation, got %q", updated.Status.Sync.Phase)
 	}
-	if len(updated.Status.CredentialRefs) != 1 || updated.Status.CredentialRefs[0].Name != "session-cache-auth" {
+	if len(updated.Status.CredentialRefs) != 1 || updated.Status.CredentialRefs[0].Name != "session-cache-auth-projected" {
 		t.Fatalf("expected credential ref to be published, got %#v", updated.Status.CredentialRefs)
 	}
 }

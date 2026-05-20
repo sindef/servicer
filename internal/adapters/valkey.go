@@ -42,6 +42,7 @@ var ValkeyContract = ProductContract{
 	SupportsMultiCluster:    true,
 	TopologyModes: []string{
 		"single-cluster",
+		"replicated",
 		"multi-cluster-failover",
 		"multi-region",
 	},
@@ -684,6 +685,9 @@ func (a *ValkeyAdapter) maxReplicationLagSeconds(parameters valkeyParameters) in
 func (a *ValkeyAdapter) replicas(ctx ServiceContext, parameters valkeyParameters) int32 {
 	if parameters.Replicas != nil && *parameters.Replicas > 0 {
 		return *parameters.Replicas
+	}
+	if planTopology(ctx) == "replicated" {
+		return 3
 	}
 	return 1
 }
