@@ -139,6 +139,23 @@ kubectl apply -f config/samples/
 go test ./...
 ```
 
+### Control-plane backup
+
+Best-effort backup and restore tooling for Servicer control-plane state:
+
+```bash
+./hack/control-plane-backup.sh backup
+./hack/control-plane-backup.sh restore ./backups/servicer-YYYYMMDD-HHMMSS
+```
+
+This snapshots:
+- Servicer cluster-scoped CRDs
+- `servicer-system` Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings
+- Servicer-managed Argo CD `Application` objects
+- local `generated/` delivery tree when present
+
+This is not full etcd backup, but useful for demo recovery, migration drills, and control-plane state export/import.
+
 ### CRD generation
 
 Requires `controller-gen v0.17.3`:
