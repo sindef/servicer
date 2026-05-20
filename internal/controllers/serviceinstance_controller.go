@@ -115,6 +115,9 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if !plan.Status.Published {
 		return r.handleValidationFailure(ctx, &instance, originalStatus, "ServicePlanUnpublished", fmt.Sprintf("Referenced ServicePlan %q is not published for provisioning.", plan.Name))
 	}
+	if policyErrs := evaluateInstancePolicies(&instance, &tenant, &project, &plan); len(policyErrs) > 0 {
+		return r.handleValidationFailure(ctx, &instance, originalStatus, "PolicyViolation", policyErrs.ToAggregate().Error())
+	}
 	if result, handled, err := r.enforceProjectQuota(ctx, &instance, &project, originalStatus); handled || err != nil {
 		return result, err
 	}
