@@ -29,6 +29,7 @@ type Server struct {
 	kubeHost   string
 	kubeClient *http.Client
 	auth       authenticator
+	metrics    *serverMetrics
 	handler    http.Handler
 }
 
@@ -37,7 +38,7 @@ func NewServer(client client.Client) *Server {
 }
 
 func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server {
-	server := &Server{client: client}
+	server := &Server{client: client, metrics: newServerMetrics()}
 	auth, err := newAuthenticatorFromEnv(context.Background())
 	if err != nil {
 		panic(err)
@@ -50,6 +51,7 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 		}
 	}
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", server.metrics.handler())
 	mux.HandleFunc("/api/kubernetes/namespaces/", server.handleKubernetesNamespaceProxy)
 	mux.HandleFunc("GET /api", server.handleKubernetesRootProxy)
 	mux.HandleFunc("/api/", server.handleKubernetesRootProxy)
@@ -87,7 +89,7 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /api/admin/serviceclasses", server.handleListServiceClasses)
 	mux.HandleFunc("POST /api/admin/serviceclasses", server.handleRegisterServiceClass)
 	mux.HandleFunc("PUT /api/admin/serviceclasses/{name}", server.handleUpdateServiceClass)
-	server.handler = withJSON(server.withAuthentication(mux))
+	server.handler = withJSON(server.withMetrics(server.withAuthentication(mux)))
 	return server
 }
 
@@ -97,7 +99,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) withAuthentication(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/healthz" {
+		if r.URL.Path == "/api/healthz" || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -107,6 +109,9 @@ func (s *Server) withAuthentication(next http.Handler) http.Handler {
 		}
 		actor, err := s.auth.Authenticate(r.Context(), r)
 		if err != nil {
+			if s.metrics != nil {
+				s.metrics.authFailuresTotal.Inc()
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication failed"})
 			return
 		}

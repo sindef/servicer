@@ -294,6 +294,29 @@ func TestInstancesListFiltersToAuthorizedTenancy(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointExposesPrometheusMetrics(t *testing.T) {
+	server := testServer(t)
+	apiResponse := httptest.NewRecorder()
+	apiRequest := httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
+	server.Handler().ServeHTTP(apiResponse, apiRequest)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, "servicer_bff_http_requests_total") {
+		t.Fatalf("expected http request metric, got %s", body)
+	}
+	if !strings.Contains(body, "servicer_bff_authentication_failures_total") {
+		t.Fatalf("expected auth failure metric, got %s", body)
+	}
+}
+
 func TestNamespaceClaimsEndpointReturnsVisibleClaims(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()

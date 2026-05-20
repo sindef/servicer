@@ -15,6 +15,9 @@ const namespaceProxyPrefix = "/api/kubernetes/namespaces/"
 
 func (s *Server) handleKubernetesNamespaceProxy(w http.ResponseWriter, r *http.Request) {
 	if s.kubeClient == nil || s.kubeHost == "" {
+		if s.metrics != nil {
+			s.metrics.upstreamFailuresTotal.Inc()
+		}
 		http.Error(w, "Kubernetes proxy is not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -142,6 +145,9 @@ func namespaceProxyPathAllowed(namespace, upstreamPath string) bool {
 func (s *Server) forwardKubernetesRequest(w http.ResponseWriter, r *http.Request, upstreamPath string) {
 	upstreamURL, err := url.Parse(s.kubeHost)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.upstreamFailuresTotal.Inc()
+		}
 		http.Error(w, "Kubernetes proxy is misconfigured", http.StatusServiceUnavailable)
 		return
 	}
@@ -149,6 +155,9 @@ func (s *Server) forwardKubernetesRequest(w http.ResponseWriter, r *http.Request
 	upstreamURL.RawQuery = r.URL.RawQuery
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), nil)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.upstreamFailuresTotal.Inc()
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -157,6 +166,9 @@ func (s *Server) forwardKubernetesRequest(w http.ResponseWriter, r *http.Request
 	copyProxyHeader(request.Header, r.Header, "Accept-Encoding")
 	response, err := s.kubeClient.Do(request)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.upstreamFailuresTotal.Inc()
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
