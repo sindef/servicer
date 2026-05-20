@@ -33,9 +33,9 @@ Commit: `7ee64be`
 **Plan 002** — `NamespaceClaim` now has an API type, generated CRD, controller, and BFF list endpoint. It currently reconciles through a backing namespace `ServiceInstance`, which gives it real delivery behavior without a bespoke runtime path yet. A dedicated request/detail UX and richer product-specific API are still open.  
 Commit: `73cdb41`
 
-### [~] VirtualMachineClaim CRD
-**Plan 002** — `VirtualMachineClaim` now has an API type, generated CRD, controller scaffold, and BFF list endpoint. It is accepted and surfaced by the control plane, but still stops in `PendingDriver` until a KubeVirt-backed runtime adapter exists.  
-Commit: `73cdb41`
+### [x] VirtualMachineClaim CRD
+**Plan 002** — `VirtualMachineClaim` now has an API type, generated CRD, webhook coverage, BFF list endpoint, and controller path that creates a backing `virtual-machine` `ServiceInstance`, maps image and power-state intent into KubeVirt parameters, and mirrors runtime/artifact/sync/health status back to the claim.
+Commit: `23298fb`
 
 ### [~] ServiceBinding CRD
 **Plans 002, 004** — `ServiceBinding` now has an API type, generated CRD, controller, and BFF list endpoint. The controller can project source `ServiceInstance` credentials into a target namespace either as a managed Secret or via External Secrets Operator resources (`ServiceAccount`, RBAC, `SecretStore`, `ExternalSecret`). Vault-backed projection and richer target integration are still open.  
