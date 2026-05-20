@@ -18,6 +18,117 @@ import (
 
 var productRequestNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,61}[a-z0-9]$`)
 
+func (s *Server) handleCreateNamespaceClaim(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
+	if !ok {
+		return
+	}
+	var request NamespaceClaimRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	claim, err := s.namespaceClaimRequestToClaim(r, actor, request)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.client.Create(r.Context(), claim); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, WriteResponse{Name: claim.Name, Message: "Namespace claim submitted."})
+}
+
+func (s *Server) handleUpdateNamespaceClaim(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	var request NamespaceClaimRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if request.Name == "" {
+		request.Name = name
+	}
+	if request.Name != name {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request name must match path"})
+		return
+	}
+
+	var existing platformv1alpha1.NamespaceClaim
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	var existingProject platformv1alpha1.Project
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: existing.Spec.ProjectRef.Name}, &existingProject); err != nil {
+		writeError(w, err)
+		return
+	}
+	if !s.authorizeProject(r.Context(), actor, &existingProject) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
+		return
+	}
+
+	updated, err := s.namespaceClaimRequestToClaim(r, actor, request)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	existing.Spec = updated.Spec
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	existing.Annotations["servicer.io/updated-by"] = actor.Name
+	existing.Annotations["servicer.io/updated-at"] = time.Now().UTC().Format(time.RFC3339)
+	if err := s.client.Update(r.Context(), &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, WriteResponse{Name: existing.Name, Message: "Namespace claim updated."})
+}
+
+func (s *Server) handleDeleteNamespaceClaim(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace claim name is required"})
+		return
+	}
+	var claim platformv1alpha1.NamespaceClaim
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &claim); err != nil {
+		writeError(w, err)
+		return
+	}
+	var project platformv1alpha1.Project
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: claim.Spec.ProjectRef.Name}, &project); err != nil {
+		writeError(w, err)
+		return
+	}
+	if !s.authorizeProject(r.Context(), actor, &project) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
+		return
+	}
+	if claim.Annotations == nil {
+		claim.Annotations = map[string]string{}
+	}
+	claim.Annotations["servicer.io/deleted-by"] = actor.Name
+	claim.Annotations["servicer.io/deleted-at"] = time.Now().UTC().Format(time.RFC3339)
+	_ = s.client.Update(r.Context(), &claim)
+	if err := s.client.Delete(r.Context(), &claim); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, WriteResponse{Name: name, Message: "Namespace claim deletion requested."})
+}
+
 func (s *Server) handleCreateProductRequest(w http.ResponseWriter, r *http.Request) {
 	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
 	if !ok {
@@ -38,6 +149,50 @@ func (s *Server) handleCreateProductRequest(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusCreated, WriteResponse{Name: instance.Name, Message: "Product request submitted."})
+}
+
+func (s *Server) namespaceClaimRequestToClaim(r *http.Request, actor actor, request NamespaceClaimRequest) (*platformv1alpha1.NamespaceClaim, error) {
+	name := strings.TrimSpace(request.Name)
+	projectName := strings.TrimSpace(request.ProjectName)
+	if name == "" || projectName == "" {
+		return nil, fmt.Errorf("name and projectName are required")
+	}
+	if !productRequestNamePattern.MatchString(name) {
+		return nil, fmt.Errorf("name must match %s", productRequestNamePattern.String())
+	}
+
+	var project platformv1alpha1.Project
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: projectName}, &project); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("project %q was not found", projectName)
+		}
+		return nil, err
+	}
+	if !s.authorizeProject(r.Context(), actor, &project) {
+		return nil, fmt.Errorf("project %q is outside your authorized tenancy", projectName)
+	}
+
+	policy := platformv1alpha1.DeletionPolicy(strings.TrimSpace(request.DeletionPolicy))
+	if policy == "" {
+		policy = platformv1alpha1.DeletionPolicyDelete
+	}
+
+	return &platformv1alpha1.NamespaceClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Annotations: map[string]string{
+				"servicer.io/requested-by": actor.Name,
+				"servicer.io/requested-at": time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+		Spec: platformv1alpha1.NamespaceClaimSpec{
+			ProjectRef:     platformv1alpha1.LocalObjectReference{Name: projectName},
+			DisplayName:    strings.TrimSpace(request.DisplayName),
+			Quotas:         copyStringMap(request.Quotas),
+			Labels:         copyStringMap(request.Labels),
+			DeletionPolicy: policy,
+		},
+	}, nil
 }
 
 func (s *Server) handleUpdateProductRequest(w http.ResponseWriter, r *http.Request) {

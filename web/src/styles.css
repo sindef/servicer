@@ -40,7 +40,8 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -393,6 +394,7 @@ h3 {
 
 .form-grid input,
 .form-grid select,
+.form-grid textarea,
 .search {
   width: 100%;
   min-height: 38px;
@@ -404,8 +406,13 @@ h3 {
 }
 
 .form-grid input::placeholder,
+.form-grid textarea::placeholder,
 .search::placeholder {
   color: #6f8395;
+}
+
+.form-grid textarea {
+  resize: vertical;
 }
 
 .compact-form {
@@ -1302,7 +1309,36 @@ h3 {
   min-height: 42px;
 }
 
+.claims-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.claims-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.claims-map-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.claims-map-list code {
+  color: var(--accent-strong);
+}
+
 @media (max-width: 900px) {
+  .claims-summary-grid,
+  .claims-two-column,
   .resource-editor-grid {
     grid-template-columns: 1fr;
   }

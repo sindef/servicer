@@ -5,6 +5,8 @@ import OverviewPage from './pages/OverviewPage.vue'
 import CatalogPage from './pages/CatalogPage.vue'
 import InstancesPage from './pages/InstancesPage.vue'
 import InstanceDetailPage from './pages/InstanceDetailPage.vue'
+import NamespaceClaimsPage from './pages/NamespaceClaimsPage.vue'
+import NamespaceClaimDetailPage from './pages/NamespaceClaimDetailPage.vue'
 import TenancyPage from './pages/TenancyPage.vue'
 import AuditPage from './pages/AuditPage.vue'
 import AdminPage from './pages/AdminPage.vue'
@@ -17,6 +19,8 @@ const router = createRouter({
     { path: '/catalog', name: 'catalog', component: CatalogPage },
     { path: '/instances', name: 'instances', component: InstancesPage },
     { path: '/instances/:name', name: 'instance-detail', component: InstanceDetailPage, props: true },
+    { path: '/namespace-claims', name: 'namespace-claims', component: NamespaceClaimsPage },
+    { path: '/namespace-claims/:name', name: 'namespace-claim-detail', component: NamespaceClaimDetailPage, props: true },
     { path: '/tenancy', name: 'tenancy', component: TenancyPage },
     { path: '/audit', name: 'audit', component: AuditPage },
     { path: '/admin', name: 'admin', component: AdminPage }

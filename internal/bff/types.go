@@ -49,6 +49,31 @@ type NamespaceClaimSummary struct {
 	Health      string `json:"health,omitempty"`
 }
 
+type NamespaceClaimDetail struct {
+	Name           string             `json:"name"`
+	DisplayName    string             `json:"displayName,omitempty"`
+	ProjectName    string             `json:"projectName"`
+	Phase          string             `json:"phase"`
+	ClusterName    string             `json:"clusterName,omitempty"`
+	Namespace      string             `json:"namespace,omitempty"`
+	Health         string             `json:"health,omitempty"`
+	DeletionPolicy string             `json:"deletionPolicy,omitempty"`
+	Quotas         map[string]string  `json:"quotas,omitempty"`
+	Labels         map[string]string  `json:"labels,omitempty"`
+	Artifact       ArtifactSummary    `json:"artifact"`
+	Delivery       DeliverySummary    `json:"delivery"`
+	Conditions     []ConditionSummary `json:"conditions"`
+}
+
+type NamespaceClaimRequest struct {
+	Name           string            `json:"name"`
+	ProjectName    string            `json:"projectName"`
+	DisplayName    string            `json:"displayName,omitempty"`
+	Quotas         map[string]string `json:"quotas,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	DeletionPolicy string            `json:"deletionPolicy,omitempty"`
+}
+
 type ServiceBindingSummary struct {
 	Name               string `json:"name"`
 	ProjectName        string `json:"projectName"`

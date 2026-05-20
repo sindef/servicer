@@ -41,7 +41,9 @@ services:
   # Watches the delivery directory and kubectl-applies generated manifests every
   # 3 seconds. Uses the official bitnami/kubectl image — no custom image needed.
   syncer:
-    image: bitnami/kubectl:1.32
+    build:
+      context: .
+      dockerfile: Containerfile.syncer
     user: root
     entrypoint: ["/bin/bash", "/sync.sh"]
     environment:
@@ -51,7 +53,6 @@ services:
     volumes:
       - ./generated/demo-kubeconfig:/kube/config:ro
       - ./generated/demo-delivery:/delivery:ro
-      - ./hack/demo-sync-delivery.sh:/sync.sh:ro
     network_mode: host
     restart: on-failure
 

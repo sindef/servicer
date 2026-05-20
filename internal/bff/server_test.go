@@ -490,6 +490,109 @@ func TestNamespaceClaimsEndpointReturnsVisibleClaims(t *testing.T) {
 	}
 }
 
+func TestNamespaceClaimDetailReturnsSpecAndStatus(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/namespaceclaims/team-space-claim", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var claim NamespaceClaimDetail
+	if err := json.Unmarshal(response.Body.Bytes(), &claim); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if claim.Name != "team-space-claim" || claim.ProjectName != "acme-prod" {
+		t.Fatalf("unexpected detail %#v", claim)
+	}
+	if claim.Namespace != "acme-prod-team-space" || claim.Quotas["limits.memory"] != "8Gi" {
+		t.Fatalf("expected quota and namespace detail, got %#v", claim)
+	}
+}
+
+func TestCreateNamespaceClaimCreatesClaim(t *testing.T) {
+	server := testServer(t)
+	body := strings.NewReader(`{
+		"name":"analytics-space",
+		"projectName":"acme-prod",
+		"displayName":"Analytics",
+		"deletionPolicy":"orphan",
+		"quotas":{"requests.cpu":"2","limits.memory":"4Gi"},
+		"labels":{"team":"analytics"}
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/namespaceclaims", body)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", response.Code, response.Body.String())
+	}
+	var claim platformv1alpha1.NamespaceClaim
+	if err := server.client.Get(request.Context(), client.ObjectKey{Name: "analytics-space"}, &claim); err != nil {
+		t.Fatalf("get created claim: %v", err)
+	}
+	if claim.Spec.DisplayName != "Analytics" || claim.Spec.DeletionPolicy != platformv1alpha1.DeletionPolicyOrphan {
+		t.Fatalf("unexpected created claim spec %#v", claim.Spec)
+	}
+}
+
+func TestUpdateNamespaceClaimUpdatesSpec(t *testing.T) {
+	server := testServer(t)
+	body := strings.NewReader(`{
+		"name":"team-space-claim",
+		"projectName":"acme-prod",
+		"displayName":"Team Space",
+		"deletionPolicy":"snapshot",
+		"quotas":{"limits.memory":"16Gi"},
+		"labels":{"owner":"platform"}
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/namespaceclaims/team-space-claim", body)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var claim platformv1alpha1.NamespaceClaim
+	if err := server.client.Get(request.Context(), client.ObjectKey{Name: "team-space-claim"}, &claim); err != nil {
+		t.Fatalf("get updated claim: %v", err)
+	}
+	if claim.Spec.Quotas["limits.memory"] != "16Gi" || claim.Spec.Labels["owner"] != "platform" {
+		t.Fatalf("expected updated claim spec, got %#v", claim.Spec)
+	}
+}
+
+func TestDeleteNamespaceClaimRequiresOperatorRole(t *testing.T) {
+	server := testServer(t)
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodDelete, "/api/namespaceclaims/team-space-claim", nil)
+	forbiddenRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	forbiddenRequest.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", forbidden.Code, forbidden.Body.String())
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/namespaceclaims/team-space-claim", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestServiceBindingsEndpointReturnsVisibleBindings(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()
@@ -1038,7 +1141,11 @@ func testNamespaceClaim() *platformv1alpha1.NamespaceClaim {
 	return &platformv1alpha1.NamespaceClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "team-space-claim"},
 		Spec: platformv1alpha1.NamespaceClaimSpec{
-			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			ProjectRef:     platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			DisplayName:    "Team Space",
+			Quotas:         map[string]string{"limits.memory": "8Gi", "requests.cpu": "1"},
+			Labels:         map[string]string{"owner": "app-team"},
+			DeletionPolicy: platformv1alpha1.DeletionPolicyDelete,
 		},
 		Status: platformv1alpha1.NamespaceClaimStatus{
 			Phase: "Ready",
@@ -1046,7 +1153,23 @@ func testNamespaceClaim() *platformv1alpha1.NamespaceClaim {
 				ClusterName: "east-1",
 				Namespace:   "acme-prod-team-space",
 			},
+			Artifact: platformv1alpha1.ArtifactStatus{
+				Revision: "abc123",
+				Path:     "clusters/east-1/acme-prod/team-space",
+				Count:    3,
+			},
+			Sync: platformv1alpha1.DeliverySyncStatus{
+				Phase:           "Synced",
+				ApplicationName: "team-space-claim",
+				Message:         "Namespace package synced.",
+			},
 			Health: platformv1alpha1.HealthStatus{Summary: "Namespace claim ready."},
+			Conditions: []metav1.Condition{{
+				Type:    "Accepted",
+				Status:  metav1.ConditionTrue,
+				Reason:  "BackedByServiceInstance",
+				Message: "Namespace claim is reconciled through a backing namespace service instance.",
+			}},
 		},
 	}
 }

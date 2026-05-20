@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# hack/demo-setup.sh — one-time setup for the docker-compose demo.
+# hack/demo-setup.sh — one-time setup for the Servicer K8s demo.
 #
-# Creates a Kind cluster, installs CRDs, and applies the sample catalog and
-# tenancy. Writes a standalone kubeconfig to generated/demo-kubeconfig so
-# docker-compose services can use it without touching ~/.kube/config.
+# Creates two Kind clusters:
+#   servicer-app    — runs the Servicer platform (manager, bff, web, syncer)
+#   servicer-target — the managed cluster where delivery artifacts land
 #
-# Run once before: docker compose -f docker-compose.demo.yml up --build
-# Re-run any time you change CRDs or config/samples/.
+# Builds all four container images, loads them into servicer-app, installs
+# CRDs, applies the service catalog and demo tenancy, and patches the
+# local-dev-kubeconfig Secret so the syncer can reach servicer-target from
+# inside a pod.
+#
+# Run once, then open http://localhost:5173
+# Re-run to rebuild images and redeploy without touching the clusters.
 set -euo pipefail
 
-CLUSTER_NAME="${CLUSTER_NAME:-servicer-demo}"
-KIND_IMAGE="${KIND_IMAGE:-kindest/node:v1.32.2}"
-KUBECONFIG_OUT="${KUBECONFIG_OUT:-generated/demo-kubeconfig}"
-DELIVERY_ROOT="${DELIVERY_ROOT:-generated/demo-delivery}"
+APP_CLUSTER="${APP_CLUSTER:-servicer-app}"
+TARGET_CLUSTER="${TARGET_CLUSTER:-servicer-target}"
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -23,54 +26,100 @@ require() {
 
 require kind
 require kubectl
+require docker
 
 mkdir -p generated
 
-# ── Kind cluster ──────────────────────────────────────────────────────────────
-if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
-  echo "Kind cluster '${CLUSTER_NAME}' already exists."
+# ── App cluster ───────────────────────────────────────────────────────────────
+if kind get clusters 2>/dev/null | grep -qx "${APP_CLUSTER}"; then
+  echo "Kind cluster '${APP_CLUSTER}' already exists."
 else
-  echo "Creating Kind cluster '${CLUSTER_NAME}'..."
+  echo "Creating Kind cluster '${APP_CLUSTER}'..."
   kind create cluster \
-    --name "${CLUSTER_NAME}" \
-    --image "${KIND_IMAGE}" \
-    --config config/kind/demo.yaml \
+    --name "${APP_CLUSTER}" \
+    --config config/kind/app.yaml \
     --wait 120s
 fi
 
-kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null
+# ── Target cluster ────────────────────────────────────────────────────────────
+if kind get clusters 2>/dev/null | grep -qx "${TARGET_CLUSTER}"; then
+  echo "Kind cluster '${TARGET_CLUSTER}' already exists."
+else
+  echo "Creating Kind cluster '${TARGET_CLUSTER}'..."
+  kind create cluster \
+    --name "${TARGET_CLUSTER}" \
+    --config config/kind/target.yaml \
+    --wait 120s
+fi
 
-kubectl label nodes --all \
-  failure-domain.beta.kubernetes.io/region=local \
-  failure-domain.beta.kubernetes.io/zone=local-a \
-  topology.kubernetes.io/region=local \
-  topology.kubernetes.io/zone=local-a \
-  --overwrite 2>/dev/null || true
+# ── Build images ──────────────────────────────────────────────────────────────
+echo "Building images..."
+docker build -t servicer/manager:demo -f Containerfile.manager .
+docker build -t servicer/bff:demo     -f Containerfile.bff .
+docker build -t servicer/web:demo     -f Containerfile.web .
+docker build -t servicer/syncer:demo  -f Containerfile.syncer .
 
-# ── Kubeconfig ────────────────────────────────────────────────────────────────
-# Write a standalone kubeconfig (no other contexts, no credentials merged from
-# ~/.kube/config). docker-compose services bind-mount this file.
-kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_OUT}"
-echo "Kubeconfig written to ${KUBECONFIG_OUT}."
+# ── Load images into app cluster ──────────────────────────────────────────────
+echo "Loading images into '${APP_CLUSTER}'..."
+kind load docker-image servicer/manager:demo --name "${APP_CLUSTER}"
+kind load docker-image servicer/bff:demo     --name "${APP_CLUSTER}"
+kind load docker-image servicer/web:demo     --name "${APP_CLUSTER}"
+kind load docker-image servicer/syncer:demo  --name "${APP_CLUSTER}"
 
-export KUBECONFIG="${KUBECONFIG_OUT}"
+# ── Switch to app cluster ─────────────────────────────────────────────────────
+kubectl config use-context "kind-${APP_CLUSTER}" >/dev/null
 
 # ── CRDs ─────────────────────────────────────────────────────────────────────
 echo "Applying CRDs..."
 kubectl apply -f config/crd/bases/
 kubectl wait --for=condition=Established crd --all --timeout=120s
 
-# ── Samples ───────────────────────────────────────────────────────────────────
+# ── App manifests ─────────────────────────────────────────────────────────────
+echo "Applying deploy manifests..."
+kubectl apply -k config/deploy/
+
+# ── Service catalog + tenancy samples ─────────────────────────────────────────
 echo "Applying samples (catalog, tenancy)..."
 kubectl apply -k config/samples/
 
-# ── Delivery root ─────────────────────────────────────────────────────────────
-mkdir -p "${DELIVERY_ROOT}"
+# ── Target kubeconfig (pod-reachable) ─────────────────────────────────────────
+# The syncer pod runs inside the app cluster and needs to reach the target
+# cluster's API server. Kind nodes share the 'kind' Docker bridge network, so
+# the target control-plane container IP is routable from pods inside the app
+# cluster. The node IP is always included in Kind's generated TLS cert SANs.
+echo "Patching local-dev-kubeconfig with target cluster address..."
+
+TARGET_NODE="${TARGET_CLUSTER}-control-plane"
+TARGET_IP=$(docker inspect "${TARGET_NODE}" \
+  --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || \
+  docker inspect "${TARGET_NODE}" \
+  --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+
+if [[ -z "${TARGET_IP}" ]]; then
+  echo "error: could not determine IP of ${TARGET_NODE}" >&2
+  exit 1
+fi
+
+# kind get kubeconfig writes server: https://127.0.0.1:6444 (host port).
+# Replace with the internal container IP:6443 (internal Kind API port).
+TARGET_KUBECONFIG=$(kind get kubeconfig --name "${TARGET_CLUSTER}" | \
+  sed "s|https://127.0.0.1:6444|https://${TARGET_IP}:6443|g")
+
+kubectl create secret generic local-dev-kubeconfig \
+  --namespace servicer-system \
+  --from-literal=kubeconfig="${TARGET_KUBECONFIG}" \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 echo ""
 echo "Setup complete."
-echo "  Cluster : kind-${CLUSTER_NAME}"
-echo "  Kubeconfig : ${KUBECONFIG_OUT}"
+echo "  App cluster    : kind-${APP_CLUSTER}  (API :6443)"
+echo "  Target cluster : kind-${TARGET_CLUSTER} (API :6444, pod-reachable at ${TARGET_IP}:6443)"
 echo ""
-echo "Start the demo:"
-echo "  docker compose -f docker-compose.demo.yml up --build"
+echo "Open http://localhost:5173"
+echo ""
+echo "To rebuild and redeploy after code changes:"
+echo "  ./hack/demo-setup.sh"
+echo ""
+echo "Teardown:"
+echo "  kind delete cluster --name ${APP_CLUSTER}"
+echo "  kind delete cluster --name ${TARGET_CLUSTER}"

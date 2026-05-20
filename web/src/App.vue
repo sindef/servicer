@@ -12,6 +12,7 @@
         <RouterLink to="/">Overview</RouterLink>
         <RouterLink to="/catalog">Catalog</RouterLink>
         <RouterLink to="/instances">Instances</RouterLink>
+        <RouterLink to="/namespace-claims">Namespace claims</RouterLink>
         <RouterLink to="/tenancy">Tenancy</RouterLink>
         <RouterLink to="/audit">Audit</RouterLink>
         <RouterLink to="/admin">Admin</RouterLink>

@@ -34,6 +34,48 @@ export interface ProjectSummary {
   instanceCount: number
 }
 
+export interface NamespaceClaimSummary {
+  name: string
+  projectName: string
+  phase: string
+  clusterName?: string
+  namespace?: string
+  health?: string
+}
+
+export interface NamespaceClaimDetail {
+  name: string
+  displayName?: string
+  projectName: string
+  phase: string
+  clusterName?: string
+  namespace?: string
+  health?: string
+  deletionPolicy?: string
+  quotas?: Record<string, string>
+  labels?: Record<string, string>
+  artifact: {
+    revision?: string
+    path?: string
+    count?: number
+  }
+  delivery: {
+    syncPhase?: string
+    applicationName?: string
+    message?: string
+  }
+  conditions: Array<{ type: string; status: string; reason: string; message: string }>
+}
+
+export interface NamespaceClaimRequest {
+  name: string
+  projectName: string
+  displayName?: string
+  quotas?: Record<string, string>
+  labels?: Record<string, string>
+  deletionPolicy?: string
+}
+
 export interface CatalogEntry {
   name: string
   displayName: string
@@ -300,6 +342,25 @@ export const api = {
   overview: () => request<OverviewResponse>('/api/overview'),
   tenants: () => request<TenantSummary[]>('/api/tenants'),
   projects: () => request<ProjectSummary[]>('/api/projects'),
+  namespaceClaims: {
+    list: () => request<NamespaceClaimSummary[]>('/api/namespaceclaims'),
+    detail: (name: string) =>
+      request<NamespaceClaimDetail>(`/api/namespaceclaims/${encodeURIComponent(name)}`),
+    create: (body: NamespaceClaimRequest) =>
+      request<{ name: string; message: string }>('/api/namespaceclaims', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    update: (name: string, body: NamespaceClaimRequest) =>
+      request<{ name: string; message: string }>(`/api/namespaceclaims/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
+    delete: (name: string) =>
+      request<{ name: string; message: string }>(`/api/namespaceclaims/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      })
+  },
   catalog: () => request<CatalogEntry[]>('/api/catalog'),
   instances: () => request<InstanceSummary[]>('/api/instances'),
   instance: (name: string) => request<InstanceDetail>(`/api/instances/${encodeURIComponent(name)}`),

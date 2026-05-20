@@ -1,0 +1,9 @@
+FROM alpine:3.21
+ARG KUBECTL_VERSION=v1.32.2
+RUN apk add --no-cache bash curl && \
+    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+      -o /usr/local/bin/kubectl && \
+    chmod +x /usr/local/bin/kubectl
+COPY hack/demo-sync-delivery.sh /sync.sh
+RUN chmod +x /sync.sh
+CMD ["/bin/bash", "/sync.sh"]

@@ -3,8 +3,10 @@ package bff
 import (
 	"net/http"
 	"sort"
+	"strings"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func (s *Server) handleNamespaceClaims(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +49,36 @@ func (s *Server) handleNamespaceClaims(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(response, func(i, j int) bool { return response[i].Name < response[j].Name })
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleNamespaceClaimDetail(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace claim name is required"})
+		return
+	}
+
+	var claim platformv1alpha1.NamespaceClaim
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &claim); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	var project platformv1alpha1.Project
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: claim.Spec.ProjectRef.Name}, &project); err != nil {
+		writeError(w, err)
+		return
+	}
+	if !s.authorizeProject(r.Context(), actor, &project) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "namespace claim is outside your authorized tenancy"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, namespaceClaimDetail(claim))
 }
 
 func (s *Server) handleServiceBindings(w http.ResponseWriter, r *http.Request) {
@@ -145,4 +177,30 @@ func projectSet(projects []platformv1alpha1.Project) map[string]struct{} {
 		set[project.Name] = struct{}{}
 	}
 	return set
+}
+
+func namespaceClaimDetail(claim platformv1alpha1.NamespaceClaim) NamespaceClaimDetail {
+	return NamespaceClaimDetail{
+		Name:           claim.Name,
+		DisplayName:    claim.Spec.DisplayName,
+		ProjectName:    claim.Spec.ProjectRef.Name,
+		Phase:          claim.Status.Phase,
+		ClusterName:    claim.Status.Placement.ClusterName,
+		Namespace:      claim.Status.Placement.Namespace,
+		Health:         claim.Status.Health.Summary,
+		DeletionPolicy: string(claim.Spec.DeletionPolicy),
+		Quotas:         copyStringMap(claim.Spec.Quotas),
+		Labels:         copyStringMap(claim.Spec.Labels),
+		Artifact: ArtifactSummary{
+			Revision: claim.Status.Artifact.Revision,
+			Path:     claim.Status.Artifact.Path,
+			Count:    claim.Status.Artifact.Count,
+		},
+		Delivery: DeliverySummary{
+			SyncPhase:       claim.Status.Sync.Phase,
+			ApplicationName: claim.Status.Sync.ApplicationName,
+			Message:         claim.Status.Sync.Message,
+		},
+		Conditions: conditionSummaries(claim.Status.Conditions),
+	}
 }

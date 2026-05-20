@@ -1,0 +1,35 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: servicer
+rules:
+  # All Servicer platform CRDs
+  - apiGroups: ["platform.servicer.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Secrets (repository credentials, cluster kubeconfig refs)
+  # Namespaces, ConfigMaps, ServiceAccounts (NamespaceClaim reconciliation)
+  - apiGroups: [""]
+    resources: ["secrets", "namespaces", "configmaps", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: servicer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: servicer
+subjects:
+  - kind: ServiceAccount
+    name: servicer
+    namespace: servicer-system
