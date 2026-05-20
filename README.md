@@ -29,6 +29,9 @@ User → Vue UI → BFF (:8090) → Kubernetes CRDs → Operators/Argo CD
 | `ServiceClass` | Product definition — driver, capabilities |
 | `ServicePlan` | Tiers, topology, versions |
 | `ServiceInstance` | Provisioned service — phase, health, endpoints |
+| `NamespaceClaim` | First-class managed namespace request |
+| `ServiceBinding` | Credential sharing between services and consumers |
+| `VirtualMachineClaim` | Curated virtual machine request surface |
 | `ActionRequest` | Day-2 operations (scale, failover, etc.) |
 | `ClusterTarget` | Target cluster definitions |
 
