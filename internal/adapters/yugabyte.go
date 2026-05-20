@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,25 +15,27 @@ const yugabyteDriver = "yb-operator"
 const yugabyteOperatorNamespace = "yugabyte-system"
 
 type yugabyteParameters struct {
-	TServerReplicas     *int32   `json:"tserverReplicas,omitempty"`
-	MasterReplicas      *int32   `json:"masterReplicas,omitempty"`
-	ReplicationFactor   *int32   `json:"replicationFactor,omitempty"`
-	DatabaseName        string   `json:"databaseName,omitempty"`
-	CPU                 string   `json:"cpu,omitempty"`
-	Memory              string   `json:"memory,omitempty"`
-	MasterCPU           string   `json:"masterCpu,omitempty"`
-	MasterMemory        string   `json:"masterMemory,omitempty"`
-	TServerCPU          string   `json:"tserverCpu,omitempty"`
-	TServerMemory       string   `json:"tserverMemory,omitempty"`
-	StorageSize         string   `json:"storageSize,omitempty"`
-	StorageClass        string   `json:"storageClass,omitempty"`
-	EnableYSQL          *bool    `json:"enableYSQL,omitempty"`
-	EnableYCQL          *bool    `json:"enableYCQL,omitempty"`
-	BackupProfile       string   `json:"backupProfile,omitempty"`
-	PrimaryCluster      string   `json:"primaryCluster,omitempty"`
-	StandbyClusters     []string `json:"standbyClusters,omitempty"`
-	ServiceType         string   `json:"serviceType,omitempty"`
-	ExternalDNSHostname string   `json:"externalDnsHostname,omitempty"`
+	TServerReplicas          *int32           `json:"tserverReplicas,omitempty"`
+	MasterReplicas           *int32           `json:"masterReplicas,omitempty"`
+	ReplicationFactor        *int32           `json:"replicationFactor,omitempty"`
+	DatabaseName             string           `json:"databaseName,omitempty"`
+	CPU                      string           `json:"cpu,omitempty"`
+	Memory                   string           `json:"memory,omitempty"`
+	MasterCPU                string           `json:"masterCpu,omitempty"`
+	MasterMemory             string           `json:"masterMemory,omitempty"`
+	TServerCPU               string           `json:"tserverCpu,omitempty"`
+	TServerMemory            string           `json:"tserverMemory,omitempty"`
+	StorageSize              string           `json:"storageSize,omitempty"`
+	StorageClass             string           `json:"storageClass,omitempty"`
+	EnableYSQL               *bool            `json:"enableYSQL,omitempty"`
+	EnableYCQL               *bool            `json:"enableYCQL,omitempty"`
+	BackupProfile            string           `json:"backupProfile,omitempty"`
+	PrimaryCluster           string           `json:"primaryCluster,omitempty"`
+	StandbyClusters          []string         `json:"standbyClusters,omitempty"`
+	ReplicationLagSeconds    map[string]int32 `json:"replicationLagSeconds,omitempty"`
+	MaxReplicationLagSeconds *int32           `json:"maxReplicationLagSeconds,omitempty"`
+	ServiceType              string           `json:"serviceType,omitempty"`
+	ExternalDNSHostname      string           `json:"externalDnsHostname,omitempty"`
 }
 
 // YugabyteContract describes the normalized platform contract for YugabyteDB-backed distributed SQL/NoSQL.
@@ -182,6 +185,13 @@ func (a *YugabyteAdapter) Render(_ context.Context, request RenderRequest) (Rend
 			}
 			artifacts = append(artifacts, clusterArtifact{cluster: standby, name: "ybuniverse.yaml", body: standbyManifest})
 		}
+		if len(params.StandbyClusters) > 0 {
+			artifacts = append(artifacts, clusterArtifact{
+				cluster: primaryCluster,
+				name:    "xcluster-replication-job.yaml",
+				body:    a.xClusterReplicationJob(ctx, namespace, databaseName, primaryCluster, params),
+			})
+		}
 	}
 
 	rendered := make([]RenderedArtifact, 0, len(artifacts))
@@ -256,7 +266,11 @@ func (a *YugabyteAdapter) Observe(_ context.Context, request ObserveRequest) (No
 		}
 	}
 	if ctx.Plan != nil && ctx.Plan.Spec.Topology == "multi-region" {
-		healthSignals[2] = HealthSignal{Key: "replication-lag", Status: "Configured", Severity: HealthSeverityInfo, Message: "xCluster replication intent is materialised."}
+		params, err := a.parameters(ctx)
+		if err != nil {
+			return NormalizedStatus{}, err
+		}
+		healthSignals[2] = yugabyteReplicationLagSignal(params)
 	} else {
 		healthSignals[2] = HealthSignal{Key: "replication-lag", Status: "N/A", Severity: HealthSeverityInfo, Message: "Single-cluster topology — xCluster replication not applicable."}
 	}
@@ -421,6 +435,61 @@ func (a *YugabyteAdapter) ybUniverseManifest(name, namespace, version string, rf
 	}
 }
 
+func (a *YugabyteAdapter) xClusterReplicationJob(ctx ServiceContext, namespace, databaseName, primaryCluster string, params yugabyteParameters) map[string]any {
+	replicationName := fmt.Sprintf("%s-xcluster", ctx.Instance.Name)
+	standbyMasters := make([]string, 0, len(params.StandbyClusters))
+	for range params.StandbyClusters {
+		standbyMasters = append(standbyMasters, fmt.Sprintf("%s-master.%s.svc.cluster.local:7100", standbyYugabyteUniverseName(ctx.Instance.Name), namespace))
+	}
+	command := fmt.Sprintf(
+		`set -eu
+yb-admin --master_addresses %s-master.%s.svc.cluster.local:7100 setup_universe_replication %s %s %s
+yb-admin --master_addresses %s-master.%s.svc.cluster.local:7100 alter_universe_replication %s set_tables %s
+`,
+		ctx.Instance.Name, namespace,
+		replicationName, stringsJoinShellArgs(standbyMasters), databaseName,
+		ctx.Instance.Name, namespace,
+		replicationName, databaseName,
+	)
+	return map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"metadata": map[string]any{
+			"name":      replicationName,
+			"namespace": yugabyteOperatorNamespace,
+			"labels": map[string]string{
+				"servicer.io/managed-by":       "servicer",
+				"servicer.io/project":          ctx.Project.Name,
+				"servicer.io/service-instance": ctx.Instance.Name,
+				"servicer.io/tenant":           ctx.Tenant.Name,
+				"servicer.io/xcluster-primary": primaryCluster,
+			},
+			"annotations": map[string]string{
+				"servicer.io/xcluster-standbys": stringsJoinShellArgs(params.StandbyClusters),
+			},
+		},
+		"spec": map[string]any{
+			"backoffLimit": int32(6),
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]string{
+						"servicer.io/service-instance": ctx.Instance.Name,
+						"servicer.io/xcluster-job":     replicationName,
+					},
+				},
+				"spec": map[string]any{
+					"restartPolicy": "OnFailure",
+					"containers": []map[string]any{{
+						"name":    "yb-admin",
+						"image":   "yugabytedb/yugabyte:latest",
+						"command": []string{"/bin/sh", "-c", command},
+					}},
+				},
+			},
+		},
+	}
+}
+
 func (a *YugabyteAdapter) kubernetesOverrides(params yugabyteParameters) map[string]any {
 	masterCPU := firstNonEmpty(params.MasterCPU, params.CPU, "500m")
 	masterMemory := firstNonEmpty(params.MasterMemory, params.Memory, "1Gi")
@@ -443,6 +512,43 @@ func (a *YugabyteAdapter) kubernetesOverrides(params yugabyteParameters) map[str
 		}
 	}
 	return overrides
+}
+
+func yugabyteReplicationLagSignal(params yugabyteParameters) HealthSignal {
+	if len(params.StandbyClusters) == 0 {
+		return HealthSignal{Key: "replication-lag", Status: "Pending", Severity: HealthSeverityWarning, Message: "xCluster replication requires at least one standby cluster."}
+	}
+	if len(params.ReplicationLagSeconds) == 0 {
+		return HealthSignal{Key: "replication-lag", Status: "Configured", Severity: HealthSeverityInfo, Message: "xCluster replication intent is materialized; lag has not been reported yet."}
+	}
+	maxAllowed := int32(30)
+	if params.MaxReplicationLagSeconds != nil && *params.MaxReplicationLagSeconds >= 0 {
+		maxAllowed = *params.MaxReplicationLagSeconds
+	}
+	worstCluster := ""
+	var worstLag int32
+	for _, standby := range params.StandbyClusters {
+		lag, ok := params.ReplicationLagSeconds[standby]
+		if !ok {
+			return HealthSignal{Key: "replication-lag", Status: "Unknown", Severity: HealthSeverityWarning, Message: fmt.Sprintf("Replication lag has not been reported for standby cluster %q.", standby)}
+		}
+		if lag >= worstLag {
+			worstCluster = standby
+			worstLag = lag
+		}
+	}
+	if worstLag > maxAllowed {
+		return HealthSignal{Key: "replication-lag", Status: "Degraded", Severity: HealthSeverityWarning, Message: fmt.Sprintf("Replication lag on standby cluster %q is %ds, above %ds threshold.", worstCluster, worstLag, maxAllowed)}
+	}
+	return HealthSignal{Key: "replication-lag", Status: "Ready", Severity: HealthSeverityInfo, Message: fmt.Sprintf("xCluster replication lag is within threshold; worst standby %q is %ds.", worstCluster, worstLag)}
+}
+
+func standbyYugabyteUniverseName(instanceName string) string {
+	return fmt.Sprintf("%s-standby", instanceName)
+}
+
+func stringsJoinShellArgs(values []string) string {
+	return strings.Join(values, ",")
 }
 
 func ybResourceSpec(cpu, memory string) map[string]any {

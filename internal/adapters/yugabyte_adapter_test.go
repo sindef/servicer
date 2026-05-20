@@ -62,6 +62,63 @@ func TestYugabyteAdapterRenderHonorsExplicitDatabaseName(t *testing.T) {
 	}
 }
 
+func TestYugabyteAdapterRenderConfiguresXClusterReplication(t *testing.T) {
+	adapter := NewYugabyteAdapter()
+	ctx := sampleYugabyteContext(t)
+	ctx.Plan.Spec.Topology = "multi-region"
+	ctx.Plan.Spec.DefaultParameters = rawJSON(t, map[string]any{
+		"replicationFactor": 3,
+		"tserverReplicas":   3,
+		"standbyClusters":   []string{"west-2"},
+	})
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"primaryCluster": "east-1",
+		"databaseName":   "orders",
+	})
+
+	result, err := adapter.Render(context.Background(), RenderRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+
+	rendered := renderedArtifacts(result)
+	for _, expected := range []string{
+		"clusters/west-2/tenants/acme/projects/acme-prod/services/testdb/ybuniverse.yaml",
+		"kind: Job",
+		"name: testdb-xcluster",
+		"setup_universe_replication testdb-xcluster testdb-standby-master.acme-prod-testdb.svc.cluster.local:7100 orders",
+		"alter_universe_replication testdb-xcluster set_tables orders",
+		"servicer.io/xcluster-standbys: west-2",
+	} {
+		if !strings.Contains(rendered, expected) && !renderedYugabytePathsContain(result, expected) {
+			t.Fatalf("expected rendered xCluster output to contain %q:\n%s", expected, rendered)
+		}
+	}
+}
+
+func TestYugabyteAdapterObserveReportsReplicationLag(t *testing.T) {
+	adapter := NewYugabyteAdapter()
+	ctx := sampleYugabyteContext(t)
+	ctx.Plan.Spec.Topology = "multi-region"
+	ctx.Plan.Spec.DefaultParameters = rawJSON(t, map[string]any{
+		"standbyClusters":          []string{"west-2"},
+		"replicationLagSeconds":    map[string]int32{"west-2": 42},
+		"maxReplicationLagSeconds": 30,
+	})
+
+	status, err := adapter.Observe(context.Background(), ObserveRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Observe returned error: %v", err)
+	}
+	signal := yugabyteHealthSignal(status.HealthSignals, "replication-lag")
+	if signal.Status != "Degraded" {
+		t.Fatalf("expected degraded replication lag, got %#v", signal)
+	}
+	if !strings.Contains(signal.Message, "42s") {
+		t.Fatalf("expected lag seconds in message, got %q", signal.Message)
+	}
+}
+
 func sampleYugabyteContext(t *testing.T) ServiceContext {
 	t.Helper()
 	ctx := samplePostgreSQLContext(t)
@@ -96,4 +153,22 @@ func sampleYugabyteContext(t *testing.T) ServiceContext {
 	ctx.Instance.Spec.Version = "2.20"
 	ctx.Instance.Status.Placement.Namespace = "acme-prod-testdb"
 	return ctx
+}
+
+func renderedYugabytePathsContain(result RenderResult, expected string) bool {
+	for _, artifact := range result.Artifacts {
+		if strings.Contains(artifact.Path, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func yugabyteHealthSignal(signals []HealthSignal, key string) HealthSignal {
+	for _, signal := range signals {
+		if signal.Key == key {
+			return signal
+		}
+	}
+	return HealthSignal{}
 }

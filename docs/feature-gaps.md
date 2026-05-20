@@ -86,8 +86,8 @@ Commit: `7ee64be`
 ### [~] NATS geo multi-cluster
 **Plan 004** — The `nats-geo` plan now validates standby cluster input, renders per-cluster package paths, configures StatefulSet clustering via explicit route lists, and emits inter-cluster gateway services plus gateway peer config for JetStream federation across regions. This is still partial: gateway addresses still rely on Servicer-managed private DNS conventions, and there is not yet runtime observation of cross-cluster replication health or lag.
 
-### [ ] YugabyteDB xCluster replication
-**Plan 004** — The Yugabyte adapter detects `multi-region` topology and renders a `YBUniverse` per cluster, but does not configure xCluster replication between them. The `replication-lag` health signal is declared in the contract but never populated.
+### [x] YugabyteDB xCluster replication
+**Plan 004** — Multi-region YugabyteDB now renders a primary `YBUniverse`, standby `YBUniverse` resources, an operator-side xCluster setup `Job`, and a populated `replication-lag` health signal from reported standby lag thresholds.
 
 ---
 
