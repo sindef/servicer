@@ -35,11 +35,18 @@ func TestCatalogReturnsProductShapedEntries(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &entries); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(entries) != 3 {
+	if len(entries) != 4 {
 		t.Fatalf("expected only implemented seeded products, got %#v", entries)
 	}
-	if entries[0].Name != "namespace" || len(entries[0].Plans) != 1 || len(entries[0].Actions) == 0 {
-		t.Fatalf("expected namespace catalog entry with plans/actions, got %#v", entries[0])
+	var namespaceEntry *CatalogEntry
+	for i := range entries {
+		if entries[i].Name == "namespace" {
+			namespaceEntry = &entries[i]
+			break
+		}
+	}
+	if namespaceEntry == nil || len(namespaceEntry.Plans) != 1 || len(namespaceEntry.Actions) == 0 {
+		t.Fatalf("expected namespace catalog entry with plans/actions, got %#v", entries)
 	}
 }
 

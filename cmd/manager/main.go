@@ -78,6 +78,7 @@ func main() {
 		adapters.NewMySQLAdapter(),
 		adapters.NewValkeyAdapter(),
 		adapters.NewNATSAdapter(),
+		adapters.NewK8ssandraAdapter(),
 		adapters.NewYugabyteAdapter(),
 		adapters.NewArgoApplicationAdapter(),
 	)

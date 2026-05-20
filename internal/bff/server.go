@@ -21,6 +21,7 @@ var implementedProducts = map[string]struct{}{
 	string(adapters.ServiceClassMySQL):      {},
 	string(adapters.ServiceClassValkey):     {},
 	string(adapters.ServiceClassNATS):       {},
+	string(adapters.ServiceClassK8ssandra):  {},
 	string(adapters.ServiceClassYugabyte):   {},
 	string(adapters.ServiceClassArgoApp):    {},
 }

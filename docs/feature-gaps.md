@@ -73,8 +73,8 @@ Commit: `e8c9ed4`
 
 ## Product catalog
 
-### [ ] K8ssandra / Cassandra adapter
-**Plan 004** — `k8ssandra.go` defines a `ProductContract` (topology modes, health signals, actions) but does not implement the `ServiceAdapter` interface. The `Validate`, `Render`, `Observe`, `Delete`, and `ExecuteAction` methods are absent. The adapter is not registered in the adapter registry or instantiated in `cmd/manager`.
+### [~] K8ssandra / Cassandra adapter
+**Plan 004** — Cassandra now has a first-pass K8ssandra-backed `ServiceAdapter`, sample catalog entries, requestable catalog exposure, and deterministic manifest rendering for single- and multi-datacenter topologies. This is still partial: action execution is queued/placeholder only, runtime observation is workload-level rather than operator-deep, and richer backup/repair orchestration remains open.
 
 ### [ ] KubeVirt adapter
 **Plans 004 stretch, 006** — No adapter code, no contract definition, no API types imported. Mentioned only in plan docs and the README roadmap.

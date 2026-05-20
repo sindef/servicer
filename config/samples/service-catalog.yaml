@@ -457,6 +457,57 @@ spec:
 apiVersion: platform.servicer.io/v1alpha1
 kind: ServiceClass
 metadata:
+  name: cassandra
+spec:
+  displayName: Cassandra
+  category: database
+  driver: k8ssandra
+  supportedVersions:
+    - "4.1.3"
+  capabilityFlags:
+    - backups
+    - repair
+    - multi-datacenter
+  allowsVersionOverride: true
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: cassandra-dev
+spec:
+  serviceClassRef:
+    name: cassandra
+  displayName: Development
+  tier: development
+  topology: single-datacenter
+  defaultVersion: "4.1.3"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicas: 1
+    storageSize: 20Gi
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: cassandra-ha
+spec:
+  serviceClassRef:
+    name: cassandra
+  displayName: Multi-DC
+  tier: high-availability
+  topology: multi-datacenter
+  defaultVersion: "4.1.3"
+  allowsVersionOverride: true
+  defaultParameters:
+    replicas: 3
+    storageSize: 100Gi
+    datacenters:
+      - west-2
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
   name: argo-application
 spec:
   displayName: Argo CD Application
