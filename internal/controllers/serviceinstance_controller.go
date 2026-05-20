@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
@@ -18,11 +19,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,6 +44,38 @@ type ServiceInstanceReconciler struct {
 	DeliveryRepoURL  string
 	DeliveryRepoRef  string
 	DeliveryRepoPath string
+	targetClients    sync.Map // keyed by ClusterTarget name → client.Client
+}
+
+// getTargetClient lazily builds and caches a client for the given ClusterTarget's remote cluster.
+func (r *ServiceInstanceReconciler) getTargetClient(ctx context.Context, target *platformv1alpha1.ClusterTarget) (client.Client, error) {
+	if target == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(target.Spec.ConnectionRef.Name) == "" || strings.TrimSpace(target.Spec.ConnectionRef.Namespace) == "" {
+		return nil, nil
+	}
+	if cached, ok := r.targetClients.Load(target.Name); ok {
+		return cached.(client.Client), nil
+	}
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: target.Spec.ConnectionRef.Name, Namespace: target.Spec.ConnectionRef.Namespace}, &secret); err != nil {
+		return nil, fmt.Errorf("reading connection secret for ClusterTarget %q: %w", target.Name, err)
+	}
+	kubeconfigBytes, ok := secret.Data["kubeconfig"]
+	if !ok {
+		return nil, fmt.Errorf("secret %s/%s for ClusterTarget %q has no 'kubeconfig' key", target.Spec.ConnectionRef.Namespace, target.Spec.ConnectionRef.Name, target.Name)
+	}
+	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing kubeconfig for ClusterTarget %q: %w", target.Name, err)
+	}
+	c, err := client.New(restCfg, client.Options{Scheme: r.Scheme})
+	if err != nil {
+		return nil, fmt.Errorf("building client for ClusterTarget %q: %w", target.Name, err)
+	}
+	r.targetClients.Store(target.Name, c)
+	return c, nil
 }
 
 const instanceFinalizer = "servicer.io/instance-cleanup"
@@ -257,6 +292,9 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	publishedPath := materializeResult.Path
 	publishedCommit := ""
+	publishedRemote := ""
+	publishedBranch := ""
+	publishedPushed := false
 	if r.Publisher != nil && r.Publisher.Enabled() {
 		publishResult, publishErr := r.Publisher.Publish(ctx, deliveryrepo.Request{
 			PackagePath:  renderResult.PackagePath,
@@ -281,6 +319,9 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			publishedPath = publishResult.PublishedPath
 		}
 		publishedCommit = publishResult.Commit
+		publishedRemote = publishResult.Remote
+		publishedBranch = publishResult.Branch
+		publishedPushed = publishResult.Pushed
 	}
 
 	instance.Status.Phase = "Materialized"
@@ -297,6 +338,9 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if publishedCommit != "" {
 		instance.Status.Sync.Message = fmt.Sprintf("%s Published commit %s.", instance.Status.Sync.Message, shortCommit(publishedCommit))
 	}
+	if publishedPushed {
+		instance.Status.Sync.Message = fmt.Sprintf("%s Pushed to %s/%s.", instance.Status.Sync.Message, publishedRemote, publishedBranch)
+	}
 	instance.Status.Health.Summary = fmt.Sprintf("Materialized %d artifact(s) for %s.", len(renderResult.Artifacts), renderResult.RuntimeDriver)
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Placed", metav1.ConditionTrue, "PlacementResolved", "Service instance placement resolved.")
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionTrue, "ArtifactsMaterialized", "Delivery artifacts materialized successfully.")
@@ -304,7 +348,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "AwaitingRuntime", "Service instance runtime health has not yet been observed.")
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "ReconciliationProgressing", "Service instance has materialized successfully.")
 
-	if err := r.ensureArgoApplication(ctx, &project, &instance, publishedPath); err != nil {
+	if err := r.ensureArgoApplication(ctx, &project, &instance, publishedPath, renderResult.PackagePaths); err != nil {
 		instance.Status.Phase = "Failed"
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationFailed", err.Error())
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ArgoApplicationFailed", "Argo CD application could not be reconciled.")
@@ -338,7 +382,11 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	serviceContext.Instance = &instance
-	runtimeObservation, observedResources, err := r.observeRuntime(ctx, renderResult.PrimaryResource, renderResult.CredentialRefs)
+	targetClient, err := r.getTargetClient(ctx, clusterTarget)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	runtimeObservation, observedResources, err := r.observeRuntime(ctx, renderResult.PrimaryResource, renderResult.CredentialRefs, targetClient)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -681,13 +729,21 @@ func instanceDatabaseName(instance *platformv1alpha1.ServiceInstance) string {
 	return adapters.ResolveDatabaseName(instance.Name, params.DatabaseName)
 }
 
-func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *platformv1alpha1.TypedObjectReference, credentialRefs []platformv1alpha1.NamespacedObjectReference) (adapters.RuntimeObservation, []platformv1alpha1.TypedObjectReference, error) {
+func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *platformv1alpha1.TypedObjectReference, credentialRefs []platformv1alpha1.NamespacedObjectReference, targetClient client.Client) (adapters.RuntimeObservation, []platformv1alpha1.TypedObjectReference, error) {
 	observation := adapters.RuntimeObservation{}
 	observedResources := make([]platformv1alpha1.TypedObjectReference, 0, 1)
 
+	// observeClient returns targetClient when available, falling back to the app-cluster client.
+	observeClient := func() client.Client {
+		if targetClient != nil {
+			return targetClient
+		}
+		return r.Client
+	}
+
 	if ref != nil && ref.APIVersion == "v1" && ref.Kind == "Namespace" && ref.Name != "" {
 		var namespace corev1.Namespace
-		err := r.Get(ctx, types.NamespacedName{Name: ref.Name}, &namespace)
+		err := observeClient().Get(ctx, types.NamespacedName{Name: ref.Name}, &namespace)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return observation, nil, err
 		}
@@ -698,7 +754,7 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 
 	if ref != nil && ref.APIVersion == "apps/v1" && ref.Kind == "StatefulSet" && ref.Namespace != "" {
 		var statefulSet appsv1.StatefulSet
-		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &statefulSet)
+		err := observeClient().Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &statefulSet)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return observation, nil, err
 		}
@@ -716,7 +772,7 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 			observedResources = append(observedResources, *ref)
 
 			var pods corev1.PodList
-			if err := r.List(ctx, &pods, client.InNamespace(ref.Namespace), client.MatchingLabels{
+			if err := observeClient().List(ctx, &pods, client.InNamespace(ref.Namespace), client.MatchingLabels{
 				"servicer.io/service-instance": ref.Name,
 			}); err != nil {
 				return observation, nil, err
@@ -733,9 +789,16 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 	if ref != nil && ref.APIVersion == "postgresql.cnpg.io/v1" && ref.Kind == "Cluster" && ref.Namespace != "" {
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"})
-		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, u)
-		if err != nil && !apierrors.IsNotFound(err) {
-			return observation, nil, err
+		err := observeClient().Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, u)
+		if err != nil {
+			if apimeta.IsNoMatchError(err) {
+				observation.Blocked = true
+				observation.Message = "CloudNative PG operator (postgresql.cnpg.io/v1) is not installed in the target cluster."
+				return observation, observedResources, nil
+			}
+			if !apierrors.IsNotFound(err) {
+				return observation, nil, err
+			}
 		}
 		if err == nil {
 			observedResources = append(observedResources, *ref)
@@ -753,8 +816,8 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 	if ref != nil && ref.APIVersion == "operator.yugabyte.io/v1alpha1" && ref.Kind == "YBUniverse" && ref.Namespace != "" {
 		crd := &unstructured.Unstructured{}
 		crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
-		if err := r.Get(ctx, types.NamespacedName{Name: "ybuniverses.operator.yugabyte.io"}, crd); err != nil {
-			if apierrors.IsNotFound(err) {
+		if err := observeClient().Get(ctx, types.NamespacedName{Name: "ybuniverses.operator.yugabyte.io"}, crd); err != nil {
+			if apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err) {
 				observation.Blocked = true
 				observation.Message = "YugabyteDB operator CRD ybuniverses.operator.yugabyte.io is not installed in the target cluster."
 				return observation, observedResources, nil
@@ -764,7 +827,7 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(schema.GroupVersionKind{Group: "operator.yugabyte.io", Version: "v1alpha1", Kind: "YBUniverse"})
-		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, u)
+		err := observeClient().Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, u)
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
 				return observation, nil, err
@@ -854,7 +917,7 @@ func applyObservedStatus(instance *platformv1alpha1.ServiceInstance, status adap
 	}
 }
 
-func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, project *platformv1alpha1.Project, instance *platformv1alpha1.ServiceInstance, packagePath string) error {
+func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, project *platformv1alpha1.Project, instance *platformv1alpha1.ServiceInstance, packagePath string, packagePaths []string) error {
 	if instance == nil || project == nil {
 		return nil
 	}
@@ -875,7 +938,16 @@ func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, p
 
 	namespace := firstNonEmptyTrimmed(r.ArgoCDNamespace, "argocd")
 	appName := argoApplicationName(project, instance)
-	sourcePath := strings.TrimPrefix(filepath.ToSlash(filepath.Join(firstNonEmptyTrimmed(r.DeliveryRepoPath, materializer.DefaultRoot), packagePath)), "/")
+	if len(packagePaths) > 1 {
+		var appSetCRD unstructured.Unstructured
+		appSetCRD.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+		if err := r.Get(ctx, types.NamespacedName{Name: "applicationsets.argoproj.io"}, &appSetCRD); err == nil {
+			return r.ensureArgoApplicationSet(ctx, namespace, appName, project, instance, packagePaths)
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	sourcePath := deliverySourcePath(r.DeliveryRepoPath, packagePath)
 
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
@@ -915,6 +987,9 @@ func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, p
 	existing.SetGroupVersionKind(desired.GroupVersionKind())
 	err := r.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, &existing)
 	if apierrors.IsNotFound(err) {
+		if err := r.deleteArgoResourceIfExists(ctx, namespace, "ApplicationSet", appName); err != nil {
+			return err
+		}
 		return r.Create(ctx, desired)
 	}
 	if err != nil {
@@ -926,6 +1001,101 @@ func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, p
 	return r.Update(ctx, &existing)
 }
 
+func (r *ServiceInstanceReconciler) ensureArgoApplicationSet(ctx context.Context, namespace, appName string, project *platformv1alpha1.Project, instance *platformv1alpha1.ServiceInstance, packagePaths []string) error {
+	elements := applicationSetElements(packagePaths)
+	if len(elements) == 0 {
+		return nil
+	}
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "ApplicationSet"})
+	desired.SetName(appName)
+	desired.SetNamespace(namespace)
+	desired.SetLabels(map[string]string{
+		"servicer.io/managed-by":       "servicer",
+		"servicer.io/service-instance": instance.Name,
+		"servicer.io/project":          project.Name,
+	})
+	desired.Object["spec"] = map[string]any{
+		"generators": []any{
+			map[string]any{
+				"list": map[string]any{
+					"elements": elements,
+				},
+			},
+		},
+		"template": map[string]any{
+			"metadata": map[string]any{
+				"name": "{{cluster}}-" + appName,
+				"labels": map[string]any{
+					"servicer.io/managed-by":       "servicer",
+					"servicer.io/service-instance": instance.Name,
+					"servicer.io/project":          project.Name,
+					"servicer.io/application-set":  appName,
+				},
+			},
+			"spec": map[string]any{
+				"project": firstNonEmptyTrimmed(r.ArgoCDProject, "default"),
+				"source": map[string]any{
+					"repoURL":        r.DeliveryRepoURL,
+					"targetRevision": firstNonEmptyTrimmed(r.DeliveryRepoRef, "HEAD"),
+					"path":           "{{path}}",
+					"directory": map[string]any{
+						"recurse": true,
+					},
+				},
+				"destination": map[string]any{
+					"name":      "{{cluster}}",
+					"namespace": instance.Status.Placement.Namespace,
+				},
+				"syncPolicy": map[string]any{
+					"automated": map[string]any{
+						"prune":    true,
+						"selfHeal": true,
+					},
+					"syncOptions": []any{
+						"CreateNamespace=true",
+					},
+				},
+			},
+		},
+	}
+
+	var existing unstructured.Unstructured
+	existing.SetGroupVersionKind(desired.GroupVersionKind())
+	err := r.Get(ctx, types.NamespacedName{Name: appName, Namespace: namespace}, &existing)
+	if apierrors.IsNotFound(err) {
+		if err := r.deleteArgoResourceIfExists(ctx, namespace, "Application", appName); err != nil {
+			return err
+		}
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+
+	existing.Object["spec"] = desired.Object["spec"]
+	existing.SetLabels(mergeStringMaps(existing.GetLabels(), desired.GetLabels()))
+	if err := r.Update(ctx, &existing); err != nil {
+		return err
+	}
+	return r.deleteArgoResourceIfExists(ctx, namespace, "Application", appName)
+}
+
+func (r *ServiceInstanceReconciler) deleteArgoResourceIfExists(ctx context.Context, namespace, kind, name string) error {
+	resource := &unstructured.Unstructured{}
+	resource.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: kind})
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, resource); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if err := r.Delete(ctx, resource); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
 func (r *ServiceInstanceReconciler) applyArgoObservedStatus(ctx context.Context, instance *platformv1alpha1.ServiceInstance) {
 	if instance == nil || strings.TrimSpace(instance.Status.Sync.ApplicationName) == "" {
 		return
@@ -934,6 +1104,9 @@ func (r *ServiceInstanceReconciler) applyArgoObservedStatus(ctx context.Context,
 	app := &unstructured.Unstructured{}
 	app.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
 	if err := r.Get(ctx, types.NamespacedName{Name: instance.Status.Sync.ApplicationName, Namespace: namespace}, app); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.applyArgoApplicationSetObservedStatus(ctx, instance, namespace)
+		}
 		return
 	}
 
@@ -972,6 +1145,67 @@ func (r *ServiceInstanceReconciler) applyArgoObservedStatus(ctx context.Context,
 	}
 }
 
+func (r *ServiceInstanceReconciler) applyArgoApplicationSetObservedStatus(ctx context.Context, instance *platformv1alpha1.ServiceInstance, namespace string) {
+	appSet := &unstructured.Unstructured{}
+	appSet.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "ApplicationSet"})
+	if err := r.Get(ctx, types.NamespacedName{Name: instance.Status.Sync.ApplicationName, Namespace: namespace}, appSet); err != nil {
+		return
+	}
+
+	appList := &unstructured.UnstructuredList{}
+	appList.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "ApplicationList"})
+	if err := r.List(ctx, appList, client.InNamespace(namespace), client.MatchingLabels{
+		"servicer.io/application-set": instance.Status.Sync.ApplicationName,
+	}); err == nil && len(appList.Items) > 0 {
+		syncedCount := 0
+		outOfSyncCount := 0
+		healthParts := make([]string, 0, len(appList.Items))
+		for _, item := range appList.Items {
+			syncStatus, _, _ := unstructured.NestedString(item.Object, "status", "sync", "status")
+			healthStatus, _, _ := unstructured.NestedString(item.Object, "status", "health", "status")
+			switch strings.ToLower(syncStatus) {
+			case "synced":
+				syncedCount++
+			case "outofsync":
+				outOfSyncCount++
+			}
+			if healthStatus != "" {
+				healthParts = append(healthParts, fmt.Sprintf("%s=%s", item.GetName(), healthStatus))
+			}
+		}
+		switch {
+		case outOfSyncCount > 0:
+			instance.Status.Sync.Phase = string(adapters.SyncPhaseOutOfSync)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationSetOutOfSync", "One or more Argo CD applications generated from the ApplicationSet are out of sync.")
+		case syncedCount == len(appList.Items):
+			instance.Status.Sync.Phase = string(adapters.SyncPhaseSynced)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionTrue, "ArgoApplicationSetSynced", "All Argo CD applications generated from the ApplicationSet report synced status.")
+		default:
+			instance.Status.Sync.Phase = string(adapters.SyncPhasePending)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationSetProgressing", "Argo CD ApplicationSet is still creating or syncing generated applications.")
+		}
+		instance.Status.Sync.Message = fmt.Sprintf("%d application(s): synced=%d, outOfSync=%d", len(appList.Items), syncedCount, outOfSyncCount)
+		if len(healthParts) > 0 {
+			instance.Status.Health.Summary = strings.Join(healthParts, ", ")
+		}
+		return
+	}
+
+	if conditions, found, _ := unstructured.NestedSlice(appSet.Object, "status", "conditions"); found && len(conditions) > 0 {
+		if condition, ok := conditions[0].(map[string]any); ok {
+			reason, _, _ := unstructured.NestedString(condition, "reason")
+			message, _, _ := unstructured.NestedString(condition, "message")
+			instance.Status.Sync.Phase = string(adapters.SyncPhasePending)
+			if message != "" {
+				instance.Status.Sync.Message = message
+			} else if reason != "" {
+				instance.Status.Sync.Message = reason
+			}
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationSetProgressing", "Argo CD ApplicationSet is progressing.")
+		}
+	}
+}
+
 func isPodReady(pod *corev1.Pod) bool {
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
@@ -991,6 +1225,40 @@ func randomPassword() (string, error) {
 
 func argoApplicationName(project *platformv1alpha1.Project, instance *platformv1alpha1.ServiceInstance) string {
 	return fmt.Sprintf("%s-%s", project.Name, instance.Name)
+}
+
+func deliverySourcePath(deliveryRepoPath, packagePath string) string {
+	return strings.TrimPrefix(filepath.ToSlash(filepath.Join(firstNonEmptyTrimmed(deliveryRepoPath, materializer.DefaultRoot), packagePath)), "/")
+}
+
+func applicationSetElements(packagePaths []string) []any {
+	elements := make([]any, 0, len(packagePaths))
+	seen := map[string]struct{}{}
+	for _, packagePath := range packagePaths {
+		cluster := clusterNameFromPackagePath(packagePath)
+		sourcePath := deliverySourcePath("", packagePath)
+		if cluster == "" || sourcePath == "" {
+			continue
+		}
+		key := cluster + "|" + sourcePath
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		elements = append(elements, map[string]any{
+			"cluster": cluster,
+			"path":    sourcePath,
+		})
+	}
+	return elements
+}
+
+func clusterNameFromPackagePath(packagePath string) string {
+	parts := strings.Split(filepath.ToSlash(strings.Trim(packagePath, "/")), "/")
+	if len(parts) < 2 || parts[0] != "clusters" {
+		return ""
+	}
+	return parts[1]
 }
 
 func firstNonEmptyTrimmed(values ...string) string {

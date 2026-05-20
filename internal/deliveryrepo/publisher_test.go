@@ -13,7 +13,7 @@ import (
 
 func TestPublisherWritesArtifactsIntoRepoRoot(t *testing.T) {
 	worktree := initGitRepo(t)
-	publisher := New(worktree, "published", false)
+	publisher := New(worktree, "published", false, false, "", "")
 
 	result, err := publisher.Publish(context.Background(), Request{
 		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
@@ -44,7 +44,7 @@ func TestPublisherWritesArtifactsIntoRepoRoot(t *testing.T) {
 func TestPublisherCommitsChangesWhenEnabled(t *testing.T) {
 	worktree := initGitRepo(t)
 	configureGitIdentity(t, worktree)
-	publisher := New(worktree, "published", true)
+	publisher := New(worktree, "published", true, false, "", "")
 
 	result, err := publisher.Publish(context.Background(), Request{
 		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
@@ -61,6 +61,35 @@ func TestPublisherCommitsChangesWhenEnabled(t *testing.T) {
 	}
 	if strings.TrimSpace(result.Commit) == "" {
 		t.Fatalf("expected commit hash, got %#v", result)
+	}
+}
+
+func TestPublisherPushesCommittedChangesToRemote(t *testing.T) {
+	worktree := initGitRepo(t)
+	configureGitIdentity(t, worktree)
+	remote := filepath.Join(t.TempDir(), "delivery-remote.git")
+	runGit(t, "", "init", "--bare", remote)
+	runGit(t, worktree, "remote", "add", "origin", remote)
+
+	publisher := New(worktree, "published", true, true, "origin", "main")
+	result, err := publisher.Publish(context.Background(), Request{
+		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
+		Artifacts: []adapters.RenderedArtifact{{
+			Path:    "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db/service.yaml",
+			Content: []byte("kind: Service\n"),
+		}},
+		Revision: "sha256:test",
+	})
+	if err != nil {
+		t.Fatalf("Publish returned error: %v", err)
+	}
+	if !result.Pushed || result.Remote != "origin" || result.Branch != "main" {
+		t.Fatalf("expected pushed result, got %#v", result)
+	}
+
+	output := gitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main")
+	if strings.TrimSpace(output) != strings.TrimSpace(result.Commit) {
+		t.Fatalf("expected remote branch to match pushed commit, got %q want %q", strings.TrimSpace(output), strings.TrimSpace(result.Commit))
 	}
 }
 
@@ -85,4 +114,15 @@ func runGit(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
 	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
+	}
+	return string(output)
 }

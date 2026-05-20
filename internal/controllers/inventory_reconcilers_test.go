@@ -40,7 +40,23 @@ func TestClusterTargetReconcilerMarksReachableWithConnectionSecret(t *testing.T)
 	}
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "local-dev-kubeconfig", Namespace: "servicer-system"},
-		Data:       map[string][]byte{"kubeconfig": []byte("apiVersion: v1")},
+		Data: map[string][]byte{"kubeconfig": []byte(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://local-dev.example.invalid
+  name: local-dev
+contexts:
+- context:
+    cluster: local-dev
+    user: local-dev
+  name: local-dev
+current-context: local-dev
+users:
+- name: local-dev
+  user:
+    token: demo-token
+`)},
 	}
 
 	reconciler := &ClusterTargetReconciler{
@@ -926,7 +942,7 @@ func TestServiceInstanceReconcilerEnsureArgoApplicationWhenConfigured(t *testing
 	instance.Status.Placement.ClusterName = "local-dev"
 	instance.Status.Placement.Namespace = "acme-prod-orders-db"
 	instance.Status.Sync.ApplicationName = "acme-prod-orders-db"
-	if err := reconciler.ensureArgoApplication(context.Background(), project, instance, "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db"); err != nil {
+	if err := reconciler.ensureArgoApplication(context.Background(), project, instance, "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db", nil); err != nil {
 		t.Fatalf("ensureArgoApplication returned error: %v", err)
 	}
 
@@ -946,6 +962,71 @@ func TestServiceInstanceReconcilerEnsureArgoApplicationWhenConfigured(t *testing
 	}
 	if destName != "local-dev" {
 		t.Fatalf("unexpected destination name %q", destName)
+	}
+}
+
+func TestServiceInstanceReconcilerEnsureArgoApplicationSetWhenMultiplePackagePaths(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	project := &platformv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "acme-prod"}}
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-cache"},
+		Status: platformv1alpha1.ServiceInstanceStatus{
+			Placement: platformv1alpha1.PlacementStatus{Namespace: "acme-prod-session-cache"},
+			Sync:      platformv1alpha1.DeliverySyncStatus{ApplicationName: "acme-prod-session-cache"},
+		},
+	}
+	appCRD := &unstructured.Unstructured{}
+	appCRD.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+	appCRD.SetName("applications.argoproj.io")
+	appSetCRD := &unstructured.Unstructured{}
+	appSetCRD.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+	appSetCRD.SetName("applicationsets.argoproj.io")
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(project, instance, appCRD, appSetCRD).
+			Build(),
+		Scheme:           scheme,
+		ArgoCDNamespace:  "argocd",
+		ArgoCDProject:    "default",
+		DeliveryRepoURL:  "https://github.com/example/servicer-config.git",
+		DeliveryRepoRef:  "main",
+		DeliveryRepoPath: materializer.DefaultRoot,
+	}
+
+	packagePaths := []string{
+		"clusters/east-1/tenants/acme/projects/acme-prod/services/session-cache",
+		"clusters/west-2/tenants/acme/projects/acme-prod/services/session-cache",
+	}
+	if err := reconciler.ensureArgoApplication(context.Background(), project, instance, packagePaths[0], packagePaths); err != nil {
+		t.Fatalf("ensureArgoApplication returned error: %v", err)
+	}
+
+	appSet := &unstructured.Unstructured{}
+	appSet.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "ApplicationSet"})
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "acme-prod-session-cache", Namespace: "argocd"}, appSet); err != nil {
+		t.Fatalf("expected Argo ApplicationSet to be created: %v", err)
+	}
+	generators, found, err := unstructured.NestedSlice(appSet.Object, "spec", "generators")
+	if err != nil || !found || len(generators) != 1 {
+		t.Fatalf("expected one ApplicationSet generator, got found=%v len=%d err=%v", found, len(generators), err)
+	}
+	generator, ok := generators[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected generator object, got %#v", generators[0])
+	}
+	listConfig, ok := generator["list"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected list generator config, got %#v", generator)
+	}
+	elements, ok := listConfig["elements"].([]any)
+	if !ok || len(elements) != 2 {
+		t.Fatalf("expected two ApplicationSet list elements, got %#v", listConfig["elements"])
+	}
+	path, _, _ := unstructured.NestedString(appSet.Object, "spec", "template", "spec", "source", "path")
+	destName, _, _ := unstructured.NestedString(appSet.Object, "spec", "template", "spec", "destination", "name")
+	if path != "{{path}}" || destName != "{{cluster}}" {
+		t.Fatalf("unexpected ApplicationSet template source/destination path=%q dest=%q", path, destName)
 	}
 }
 

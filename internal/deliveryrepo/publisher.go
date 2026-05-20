@@ -16,6 +16,9 @@ type Publisher struct {
 	Worktree   string
 	Root       string
 	AutoCommit bool
+	AutoPush   bool
+	Remote     string
+	Branch     string
 }
 
 type Request struct {
@@ -29,13 +32,19 @@ type Request struct {
 type Result struct {
 	PublishedPath string
 	Commit        string
+	Pushed        bool
+	Remote        string
+	Branch        string
 }
 
-func New(worktree, root string, autoCommit bool) *Publisher {
+func New(worktree, root string, autoCommit, autoPush bool, remote, branch string) *Publisher {
 	return &Publisher{
 		Worktree:   filepath.Clean(strings.TrimSpace(worktree)),
 		Root:       filepath.Clean(strings.TrimSpace(root)),
 		AutoCommit: autoCommit,
+		AutoPush:   autoPush,
+		Remote:     firstNonEmptyTrimmed(remote, "origin"),
+		Branch:     strings.TrimSpace(branch),
 	}
 }
 
@@ -95,7 +104,7 @@ func (p *Publisher) Publish(ctx context.Context, request Request) (Result, error
 			return result, nil
 		}
 		result.Commit = commit
-		return result, nil
+		return p.pushIfEnabled(ctx, result)
 	}
 	if err := p.git(ctx, "add", "--all", "--", "."); err != nil {
 		return Result{}, err
@@ -108,7 +117,7 @@ func (p *Publisher) Publish(ctx context.Context, request Request) (Result, error
 		return Result{}, err
 	}
 	result.Commit = commit
-	return result, nil
+	return p.pushIfEnabled(ctx, result)
 }
 
 func (p *Publisher) hasChanges(ctx context.Context) (bool, error) {
@@ -127,6 +136,18 @@ func (p *Publisher) currentCommit(ctx context.Context) (string, error) {
 	return strings.TrimSpace(output), nil
 }
 
+func (p *Publisher) currentBranch(ctx context.Context) (string, error) {
+	output, err := p.gitOutput(ctx, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	branch := strings.TrimSpace(output)
+	if branch == "" || branch == "HEAD" {
+		return "", fmt.Errorf("git current branch: detached HEAD")
+	}
+	return branch, nil
+}
+
 func (p *Publisher) commitMessage(request Request) string {
 	message := strings.TrimSpace(request.Message)
 	if message != "" {
@@ -136,6 +157,30 @@ func (p *Publisher) commitMessage(request Request) string {
 		return fmt.Sprintf("servicer: publish %s", request.Revision)
 	}
 	return "servicer: publish delivery artifacts"
+}
+
+func (p *Publisher) pushIfEnabled(ctx context.Context, result Result) (Result, error) {
+	if !p.AutoPush {
+		return result, nil
+	}
+	if strings.TrimSpace(result.Commit) == "" {
+		return result, fmt.Errorf("cannot push delivery repo without a commit")
+	}
+	branch := p.Branch
+	if branch == "" {
+		currentBranch, err := p.currentBranch(ctx)
+		if err != nil {
+			return result, err
+		}
+		branch = currentBranch
+	}
+	if err := p.git(ctx, "push", p.Remote, "HEAD:"+branch); err != nil {
+		return result, err
+	}
+	result.Pushed = true
+	result.Remote = p.Remote
+	result.Branch = branch
+	return result, nil
 }
 
 func (p *Publisher) git(ctx context.Context, args ...string) error {
@@ -182,6 +227,15 @@ func uniquePackagePaths(primary string, extra []string) []string {
 		appendPath(path)
 	}
 	return paths
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func writeFileIfChanged(path string, content []byte) error {
