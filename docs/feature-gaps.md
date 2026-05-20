@@ -83,8 +83,8 @@ Commit: `e8c9ed4`
 **Plan 004** — PostgreSQL/CNPG backup object-store wiring is implemented and rendered into CNPG backup manifests. MySQL still only consumes the coarse `backupProfile` contract and does not yet materialize a real backup execution/storage pipeline.  
 Commit: `7ee64be`
 
-### [ ] NATS geo multi-cluster
-**Plan 004** — The `nats-geo` plan topology is defined and the UI guards JetStream-specific UI behind the correct plan. The adapter renders single-cluster JetStream only; standby cluster parameters are not processed and no multi-cluster replication is configured.
+### [~] NATS geo multi-cluster
+**Plan 004** — The `nats-geo` plan now validates standby cluster input, renders per-cluster package paths, configures StatefulSet clustering via explicit route lists, and emits inter-cluster gateway services plus gateway peer config for JetStream federation across regions. This is still partial: gateway addresses still rely on Servicer-managed private DNS conventions, and there is not yet runtime observation of cross-cluster replication health or lag.
 
 ### [ ] YugabyteDB xCluster replication
 **Plan 004** — The Yugabyte adapter detects `multi-region` topology and renders a `YBUniverse` per cluster, but does not configure xCluster replication between them. The `replication-lag` health signal is declared in the contract but never populated.

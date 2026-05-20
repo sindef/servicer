@@ -98,6 +98,9 @@ func (a *NATSAdapter) Validate(_ context.Context, request ValidationRequest) (Va
 	} else if ctx.Plan.Spec.Topology == "multi-region" && !parameters.JetStream {
 		issues = append(issues, ValidationIssue{Path: "parameters.jetstream", Message: "geo-distributed NATS plans require JetStream to be enabled", Severity: HealthSeverityCritical})
 	} else {
+		if ctx.Plan.Spec.Topology == "multi-region" && len(parameters.StandbyClusters) == 0 {
+			issues = append(issues, ValidationIssue{Path: "parameters.standbyClusters", Message: "geo-distributed NATS plans require at least one standby cluster", Severity: HealthSeverityCritical})
+		}
 		issues = append(issues, a.validateManagedResources(parameters)...)
 	}
 	return ValidationResult{Valid: len(issues) == 0, Issues: issues}, nil
@@ -191,6 +194,7 @@ func (a *NATSAdapter) renderClusterArtifacts(ctx ServiceContext, parameters nats
 	resourceConfigName := fmt.Sprintf("%s-managed-resources", ctx.Instance.Name)
 	labels := map[string]string{
 		"servicer.io/managed-by":       "servicer",
+		"servicer.io/cluster-target":   clusterName,
 		"servicer.io/nats-role":        role,
 		"servicer.io/project":          ctx.Project.Name,
 		"servicer.io/service-instance": ctx.Instance.Name,
@@ -222,7 +226,7 @@ func (a *NATSAdapter) renderClusterArtifacts(ctx ServiceContext, parameters nats
 			"labels":    labels,
 		},
 		"data": map[string]string{
-			"nats.conf": a.natsConfig(parameters, clusterName, peerClusters),
+			"nats.conf": a.natsConfig(ctx, parameters, clusterName, peerClusters),
 		},
 	}
 	resourceConfigManifest := map[string]any{
@@ -273,6 +277,27 @@ func (a *NATSAdapter) renderClusterArtifacts(ctx ServiceContext, parameters nats
 			"selector":  selectorLabels,
 		},
 	}
+	var gatewayServiceManifest map[string]any
+	if len(peerClusters) > 0 {
+		gatewayServiceManifest = map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]any{
+				"name":      fmt.Sprintf("%s-gateway", ctx.Instance.Name),
+				"namespace": namespace,
+				"labels":    labels,
+				"annotations": map[string]string{
+					"servicer.io/gateway-address": natsGatewayAddress(ctx, clusterName),
+				},
+			},
+			"spec": map[string]any{
+				"ports": []map[string]any{
+					{"name": "gateway", "port": int32(7222), "targetPort": int32(7222)},
+				},
+				"selector": selectorLabels,
+			},
+		}
+	}
 	statefulSetManifest := map[string]any{
 		"apiVersion": "apps/v1",
 		"kind":       "StatefulSet",
@@ -320,6 +345,12 @@ func (a *NATSAdapter) renderClusterArtifacts(ctx ServiceContext, parameters nats
 		{name: "service.yaml", body: serviceManifest},
 		{name: "headless-service.yaml", body: headlessServiceManifest},
 		{name: "statefulset.yaml", body: statefulSetManifest},
+	}
+	if gatewayServiceManifest != nil {
+		manifests = append(manifests, struct {
+			name string
+			body map[string]any
+		}{name: "gateway-service.yaml", body: gatewayServiceManifest})
 	}
 
 	if len(parameters.Streams) > 0 || len(parameters.Consumers) > 0 {
@@ -374,7 +405,11 @@ func (a *NATSAdapter) Observe(_ context.Context, request ObserveRequest) (Normal
 	}
 	params, _ := a.parameters(ctx)
 	if params.JetStream {
-		healthSignals[1] = HealthSignal{Key: "jetstream-health", Status: "Configured", Severity: HealthSeverityInfo, Message: "JetStream storage intent is materialized."}
+		message := "JetStream storage intent is materialized."
+		if planTopology(ctx) == "multi-region" && len(params.StandbyClusters) > 0 {
+			message = fmt.Sprintf("JetStream federation is configured across %d cluster(s).", len(params.StandbyClusters)+1)
+		}
+		healthSignals[1] = HealthSignal{Key: "jetstream-health", Status: "Configured", Severity: HealthSeverityInfo, Message: message}
 	} else {
 		healthSignals[1] = HealthSignal{Key: "jetstream-health", Status: "Disabled", Severity: HealthSeverityInfo, Message: "JetStream is not enabled for this plan."}
 	}
@@ -476,12 +511,25 @@ func (a *NATSAdapter) replicas(ctx ServiceContext, parameters natsParameters) in
 	return 1
 }
 
-func (a *NATSAdapter) natsConfig(parameters natsParameters, clusterName string, gatewayClusters []string) string {
+func (a *NATSAdapter) natsConfig(ctx ServiceContext, parameters natsParameters, clusterName string, gatewayClusters []string) string {
 	config := fmt.Sprintf("port: 4222\nhttp: 8222\nmax_payload: %s\ninclude /etc/nats-auth/users.conf\n", parameters.MaxPayload)
+	config += fmt.Sprintf("server_name: %s-%s\n", ctx.Instance.Name, sanitizeK8ssandraName(clusterName))
+	config += "cluster {\n"
+	config += fmt.Sprintf("  name: %s\n", clusterName)
+	config += "  listen: 0.0.0.0:6222\n"
+	routes := a.clusterRoutes(ctx, parameters)
+	if len(routes) > 0 {
+		config += "  routes: [\n"
+		for _, route := range routes {
+			config += fmt.Sprintf("    %q,\n", route)
+		}
+		config += "  ]\n"
+	}
+	config += "}\n"
 	if len(gatewayClusters) > 0 {
 		config += fmt.Sprintf("gateway {\n  name: %s\n  listen: 0.0.0.0:7222\n  gateways: [\n", clusterName)
 		for _, peer := range gatewayClusters {
-			config += fmt.Sprintf("    { name: \"%s\", urls: [\"nats://%s.nats.gateway.servicer.local:7222\"] }\n", peer, peer)
+			config += fmt.Sprintf("    { name: \"%s\", urls: [\"nats://%s\"] }\n", peer, natsGatewayAddress(ctx, peer))
 		}
 		config += "  ]\n}\n"
 	}
@@ -489,6 +537,20 @@ func (a *NATSAdapter) natsConfig(parameters natsParameters, clusterName string, 
 		config += "jetstream {\n  store_dir: /data/jetstream\n}\n"
 	}
 	return config
+}
+
+func (a *NATSAdapter) clusterRoutes(ctx ServiceContext, parameters natsParameters) []string {
+	replicas := a.replicas(ctx, parameters)
+	if replicas <= 1 {
+		return nil
+	}
+	namespace := instanceNamespace(ctx)
+	headlessServiceName := fmt.Sprintf("%s-headless", ctx.Instance.Name)
+	routes := make([]string, 0, replicas)
+	for ordinal := int32(0); ordinal < replicas; ordinal++ {
+		routes = append(routes, fmt.Sprintf("nats://%s-%d.%s.%s.svc.cluster.local:6222", ctx.Instance.Name, ordinal, headlessServiceName, namespace))
+	}
+	return routes
 }
 
 func (a *NATSAdapter) containerSpec(version, configName string, parameters natsParameters, resourceDigest string) map[string]any {
@@ -499,6 +561,7 @@ func (a *NATSAdapter) containerSpec(version, configName string, parameters natsP
 		"ports": []map[string]any{
 			{"name": "client", "containerPort": int32(4222)},
 			{"name": "cluster", "containerPort": int32(6222)},
+			{"name": "gateway", "containerPort": int32(7222)},
 			{"name": "monitor", "containerPort": int32(8222)},
 		},
 		"args": []string{"-c", "/etc/nats/nats.conf"},
@@ -539,6 +602,10 @@ func (a *NATSAdapter) primaryCluster(ctx ServiceContext, parameters natsParamete
 		return parameters.PrimaryCluster
 	}
 	return instanceCluster(ctx)
+}
+
+func natsGatewayAddress(ctx ServiceContext, clusterName string) string {
+	return fmt.Sprintf("%s-gateway.%s.%s.nats.servicer.local:7222", ctx.Instance.Name, ctx.Project.Name, clusterName)
 }
 
 func (a *NATSAdapter) validateManagedResources(parameters natsParameters) []ValidationIssue {

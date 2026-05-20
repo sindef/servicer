@@ -27,7 +27,7 @@ func TestNATSAdapterRenderProducesServicerOwnedRuntime(t *testing.T) {
 		t.Fatalf("expected 7 artifacts, got %d", len(result.Artifacts))
 	}
 	rendered := renderedArtifacts(result)
-	for _, expected := range []string{"kind: StatefulSet", "nats:2.10-alpine", "jetstream", "replicas: 3", "session-bus-auth", "kind: Job", "stream-ORDERS.json"} {
+	for _, expected := range []string{"kind: StatefulSet", "nats:2.10-alpine", "jetstream", "replicas: 3", "session-bus-auth", "kind: Job", "stream-ORDERS.json", "cluster {", "session-bus-0.session-bus-headless"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("expected rendered output to contain %q:\n%s", expected, rendered)
 		}
@@ -37,6 +37,79 @@ func TestNATSAdapterRenderProducesServicerOwnedRuntime(t *testing.T) {
 	}
 	if strings.Contains(rendered, "NatsCluster") || strings.Contains(rendered, "nats.io/v1alpha2") {
 		t.Fatalf("NATS render leaked operator CRD details:\n%s", rendered)
+	}
+}
+
+func TestNATSAdapterValidateRequiresStandbyClustersForGeoTopology(t *testing.T) {
+	adapter := NewNATSAdapter()
+	ctx := sampleNATSContext(t)
+	ctx.Plan.Spec.Topology = "multi-region"
+	ctx.Plan.Spec.DefaultParameters = rawJSON(t, map[string]any{
+		"jetstream": true,
+		"replicas":  3,
+	})
+	ctx.Instance.Spec.Parameters = nil
+
+	result, err := adapter.Validate(context.Background(), ValidationRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatalf("expected validation to fail, got %#v", result)
+	}
+	found := false
+	for _, issue := range result.Issues {
+		if issue.Path == "parameters.standbyClusters" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected standby cluster validation issue, got %#v", result.Issues)
+	}
+}
+
+func TestNATSAdapterRenderProducesGeoGatewayArtifacts(t *testing.T) {
+	adapter := NewNATSAdapter()
+	ctx := sampleNATSContext(t)
+	ctx.Plan.Spec.Topology = "multi-region"
+	ctx.Plan.Spec.DefaultParameters = rawJSON(t, map[string]any{
+		"jetstream":       true,
+		"replicas":        3,
+		"storageSize":     "20Gi",
+		"primaryCluster":  "east-1",
+		"standbyClusters": []string{"west-2"},
+	})
+
+	result, err := adapter.Render(context.Background(), RenderRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	if result.PackagePath != "clusters/east-1/tenants/acme/projects/acme-prod/services/session-bus" {
+		t.Fatalf("unexpected primary package path %q", result.PackagePath)
+	}
+	if len(result.PackagePaths) != 2 {
+		t.Fatalf("expected primary and standby package paths, got %#v", result.PackagePaths)
+	}
+	rendered := renderedArtifacts(result)
+	for _, expected := range []string{
+		"gateway {",
+		"session-bus-gateway.acme-prod.west-2.nats.servicer.local:7222",
+		"servicer.io/cluster-target: west-2",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("expected rendered output to contain %q:\n%s", expected, rendered)
+		}
+	}
+	foundGatewayArtifact := false
+	for _, artifact := range result.Artifacts {
+		if artifact.Path == "clusters/west-2/tenants/acme/projects/acme-prod/services/session-bus/gateway-service.yaml" {
+			foundGatewayArtifact = true
+			break
+		}
+	}
+	if !foundGatewayArtifact {
+		t.Fatalf("expected standby gateway service artifact, got %#v", result.Artifacts)
 	}
 }
 
