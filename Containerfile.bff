@@ -17,5 +17,6 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /bff /bff
 
 EXPOSE 8090 8443
+ENTRYPOINT ["/bff"]
 
 ENTRYPOINT ["/bff"]

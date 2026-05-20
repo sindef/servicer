@@ -1,0 +1,84 @@
+# docker-compose.demo.yml — Servicer demo
+#
+# Prerequisite (run once):
+#   ./hack/demo-setup.sh
+#
+# Then:
+#   docker compose -f docker-compose.demo.yml up --build
+#
+# Open http://localhost:8080
+#
+# All services use network_mode: host so they can reach the Kind API server
+# at 127.0.0.1:6443 with no kubeconfig patching or extra networking tricks.
+# This is how the app runs in development.
+#
+# Rebuild a single service after code changes (cluster is unaffected):
+#   docker compose -f docker-compose.demo.yml up --build --no-deps bff
+#   docker compose -f docker-compose.demo.yml up --build --no-deps manager
+#   docker compose -f docker-compose.demo.yml up --build --no-deps web
+
+services:
+
+  # ── Manager ─────────────────────────────────────────────────────────────────
+  # Reconciles ServiceInstance CRDs and materialises delivery artifacts.
+  manager:
+    build:
+      context: .
+      dockerfile: Containerfile.manager
+    command:
+      - --delivery-root=/delivery
+      - --metrics-bind-address=:0
+      - --health-probe-bind-address=:8081
+    environment:
+      KUBECONFIG: /kube/config
+    volumes:
+      - ./generated/demo-kubeconfig:/kube/config:ro
+      - ./generated/demo-delivery:/delivery
+    network_mode: host
+    restart: on-failure
+
+  # ── Syncer ──────────────────────────────────────────────────────────────────
+  # Watches the delivery directory and kubectl-applies generated manifests every
+  # 3 seconds. Uses the official bitnami/kubectl image — no custom image needed.
+  syncer:
+    image: bitnami/kubectl:1.32
+    user: root
+    entrypoint: ["/bin/bash", "/sync.sh"]
+    environment:
+      KUBECONFIG: /kube/config
+      DELIVERY_ROOT: /delivery
+      INTERVAL_SECONDS: "3"
+    volumes:
+      - ./generated/demo-kubeconfig:/kube/config:ro
+      - ./generated/demo-delivery:/delivery:ro
+      - ./hack/demo-sync-delivery.sh:/sync.sh:ro
+    network_mode: host
+    restart: on-failure
+
+  # ── BFF ─────────────────────────────────────────────────────────────────────
+  # The Servicer API backend, listens on :8090.
+  # TLS listener is disabled; nginx (web) talks to BFF over loopback.
+  bff:
+    build:
+      context: .
+      dockerfile: Containerfile.bff
+    command:
+      - --listen=:8090
+      - --tls-listen=
+    environment:
+      KUBECONFIG: /kube/config
+    volumes:
+      - ./generated/demo-kubeconfig:/kube/config:ro
+    network_mode: host
+    restart: on-failure
+
+  # ── Web ─────────────────────────────────────────────────────────────────────
+  # Nginx serves the Vue SPA on :8080 and reverse-proxies /api/ → localhost:8090.
+  web:
+    build:
+      context: .
+      dockerfile: Containerfile.web
+    environment:
+      BFF_URL: "http://127.0.0.1:8090/"
+    network_mode: host
+    restart: on-failure

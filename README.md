@@ -79,37 +79,73 @@ GET  /api/audit                     Queryable audit trail
 
 ## Getting Started
 
-### Prerequisites
+### Docker demo
 
-- Go 1.23+
-- Node 20+
-- Kubernetes cluster (or [kind](https://kind.sigs.k8s.io/))
-- `kubectl` configured
+Runs the app against a local Kind cluster. Requires Docker Engine and `kind` + `kubectl` on your host. Port 8080 must be free.
 
-### Run locally (kind demo)
+**Step 1 — create the cluster (once):**
+
+```bash
+./hack/demo-setup.sh
+```
+
+Creates a Kind cluster named `servicer-demo`, installs CRDs, and applies the demo catalog and tenancy. Writes a standalone kubeconfig to `generated/demo-kubeconfig`. Re-run any time you change CRDs or `config/samples/`.
+
+**Step 2 — start the app:**
+
+```bash
+docker compose -f docker-compose.demo.yml up --build
+```
+
+Open **http://localhost:8080**.
+
+Services started:
+- `manager` — reconciles `ServiceInstance` CRDs, materialises delivery artifacts
+- `syncer` — applies generated manifests to the Kind cluster every 3 s (`bitnami/kubectl`)
+- `bff` — the Servicer API backend on `:8090`
+- `web` — nginx serving the Vue SPA, proxies `/api/` → bff
+
+All services use `network_mode: host` so they reach the Kind API server at `127.0.0.1:6443` exactly as in local development — no kubeconfig patching or extra networking.
+
+**Rebuild after code changes (cluster is unaffected):**
+
+```bash
+docker compose -f docker-compose.demo.yml up --build --no-deps bff
+docker compose -f docker-compose.demo.yml up --build --no-deps manager
+docker compose -f docker-compose.demo.yml up --build --no-deps web
+```
+
+**Tear down:**
+
+```bash
+docker compose -f docker-compose.demo.yml down
+kind delete cluster --name servicer-demo
+```
+
+---
+
+### Local development (go run)
+
+**Prerequisites:** Go 1.23+, Node 20+, `kind`, `kubectl`
 
 ```bash
 ./hack/kind-demo.sh
 ```
 
-This creates a local kind cluster, installs CRDs, and starts the BFF + demo sync.
+Creates a Kind cluster, installs CRDs, and starts the BFF + controller + demo sync loop directly via `go run`. Use this for active development where you want fast recompile cycles.
 
 ### Build
 
 ```bash
-# Go binaries
 go build ./cmd/bff
 go build ./cmd/manager
-
-# Frontend
 cd web && npm ci && npm run build
 ```
 
 ### Run BFF
 
 ```bash
-./bff --kubeconfig ~/.kube/config
-# Serves on :8090
+./bff --listen :8090 --tls-listen :8443
 ```
 
 ### Run frontend (dev)
