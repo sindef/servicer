@@ -18,6 +18,7 @@ const (
 	ServiceClassNATS       ServiceClass = "nats"
 	ServiceClassK8ssandra  ServiceClass = "cassandra"
 	ServiceClassYugabyte   ServiceClass = "yugabyte"
+	ServiceClassArgoApp    ServiceClass = "argo-application"
 )
 
 // SyncPhase captures the delivery-state summary for an instance.

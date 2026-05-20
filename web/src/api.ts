@@ -188,6 +188,25 @@ export interface ServiceClassAdminSummary {
   defaultParameters?: Record<string, unknown>
 }
 
+export interface RepositorySummary {
+  name: string
+  displayName: string
+  projectName: string
+  url: string
+  authType: 'none' | 'http' | 'ssh'
+}
+
+export interface CreateRepositoryRequest {
+  name: string
+  displayName: string
+  projectName: string
+  url: string
+  authType: 'none' | 'http' | 'ssh'
+  username?: string
+  password?: string
+  sshKey?: string
+}
+
 export interface CreateTenantRequest {
   name: string
   displayName: string
@@ -360,6 +379,20 @@ export const api = {
       request<{ name: string; message: string }>(`/api/admin/serviceclasses/${encodeURIComponent(name)}`, {
         method: 'PUT',
         body: JSON.stringify(body)
+      })
+  },
+
+  repositories: {
+    list: (project: string) =>
+      request<RepositorySummary[]>(`/api/projects/${encodeURIComponent(project)}/repositories`),
+    create: (project: string, body: CreateRepositoryRequest) =>
+      request<{ name: string; message: string }>(`/api/projects/${encodeURIComponent(project)}/repositories`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    delete: (project: string, repo: string) =>
+      request<{ name: string; message: string }>(`/api/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(repo)}`, {
+        method: 'DELETE'
       })
   }
 }

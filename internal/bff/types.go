@@ -289,6 +289,25 @@ type ServiceClassAdminSummary struct {
 	DefaultParameters json.RawMessage `json:"defaultParameters,omitempty"`
 }
 
+type RepositorySummary struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	ProjectName string `json:"projectName"`
+	URL         string `json:"url"`
+	AuthType    string `json:"authType"` // "none", "http", "ssh"
+}
+
+type CreateRepositoryRequest struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	ProjectName string `json:"projectName"`
+	URL         string `json:"url"`
+	AuthType    string `json:"authType"` // "none", "http", "ssh"
+	Username    string `json:"username,omitempty"`
+	Password    string `json:"password,omitempty"`
+	SSHKey      string `json:"sshKey,omitempty"`
+}
+
 type CreateTenantRequest struct {
 	Name                  string   `json:"name"`
 	DisplayName           string   `json:"displayName"`

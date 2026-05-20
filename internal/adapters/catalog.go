@@ -8,6 +8,7 @@ var knownServiceClasses = []ServiceClass{
 	ServiceClassNATS,
 	ServiceClassK8ssandra,
 	ServiceClassYugabyte,
+	ServiceClassArgoApp,
 }
 
 // KnownContracts returns the platform product contracts that Servicer recognizes.
@@ -39,6 +40,8 @@ func KnownContract(serviceClass ServiceClass) (ProductContract, bool) {
 		return K8ssandraContract, true
 	case ServiceClassYugabyte:
 		return YugabyteContract, true
+	case ServiceClassArgoApp:
+		return ArgoApplicationContract, true
 	default:
 		return ProductContract{}, false
 	}

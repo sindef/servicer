@@ -16,6 +16,7 @@ apply_once() {
     return 0
   fi
   local failures=0
+  # Apply service packages (databases, namespaces, etc.)
   while IFS= read -r -d '' package_dir; do
     if [[ ! -d "${package_dir}" ]]; then
       continue
@@ -32,6 +33,16 @@ apply_once() {
       failures=$((failures + 1))
     fi
   done < <(find "${DELIVERY_ROOT}/clusters" -path '*/services/*' -type d -print0 2>/dev/null)
+  # Apply Argo CD Application manifests
+  while IFS= read -r -d '' app_dir; do
+    if [[ ! -d "${app_dir}" ]]; then
+      continue
+    fi
+    if ! kubectl apply -f "${app_dir}" >/dev/null; then
+      echo "failed applying argo-app ${app_dir}" >&2
+      failures=$((failures + 1))
+    fi
+  done < <(find "${DELIVERY_ROOT}/clusters" -path '*/argo-apps/*' -type d -print0 2>/dev/null)
   return "${failures}"
 }
 

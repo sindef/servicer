@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { api, type CatalogEntry } from '../api'
+import { api, type CatalogEntry, type RepositorySummary } from '../api'
 import { useApi } from '../composables/useApi'
 import StatusPill from '../components/StatusPill.vue'
 
@@ -34,6 +34,9 @@ const { data, loading, error } = useApi(api.catalog)
 const projects = useApi(api.projects)
 const clusters = useApi(api.admin.clusters)
 const nextNatsRowId = ref(1)
+
+const projectRepositories = ref<RepositorySummary[]>([])
+const repositoriesLoading = ref(false)
 
 const requestForm = reactive({
   name: '',
@@ -71,7 +74,17 @@ const parameterForm = reactive({
   externalDnsHostname: '',
   natsStreams: [] as NatsStreamForm[],
   natsConsumers: [] as NatsConsumerForm[],
-  natsAppCredentials: [] as NatsCredentialForm[]
+  natsAppCredentials: [] as NatsCredentialForm[],
+  // argo-application
+  argoRepoRef: '',
+  argoRepoURL: '',
+  argoPath: '',
+  argoTargetRevision: 'HEAD',
+  argoTargetNamespace: '',
+  argoSyncPolicy: 'manual',
+  argoCreateNamespace: false,
+  argoHelmReleaseName: '',
+  argoHelmValuesYAML: ''
 })
 const submitting = ref(false)
 const submitError = ref<string | null>(null)
@@ -106,6 +119,36 @@ watch(
   }
 )
 
+watch(
+  () => requestForm.projectName,
+  async (project) => {
+    if (requestForm.serviceClass !== 'argo-application' || !project) return
+    repositoriesLoading.value = true
+    try {
+      projectRepositories.value = await api.repositories.list(project)
+    } catch {
+      projectRepositories.value = []
+    } finally {
+      repositoriesLoading.value = false
+    }
+  }
+)
+
+watch(
+  () => requestForm.serviceClass,
+  async (serviceClass) => {
+    if (serviceClass !== 'argo-application' || !requestForm.projectName) return
+    repositoriesLoading.value = true
+    try {
+      projectRepositories.value = await api.repositories.list(requestForm.projectName)
+    } catch {
+      projectRepositories.value = []
+    } finally {
+      repositoriesLoading.value = false
+    }
+  }
+)
+
 function logoText(serviceClass: string) {
   switch (serviceClass) {
     case 'postgresql':
@@ -120,6 +163,8 @@ function logoText(serviceClass: string) {
       return 'N'
     case 'yugabyte':
       return 'Yb'
+    case 'argo-application':
+      return 'Ar'
     default:
       return serviceClass.slice(0, 2).toUpperCase()
   }
@@ -218,6 +263,11 @@ function addNatsCredential() {
 
 function removeNatsCredential(id: number) {
   parameterForm.natsAppCredentials = parameterForm.natsAppCredentials.filter((credential) => credential.id !== id)
+}
+
+function onArgoRepoRefChange(repoName: string) {
+  const repo = projectRepositories.value.find((r) => r.name === repoName)
+  parameterForm.argoRepoURL = repo ? repo.url : ''
 }
 
 function csvList(value: string) {
@@ -343,6 +393,17 @@ function applyPlanDefaults(serviceClass: string, servicePlan: string) {
     parameterForm.serviceType = 'ClusterIP'
     parameterForm.externalDnsHostname = ''
   }
+  if (serviceClass === 'argo-application') {
+    parameterForm.argoRepoRef = ''
+    parameterForm.argoRepoURL = ''
+    parameterForm.argoPath = ''
+    parameterForm.argoTargetRevision = 'HEAD'
+    parameterForm.argoTargetNamespace = ''
+    parameterForm.argoSyncPolicy = 'manual'
+    parameterForm.argoCreateNamespace = false
+    parameterForm.argoHelmReleaseName = ''
+    parameterForm.argoHelmValuesYAML = ''
+  }
 }
 
 function buildParameters() {
@@ -441,6 +502,18 @@ function buildParameters() {
         standbyClusters: parameterForm.standbyClusters,
         serviceType: parameterForm.serviceType,
         externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
+      })
+    case 'argo-application':
+      return compactParams({
+        repoURL: parameterForm.argoRepoURL || parameterForm.argoRepoRef,
+        path: parameterForm.argoPath,
+        targetRevision: parameterForm.argoTargetRevision,
+        targetNamespace: parameterForm.argoTargetNamespace,
+        syncPolicy: parameterForm.argoSyncPolicy,
+        createNamespace: parameterForm.argoCreateNamespace || undefined,
+        helmReleaseName: parameterForm.argoHelmReleaseName,
+        helmValuesYAML: parameterForm.argoHelmValuesYAML,
+        repoRef: parameterForm.argoRepoRef
       })
     default:
       return undefined
@@ -1048,6 +1121,66 @@ async function submitRequest() {
                 <span v-if="availableStandbyClusters.length === 0" class="muted" style="font-size: 13px">No other clusters available</span>
               </div>
             </div>
+          </div>
+          <div v-else-if="requestForm.serviceClass === 'argo-application'" class="form-grid modal-form-grid">
+            <label style="grid-column: span 2">
+              Repository
+              <select
+                v-if="projectRepositories.length > 0"
+                v-model="parameterForm.argoRepoRef"
+                @change="onArgoRepoRefChange(parameterForm.argoRepoRef)"
+              >
+                <option value="">Select a repository</option>
+                <option v-for="repo in projectRepositories" :key="repo.name" :value="repo.name">
+                  {{ repo.displayName || repo.name }} — {{ repo.url }}
+                </option>
+              </select>
+              <span v-else-if="repositoriesLoading" class="muted" style="font-size: 13px">Loading repositories...</span>
+              <span v-else class="muted" style="font-size: 13px">
+                No repositories registered for this project.
+                <a href="#" @click.prevent="() => {}">Add one in Admin → Repositories.</a>
+              </span>
+            </label>
+            <label style="grid-column: span 2" v-if="!parameterForm.argoRepoRef">
+              Repository URL (manual)
+              <input v-model="parameterForm.argoRepoURL" placeholder="https://github.com/org/repo.git" />
+            </label>
+            <label>
+              Path
+              <input v-model="parameterForm.argoPath" placeholder="charts/my-app" />
+            </label>
+            <label>
+              Target revision
+              <input v-model="parameterForm.argoTargetRevision" placeholder="HEAD" />
+            </label>
+            <label>
+              Target namespace
+              <input v-model="parameterForm.argoTargetNamespace" placeholder="my-namespace" />
+            </label>
+            <label>
+              Sync policy
+              <select v-model="parameterForm.argoSyncPolicy">
+                <option value="manual">Manual</option>
+                <option value="auto">Automatic</option>
+              </select>
+            </label>
+            <label class="checkbox-label" style="align-self: center; margin-top: 8px">
+              <input type="checkbox" v-model="parameterForm.argoCreateNamespace" />
+              Auto-create namespace
+            </label>
+            <label>
+              Helm release name <span class="muted" style="font-size: 11px">(optional)</span>
+              <input v-model="parameterForm.argoHelmReleaseName" placeholder="leave blank to use instance name" />
+            </label>
+            <label style="grid-column: span 2">
+              Helm values override <span class="muted" style="font-size: 11px">(optional YAML)</span>
+              <textarea
+                v-model="parameterForm.argoHelmValuesYAML"
+                rows="4"
+                placeholder="key: value&#10;nested:&#10;  key: value"
+                style="font-family: var(--mono); font-size: 12px; resize: vertical"
+              />
+            </label>
           </div>
           </div>
         </section>

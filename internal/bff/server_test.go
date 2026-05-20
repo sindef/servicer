@@ -147,6 +147,107 @@ func TestUpdateProductRequestChangesPlan(t *testing.T) {
 	}
 }
 
+func TestProjectRepositoryLifecycle(t *testing.T) {
+	server := testServer(t)
+	body := []byte(`{
+		"name":"storefront-app",
+		"displayName":"Storefront App",
+		"url":"https://github.com/acme/storefront.git",
+		"authType":"http",
+		"username":"git",
+		"password":"token"
+	}`)
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/projects/acme-prod/repositories", bytes.NewReader(body))
+	createRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	createRequest.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	listResponse := httptest.NewRecorder()
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/projects/acme-prod/repositories", nil)
+	listRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	listRequest.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", listResponse.Code, listResponse.Body.String())
+	}
+
+	var repos []RepositorySummary
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &repos); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected one repository, got %#v", repos)
+	}
+	if repos[0].Name != "storefront-app" || repos[0].URL != "https://github.com/acme/storefront.git" || repos[0].AuthType != "http" {
+		t.Fatalf("unexpected repository summary %#v", repos[0])
+	}
+
+	var argoSecret corev1.Secret
+	if err := server.client.Get(createRequest.Context(), client.ObjectKey{Name: "argocd-repo-github-com-acme-storefront-git", Namespace: "argocd"}, &argoSecret); err != nil {
+		t.Fatalf("expected mirrored Argo CD repository secret: %v", err)
+	}
+	if got := string(argoSecret.Data["url"]); got != "https://github.com/acme/storefront.git" {
+		t.Fatalf("expected Argo CD secret url to match, got %q", got)
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/projects/acme-prod/repositories/storefront-app", nil)
+	deleteRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	deleteRequest.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+}
+
+func TestProjectRepositoryEndpointsRejectUnauthorizedProject(t *testing.T) {
+	server := testServer(t)
+
+	listResponse := httptest.NewRecorder()
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/projects/rogue-prod/repositories", nil)
+	listRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	listRequest.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", listResponse.Code, listResponse.Body.String())
+	}
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/projects/rogue-prod/repositories", strings.NewReader(`{
+		"name":"rogue-app",
+		"displayName":"Rogue App",
+		"url":"https://github.com/rogue/app.git"
+	}`))
+	createRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	createRequest.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+}
+
+func TestCreateProjectRepositoryRejectsInvalidName(t *testing.T) {
+	server := testServer(t)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/acme-prod/repositories", strings.NewReader(`{
+		"name":"11",
+		"displayName":"Broken Repo",
+		"url":"https://github.com/acme/broken.git"
+	}`))
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestSubmitSensitiveActionRequiresApproverRole(t *testing.T) {
 	server := testServer(t)
 	body := []byte(`{"action":"failover","parameters":{"candidateCluster":"west-2"}}`)

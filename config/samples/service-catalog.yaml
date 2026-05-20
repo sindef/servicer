@@ -453,3 +453,24 @@ spec:
     memory: 2Gi
     storageSize: 100Gi
     backupProfile: daily-7d
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceClass
+metadata:
+  name: argo-application
+spec:
+  displayName: Argo CD Application
+  category: platform
+  driver: argo-application
+  published: true
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServicePlan
+metadata:
+  name: argo-application-standard
+spec:
+  serviceClassRef:
+    name: argo-application
+  displayName: Standard
+  tier: standard
+  topology: dedicated

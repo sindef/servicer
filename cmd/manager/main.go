@@ -79,6 +79,7 @@ func main() {
 		adapters.NewValkeyAdapter(),
 		adapters.NewNATSAdapter(),
 		adapters.NewYugabyteAdapter(),
+		adapters.NewArgoApplicationAdapter(),
 	)
 	if err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to build adapter registry")

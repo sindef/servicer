@@ -22,6 +22,7 @@ var implementedProducts = map[string]struct{}{
 	string(adapters.ServiceClassValkey):     {},
 	string(adapters.ServiceClassNATS):       {},
 	string(adapters.ServiceClassYugabyte):   {},
+	string(adapters.ServiceClassArgoApp):    {},
 }
 
 type Server struct {
@@ -89,6 +90,9 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /api/admin/serviceclasses", server.handleListServiceClasses)
 	mux.HandleFunc("POST /api/admin/serviceclasses", server.handleRegisterServiceClass)
 	mux.HandleFunc("PUT /api/admin/serviceclasses/{name}", server.handleUpdateServiceClass)
+	mux.HandleFunc("GET /api/projects/{project}/repositories", server.handleListProjectRepositories)
+	mux.HandleFunc("POST /api/projects/{project}/repositories", server.handleCreateProjectRepository)
+	mux.HandleFunc("DELETE /api/projects/{project}/repositories/{repo}", server.handleDeleteProjectRepository)
 	server.handler = withJSON(server.withMetrics(server.withAuthentication(mux)))
 	return server
 }

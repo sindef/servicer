@@ -14,7 +14,7 @@ Implementation notes in this review are current as of 2026-05-20.
 ## Critical gaps
 
 ### [~] Argo CD Application creation
-**Plan 003** — The controller can now auto-create and update Argo CD `Application` resources for a `ServiceInstance`, publish generated artifacts into a configured Git worktree path, and read Argo sync/health back into instance status. This is still partial: Git push/publication beyond the local worktree is not yet automated, and `ApplicationSet`-driven multi-cluster fan-out is still open.  
+**Plan 003** — The controller can now auto-create and update Argo CD `Application` resources for a `ServiceInstance`, publish generated artifacts into a configured Git worktree path, and read Argo sync/health back into instance status. The platform now also exposes a first-class `argo-application` product contract, project-scoped repository registry endpoints, and UI flows to register Git repositories and request Argo-backed app deployments without manual secret setup in Argo CD. This is still partial: Git push/publication beyond the local worktree is not yet automated, and `ApplicationSet`-driven multi-cluster fan-out is still open.  
 Commit: `e8c9ed4`
 
 ### [~] OIDC / real authentication
