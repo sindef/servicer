@@ -93,8 +93,8 @@ Commit: `7ee64be`
 
 ## Observability and operations
 
-### [~] Audit retention and structured search
-**Plan 006** — `/api/audit` now supports structured filters (`type`, `actor`, `resource`, `action`, `phase`, `from`, `to`, `limit`) in addition to substring search. Durable retention is still open: Kubernetes Events still age out and there is not yet an audit-specific persistence store or retention policy.  
+### [x] Audit retention and structured search
+**Plan 006** — `/api/audit` supports structured filters (`type`, `actor`, `resource`, `action`, `phase`, `from`, `to`, `limit`) in addition to substring search, and the BFF now mirrors audit summaries into a labelled ConfigMap-backed audit store with `SERVICER_AUDIT_NAMESPACE` and `SERVICER_AUDIT_RETENTION_DAYS` retention controls.  
 Commit: `7ee64be`
 
 ### [~] Control-plane backup and restore

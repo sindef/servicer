@@ -109,6 +109,28 @@ func (s *Server) auditEvents(r *http.Request, actor actor) ([]AuditEventSummary,
 		}
 		return events[i].Message < events[j].Message
 	})
+	if s.auditStore != nil {
+		var err error
+		events, err = s.auditStore.merge(r.Context(), events)
+		if err != nil {
+			return nil, err
+		}
+		sort.SliceStable(events, func(i, j int) bool {
+			if events[i].Time != events[j].Time {
+				return events[i].Time > events[j].Time
+			}
+			if events[i].Type != events[j].Type {
+				return events[i].Type < events[j].Type
+			}
+			if events[i].Subject != events[j].Subject {
+				return events[i].Subject < events[j].Subject
+			}
+			if events[i].Reason != events[j].Reason {
+				return events[i].Reason < events[j].Reason
+			}
+			return events[i].Message < events[j].Message
+		})
+	}
 	return events, nil
 }
 

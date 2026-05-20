@@ -367,6 +367,50 @@ func TestAuditEndpointSupportsStructuredFilters(t *testing.T) {
 	}
 }
 
+func TestAuditEndpointRetainsEventsInConfigMaps(t *testing.T) {
+	server := testServer(t)
+	first := httptest.NewRecorder()
+	firstRequest := httptest.NewRequest(http.MethodGet, "/api/audit?q=restart", nil)
+	firstRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	firstRequest.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(first, firstRequest)
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected initial audit status 200, got %d: %s", first.Code, first.Body.String())
+	}
+
+	var stored corev1.ConfigMapList
+	if err := server.client.List(firstRequest.Context(), &stored, client.InNamespace(defaultAuditNamespace), client.MatchingLabels{auditEventLabelKey: auditEventLabelValue}); err != nil {
+		t.Fatalf("list stored audit events: %v", err)
+	}
+	if len(stored.Items) == 0 {
+		t.Fatalf("expected audit events to be persisted")
+	}
+
+	var action platformv1alpha1.ActionRequest
+	if err := server.client.Get(firstRequest.Context(), client.ObjectKey{Name: "session-cache-restart"}, &action); err != nil {
+		t.Fatalf("get source action: %v", err)
+	}
+	if err := server.client.Delete(firstRequest.Context(), &action); err != nil {
+		t.Fatalf("delete source action: %v", err)
+	}
+
+	second := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodGet, "/api/audit?q=restart&type=ActionRequest", nil)
+	secondRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	secondRequest.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(second, secondRequest)
+	if second.Code != http.StatusOK {
+		t.Fatalf("expected retained audit status 200, got %d: %s", second.Code, second.Body.String())
+	}
+	var events []AuditEventSummary
+	if err := json.Unmarshal(second.Body.Bytes(), &events); err != nil {
+		t.Fatalf("decode retained events: %v", err)
+	}
+	if len(events) == 0 || events[0].Subject != "session-cache-restart" {
+		t.Fatalf("expected retained restart action event, got %#v", events)
+	}
+}
+
 func TestInstanceDetailRejectsUnauthorizedTenantAccess(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()

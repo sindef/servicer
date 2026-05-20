@@ -32,6 +32,7 @@ type Server struct {
 	kubeClient *http.Client
 	auth       authenticator
 	metrics    *serverMetrics
+	auditStore *auditStore
 	handler    http.Handler
 }
 
@@ -40,7 +41,7 @@ func NewServer(client client.Client) *Server {
 }
 
 func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server {
-	server := &Server{client: client, metrics: newServerMetrics()}
+	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client)}
 	auth, err := newAuthenticatorFromEnv(context.Background())
 	if err != nil {
 		panic(err)
