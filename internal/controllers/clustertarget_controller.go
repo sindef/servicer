@@ -349,8 +349,6 @@ func installPackageHelmChart(kubeconfigBytes []byte, pkg *platformv1alpha1.Opera
 		"--kubeconfig", kubeconfigPath,
 		"--namespace", firstNonEmptyTrimmed(pkg.Spec.TargetNamespace, "operators"),
 		"--create-namespace",
-		"--wait",
-		"--timeout", "10m",
 	}
 	keys := make([]string, 0, len(pkg.Spec.Source.HelmValues))
 	for key := range pkg.Spec.Source.HelmValues {
