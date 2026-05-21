@@ -79,7 +79,7 @@ func loadNATSCredentialMaterialization(instance *platformv1alpha1.ServiceInstanc
 	return spec, nil
 }
 
-func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Context, instance *platformv1alpha1.ServiceInstance, namespace string) error {
+func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Context, kubeClient client.Client, instance *platformv1alpha1.ServiceInstance, namespace string) error {
 	spec, err := loadNATSCredentialMaterialization(instance)
 	if err != nil {
 		return fmt.Errorf("decode nats app credentials: %w", err)
@@ -89,7 +89,7 @@ func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Cont
 		spec.AuthConfigSecretName: {},
 	}
 
-	adminSecret, err := r.ensureOpaqueSecret(ctx, namespace, spec.AdminSecretName, instance.Name, map[string]string{
+	adminSecret, err := r.ensureOpaqueSecret(ctx, kubeClient, namespace, spec.AdminSecretName, instance.Name, map[string]string{
 		"username": "servicer",
 		"url":      fmt.Sprintf("nats://%s.%s.svc.cluster.local:4222", instance.Name, namespace),
 	}, "credential")
@@ -102,7 +102,7 @@ func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Cont
 	}
 	for _, credential := range spec.AppCredentials {
 		desired[credential.SecretName] = struct{}{}
-		secret, err := r.ensureOpaqueSecret(ctx, namespace, credential.SecretName, instance.Name, map[string]string{
+		secret, err := r.ensureOpaqueSecret(ctx, kubeClient, namespace, credential.SecretName, instance.Name, map[string]string{
 			"username":    credential.Username,
 			"description": credential.Description,
 			"url":         fmt.Sprintf("nats://%s.%s.svc.cluster.local:4222", instance.Name, namespace),
@@ -130,7 +130,7 @@ func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Cont
 		},
 	}
 	var existing corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: spec.AuthConfigSecretName, Namespace: namespace}, &existing); err == nil {
+	if err := kubeClient.Get(ctx, types.NamespacedName{Name: spec.AuthConfigSecretName, Namespace: namespace}, &existing); err == nil {
 		existing.Data = authSecret.Data
 		if existing.Labels == nil {
 			existing.Labels = authSecret.Labels
@@ -139,11 +139,11 @@ func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Cont
 				existing.Labels[key] = value
 			}
 		}
-		if updateErr := r.Update(ctx, &existing); updateErr != nil {
+		if updateErr := kubeClient.Update(ctx, &existing); updateErr != nil {
 			return updateErr
 		}
 	} else if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, &authSecret); err != nil {
+		if err := kubeClient.Create(ctx, &authSecret); err != nil {
 			return err
 		}
 	} else {
@@ -151,7 +151,7 @@ func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Cont
 	}
 
 	var secrets corev1.SecretList
-	if err := r.List(ctx, &secrets, client.InNamespace(namespace)); err != nil {
+	if err := kubeClient.List(ctx, &secrets, client.InNamespace(namespace)); err != nil {
 		return err
 	}
 	for _, secret := range secrets.Items {
@@ -164,16 +164,16 @@ func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Cont
 		if _, keep := desired[secret.Name]; keep {
 			continue
 		}
-		if err := r.Delete(ctx, &secret); err != nil && !apierrors.IsNotFound(err) {
+		if err := kubeClient.Delete(ctx, &secret); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *ServiceInstanceReconciler) ensureOpaqueSecret(ctx context.Context, namespace, secretName, instanceName string, staticData map[string]string, role string) (*corev1.Secret, error) {
+func (r *ServiceInstanceReconciler) ensureOpaqueSecret(ctx context.Context, kubeClient client.Client, namespace, secretName, instanceName string, staticData map[string]string, role string) (*corev1.Secret, error) {
 	var secret corev1.Secret
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &secret)
+	err := kubeClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &secret)
 	if err == nil {
 		if secret.Data == nil {
 			secret.Data = map[string][]byte{}
@@ -194,7 +194,7 @@ func (r *ServiceInstanceReconciler) ensureOpaqueSecret(ctx context.Context, name
 		secret.Labels["servicer.io/managed-by"] = "servicer"
 		secret.Labels["servicer.io/service-instance"] = instanceName
 		secret.Labels["servicer.io/nats-secret-role"] = role
-		if updateErr := r.Update(ctx, &secret); updateErr != nil {
+		if updateErr := kubeClient.Update(ctx, &secret); updateErr != nil {
 			return nil, updateErr
 		}
 		return &secret, nil
@@ -223,7 +223,7 @@ func (r *ServiceInstanceReconciler) ensureOpaqueSecret(ctx context.Context, name
 		Type: corev1.SecretTypeOpaque,
 		Data: data,
 	}
-	if err := r.Create(ctx, &secret); err != nil {
+	if err := kubeClient.Create(ctx, &secret); err != nil {
 		return nil, err
 	}
 	return &secret, nil

@@ -14,6 +14,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1822,11 +1823,20 @@ func TestServiceInstanceReconcilerObservesReadyValkeyRuntime(t *testing.T) {
 			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
 		},
 	}
+	projectedSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "session-cache-auth-projected",
+			Namespace: "acme-acme-prod-session-cache",
+		},
+		Data: map[string][]byte{
+			"password": []byte("demo"),
+		},
+	}
 	reconciler := &ServiceInstanceReconciler{
 		Client: fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithStatusSubresource(&platformv1alpha1.ServiceInstance{}).
-			WithObjects(fixture.tenant, fixture.project, fixture.serviceClass, fixture.servicePlan, fixture.clusterTarget, fixture.instance, statefulSet, pod).
+			WithObjects(fixture.tenant, fixture.project, fixture.serviceClass, fixture.servicePlan, fixture.clusterTarget, fixture.instance, statefulSet, pod, projectedSecret).
 			Build(),
 		Scheme:       scheme,
 		Adapters:     registry,
@@ -1879,7 +1889,7 @@ func TestServiceInstanceReconcilerGeneratesYugabyteCredentialSecret(t *testing.T
 		CredentialRefs: []platformv1alpha1.NamespacedObjectReference{
 			{Name: "testy-credentials", Namespace: "acme-acme-prod-testy"},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("ensureCredentialSecrets returned error: %v", err)
 	}
@@ -1919,7 +1929,7 @@ func TestServiceInstanceReconcilerGeneratesCNPGCredentialSecret(t *testing.T) {
 		CredentialRefs: []platformv1alpha1.NamespacedObjectReference{
 			{Name: "orders-db-app", Namespace: "acme-acme-prod-orders-db"},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("ensureCredentialSecrets returned error: %v", err)
 	}
@@ -1956,7 +1966,7 @@ func TestServiceInstanceReconcilerGeneratesYugabyteCredentialSecretWithExplicitD
 		CredentialRefs: []platformv1alpha1.NamespacedObjectReference{
 			{Name: "team-db-credentials", Namespace: "acme-acme-prod-team-db"},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("ensureCredentialSecrets returned error: %v", err)
 	}
@@ -1992,7 +2002,7 @@ func TestServiceInstanceReconcilerGeneratesMySQLCredentialSecret(t *testing.T) {
 		CredentialRefs: []platformv1alpha1.NamespacedObjectReference{
 			{Name: "orders-mysql-auth", Namespace: "acme-acme-prod-orders-mysql"},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("ensureCredentialSecrets returned error: %v", err)
 	}
@@ -2003,6 +2013,50 @@ func TestServiceInstanceReconcilerGeneratesMySQLCredentialSecret(t *testing.T) {
 	}
 	if string(secret.Data["username"]) != "orders_db" || string(secret.Data["database"]) != "orders_db" || len(secret.Data["password"]) == 0 {
 		t.Fatalf("expected MySQL credential data, got %#v", secret.Data)
+	}
+}
+
+func TestServiceInstanceReconcilerGeneratesCredentialSecretOnTargetCluster(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			SecretPolicy: platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeExternalSecret},
+		},
+	}
+
+	appClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance).
+		Build()
+	targetNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo-demo-prod-orders-db"}}
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(targetNamespace).
+		Build()
+
+	reconciler := &ServiceInstanceReconciler{
+		Client: appClient,
+		Scheme: scheme,
+	}
+
+	err := reconciler.ensureCredentialSecrets(context.Background(), instance, adapters.RenderResult{
+		RuntimeDriver: "cnpg",
+		CredentialRefs: []platformv1alpha1.NamespacedObjectReference{
+			{Name: "orders-db-app", Namespace: "demo-demo-prod-orders-db"},
+		},
+	}, targetClient)
+	if err != nil {
+		t.Fatalf("ensureCredentialSecrets returned error: %v", err)
+	}
+
+	var targetSecret corev1.Secret
+	if err := targetClient.Get(context.Background(), client.ObjectKey{Name: "orders-db-app", Namespace: "demo-demo-prod-orders-db"}, &targetSecret); err != nil {
+		t.Fatalf("expected generated target-cluster credential Secret: %v", err)
+	}
+	var appSecret corev1.Secret
+	if err := appClient.Get(context.Background(), client.ObjectKey{Name: "orders-db-app", Namespace: "demo-demo-prod-orders-db"}, &appSecret); !apierrors.IsNotFound(err) {
+		t.Fatalf("expected app cluster to not receive runtime secret, got err=%v secret=%#v", err, appSecret)
 	}
 }
 
@@ -2035,7 +2089,7 @@ func TestServiceInstanceReconcilerGeneratesNATSCredentialSecretsAndAuthConfig(t 
 		Scheme: scheme,
 	}
 
-	if err := reconciler.ensureNATSCredentialSecrets(context.Background(), instance, "acme-acme-prod-session-bus"); err != nil {
+	if err := reconciler.ensureNATSCredentialSecrets(context.Background(), reconciler.Client, instance, "acme-acme-prod-session-bus"); err != nil {
 		t.Fatalf("ensureNATSCredentialSecrets returned error: %v", err)
 	}
 

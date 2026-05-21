@@ -62,9 +62,9 @@ func (r *ServiceInstanceReconciler) getTargetClient(ctx context.Context, target 
 	if err := r.Get(ctx, types.NamespacedName{Name: target.Spec.ConnectionRef.Name, Namespace: target.Spec.ConnectionRef.Namespace}, &secret); err != nil {
 		return nil, fmt.Errorf("reading connection secret for ClusterTarget %q: %w", target.Name, err)
 	}
-	kubeconfigBytes, ok := secret.Data["kubeconfig"]
-	if !ok {
-		return nil, fmt.Errorf("secret %s/%s for ClusterTarget %q has no 'kubeconfig' key", target.Spec.ConnectionRef.Namespace, target.Spec.ConnectionRef.Name, target.Name)
+	kubeconfigBytes := clusterConnectionData(&secret)
+	if len(kubeconfigBytes) == 0 {
+		return nil, fmt.Errorf("secret %s/%s for ClusterTarget %q has no kubeconfig data", target.Spec.ConnectionRef.Namespace, target.Spec.ConnectionRef.Name, target.Name)
 	}
 	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigBytes)
 	if err != nil {
@@ -383,7 +383,12 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult); err != nil {
+	targetClient, err := r.getTargetClient(ctx, clusterTarget)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult, targetClient); err != nil {
 		if apierrors.IsNotFound(err) {
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionPending", "Credential projection is waiting for the delivered runtime namespace.")
 			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
@@ -405,11 +410,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	serviceContext.Instance = &instance
-	targetClient, err := r.getTargetClient(ctx, clusterTarget)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	runtimeObservation, observedResources, err := r.observeRuntime(ctx, renderResult.PrimaryResource, renderResult.CredentialRefs, targetClient)
+	runtimeObservation, observedResources, err := r.observeRuntime(ctx, renderResult.PrimaryResource, statusCredentialRefs, targetClient)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -648,23 +649,27 @@ func endpointStatus(endpoints []adapters.Endpoint) map[string]string {
 	return status
 }
 
-func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context, instance *platformv1alpha1.ServiceInstance, renderResult adapters.RenderResult) error {
+func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context, instance *platformv1alpha1.ServiceInstance, renderResult adapters.RenderResult, targetClient client.Client) error {
 	if renderResult.RuntimeDriver != "servicer-valkey" && renderResult.RuntimeDriver != "servicer-nats" && renderResult.RuntimeDriver != "yb-operator" && renderResult.RuntimeDriver != "servicer-mysql" && renderResult.RuntimeDriver != "cnpg" {
 		return nil
 	}
 	if instance.Spec.SecretPolicy.DeliveryMode == platformv1alpha1.SecretDeliveryModeManual {
 		return nil
 	}
+	secretClient := r.Client
+	if targetClient != nil {
+		secretClient = targetClient
+	}
 	if renderResult.RuntimeDriver == "servicer-nats" {
 		namespace := instance.Status.Placement.Namespace
 		if len(renderResult.CredentialRefs) > 0 && renderResult.CredentialRefs[0].Namespace != "" {
 			namespace = renderResult.CredentialRefs[0].Namespace
 		}
-		return r.ensureNATSCredentialSecrets(ctx, instance, namespace)
+		return r.ensureNATSCredentialSecrets(ctx, secretClient, instance, namespace)
 	}
 	for _, ref := range renderResult.CredentialRefs {
 		var secret corev1.Secret
-		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &secret)
+		err := secretClient.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &secret)
 		if err == nil {
 			if secret.Data == nil || len(secret.Data["password"]) == 0 || len(secret.Data["username"]) == 0 {
 				if secret.Data == nil {
@@ -686,7 +691,7 @@ func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context,
 				}
 				secret.Labels["servicer.io/managed-by"] = "servicer"
 				secret.Labels["servicer.io/service-instance"] = instance.Name
-				if updateErr := r.Update(ctx, &secret); updateErr != nil {
+				if updateErr := secretClient.Update(ctx, &secret); updateErr != nil {
 					return updateErr
 				}
 			}
@@ -711,7 +716,7 @@ func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context,
 			Type: corev1.SecretTypeOpaque,
 			Data: managedCredentialData(renderResult.RuntimeDriver, instance, password),
 		}
-		if err := r.Create(ctx, &secret); err != nil {
+		if err := secretClient.Create(ctx, &secret); err != nil {
 			return err
 		}
 	}
@@ -895,7 +900,7 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 
 	for _, ref := range credentialRefs {
 		var secret corev1.Secret
-		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &secret)
+		err := observeClient().Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &secret)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return observation, nil, err
 		}
