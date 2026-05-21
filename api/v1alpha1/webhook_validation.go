@@ -944,6 +944,13 @@ func validateServiceBindingSpec(spec ServiceBindingSpec) field.ErrorList {
 	if spec.TargetRef.Namespace == "" && spec.TargetRef.Name == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec", "targetRef"), "targetRef must set at least a namespace or a name"))
 	}
+	allowedTargetKinds := []string{"Namespace", "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}
+	if spec.TargetRef.Kind != "" && !stringInSlice(spec.TargetRef.Kind, allowedTargetKinds) {
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("spec", "targetRef", "kind"), spec.TargetRef.Kind, allowedTargetKinds))
+	}
+	if spec.TargetRef.Kind != "" && spec.TargetRef.Kind != "Namespace" && strings.TrimSpace(spec.TargetRef.Name) == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "targetRef", "name"), "name is required for workload targets"))
+	}
 	return allErrs
 }
 
@@ -1149,4 +1156,13 @@ func validatePolicyRefs(refs []PolicyReference, path *field.Path) field.ErrorLis
 		}
 	}
 	return allErrs
+}
+
+func stringInSlice(target string, items []string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }

@@ -1781,6 +1781,178 @@ func TestServiceBindingReconcilerProjectsSourceCredentialsViaExternalSecret(t *t
 	}
 }
 
+func TestServiceBindingReconcilerIntegratesDeploymentTarget(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod"},
+		Status: platformv1alpha1.ProjectStatus{
+			Placement: platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+		},
+	}
+	source := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+		},
+		Status: platformv1alpha1.ServiceInstanceStatus{
+			Placement: platformv1alpha1.PlacementStatus{Namespace: "acme-prod-orders-db"},
+			CredentialRefs: []platformv1alpha1.NamespacedObjectReference{{
+				Name:      "orders-db-auth",
+				Namespace: "acme-prod-orders-db",
+			}},
+		},
+	}
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db-auth", Namespace: "acme-prod-orders-db"},
+		Data: map[string][]byte{
+			"username": []byte("orders"),
+			"password": []byte("supersecret"),
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-api", Namespace: "acme-prod-api"},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "orders-api"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "orders-api"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "api", Image: "demo"}},
+				},
+			},
+		},
+	}
+	binding := &platformv1alpha1.ServiceBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-api"},
+		Spec: platformv1alpha1.ServiceBindingSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			SourceRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: platformv1alpha1.GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       "orders-db",
+			},
+			TargetRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "orders-api",
+				Namespace:  "acme-prod-api",
+			},
+			SecretPolicy: platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeDirectSecretRef},
+		},
+	}
+
+	reconciler := &ServiceBindingReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceBinding{}).
+			WithObjects(project, source, sourceSecret, deployment, binding).
+			Build(),
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-api"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updatedDeployment appsv1.Deployment
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-api", Namespace: "acme-prod-api"}, &updatedDeployment); err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	envFrom := updatedDeployment.Spec.Template.Spec.Containers[0].EnvFrom
+	if len(envFrom) != 1 || envFrom[0].SecretRef == nil || envFrom[0].SecretRef.Name != "orders-api-binding" {
+		t.Fatalf("expected binding secret envFrom, got %#v", envFrom)
+	}
+	if updatedDeployment.Spec.Template.Annotations["servicer.io/binding-secret"] != "orders-api-binding" {
+		t.Fatalf("expected binding annotation, got %#v", updatedDeployment.Spec.Template.Annotations)
+	}
+}
+
+func TestServiceBindingReconcilerIntegratesDeploymentTargetViaExternalSecret(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod"},
+		Status: platformv1alpha1.ProjectStatus{
+			Placement: platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+		},
+	}
+	source := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+		},
+		Status: platformv1alpha1.ServiceInstanceStatus{
+			Placement: platformv1alpha1.PlacementStatus{Namespace: "acme-prod-orders-db"},
+			CredentialRefs: []platformv1alpha1.NamespacedObjectReference{{
+				Name:      "orders-db-app-projected",
+				Namespace: "acme-prod-orders-db",
+			}},
+		},
+	}
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db-app-projected", Namespace: "acme-prod-orders-db"},
+		Data: map[string][]byte{
+			"username": []byte("orders"),
+			"password": []byte("supersecret"),
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-api", Namespace: "acme-prod-api"},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "orders-api"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "orders-api"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "api", Image: "demo"}},
+				},
+			},
+		},
+	}
+	binding := &platformv1alpha1.ServiceBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-api"},
+		Spec: platformv1alpha1.ServiceBindingSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			SourceRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: platformv1alpha1.GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       "orders-db",
+			},
+			TargetRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "orders-api",
+				Namespace:  "acme-prod-api",
+			},
+			SecretPolicy: platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeExternalSecret},
+		},
+	}
+
+	reconciler := &ServiceBindingReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceBinding{}).
+			WithObjects(project, source, sourceSecret, deployment, binding).
+			Build(),
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-api"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updatedDeployment appsv1.Deployment
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-api", Namespace: "acme-prod-api"}, &updatedDeployment); err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	envFrom := updatedDeployment.Spec.Template.Spec.Containers[0].EnvFrom
+	if len(envFrom) != 1 || envFrom[0].SecretRef == nil || envFrom[0].SecretRef.Name != "orders-api-binding" {
+		t.Fatalf("expected external-secret target wiring, got %#v", envFrom)
+	}
+	var externalSecret unstructured.Unstructured
+	externalSecret.SetGroupVersionKind(schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret"})
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-api-binding", Namespace: "acme-prod-api"}, &externalSecret); err != nil {
+		t.Fatalf("expected ExternalSecret projection: %v", err)
+	}
+}
+
 func inventoryTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()

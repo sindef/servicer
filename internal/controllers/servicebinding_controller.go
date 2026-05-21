@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -126,12 +128,24 @@ func (r *ServiceBindingReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		binding.Status.Health = platformv1alpha1.HealthStatus{Summary: fmt.Sprintf("Credentials projected into namespace %s for project %s.", targetNamespace, project.Name)}
 	}
+	integrated, err := r.integrateBindingTarget(ctx, &binding, targetSecretName, targetNamespace)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			binding.Status.Phase = "PendingTarget"
+			setStatusCondition(&binding.Status.Conditions, binding.Generation, "Ready", metav1.ConditionFalse, "TargetPending", "Binding target workload is not available yet.")
+			return r.updateStatusIfChanged(ctx, &binding, originalStatus)
+		}
+		return ctrl.Result{}, err
+	}
 
 	binding.Status.Phase = "Ready"
 	binding.Status.CredentialRefs = []platformv1alpha1.NamespacedObjectReference{{
 		Name:      targetSecretName,
 		Namespace: targetNamespace,
 	}}
+	if integrated {
+		binding.Status.Health = platformv1alpha1.HealthStatus{Summary: fmt.Sprintf("Credentials projected and wired into target %s %s in namespace %s for project %s.", binding.Spec.TargetRef.Kind, binding.Spec.TargetRef.Name, targetNamespace, project.Name)}
+	}
 	setStatusCondition(&binding.Status.Conditions, binding.Generation, "Accepted", metav1.ConditionTrue, "SourceAccepted", "Binding source and target are accepted.")
 	setStatusCondition(&binding.Status.Conditions, binding.Generation, "Ready", metav1.ConditionTrue, "CredentialsProjected", "Binding credentials have been projected.")
 	setStatusCondition(&binding.Status.Conditions, binding.Generation, "Failed", metav1.ConditionFalse, "CredentialsProjected", "Binding has not failed.")
@@ -169,6 +183,105 @@ func cloneSecretData(source map[string][]byte) map[string][]byte {
 		cloned[key] = append([]byte(nil), value...)
 	}
 	return cloned
+}
+
+func (r *ServiceBindingReconciler) integrateBindingTarget(ctx context.Context, binding *platformv1alpha1.ServiceBinding, targetSecretName, targetNamespace string) (bool, error) {
+	targetKind := binding.Spec.TargetRef.Kind
+	targetName := binding.Spec.TargetRef.Name
+	if targetKind == "" || targetKind == "Namespace" {
+		return false, nil
+	}
+	if targetName == "" {
+		return false, fmt.Errorf("target name is required for kind %s", targetKind)
+	}
+	switch targetKind {
+	case "Deployment":
+		var deployment appsv1.Deployment
+		if err := r.Get(ctx, types.NamespacedName{Name: targetName, Namespace: targetNamespace}, &deployment); err != nil {
+			return false, err
+		}
+		integrateBindingIntoPodTemplate(&deployment.Spec.Template, binding.Name, targetSecretName)
+		return true, r.Update(ctx, &deployment)
+	case "StatefulSet":
+		var statefulSet appsv1.StatefulSet
+		if err := r.Get(ctx, types.NamespacedName{Name: targetName, Namespace: targetNamespace}, &statefulSet); err != nil {
+			return false, err
+		}
+		integrateBindingIntoPodTemplate(&statefulSet.Spec.Template, binding.Name, targetSecretName)
+		return true, r.Update(ctx, &statefulSet)
+	case "DaemonSet":
+		var daemonSet appsv1.DaemonSet
+		if err := r.Get(ctx, types.NamespacedName{Name: targetName, Namespace: targetNamespace}, &daemonSet); err != nil {
+			return false, err
+		}
+		integrateBindingIntoPodTemplate(&daemonSet.Spec.Template, binding.Name, targetSecretName)
+		return true, r.Update(ctx, &daemonSet)
+	case "Job":
+		var job batchv1.Job
+		if err := r.Get(ctx, types.NamespacedName{Name: targetName, Namespace: targetNamespace}, &job); err != nil {
+			return false, err
+		}
+		integrateBindingIntoPodTemplate(&job.Spec.Template, binding.Name, targetSecretName)
+		return true, r.Update(ctx, &job)
+	case "CronJob":
+		var cronJob batchv1.CronJob
+		if err := r.Get(ctx, types.NamespacedName{Name: targetName, Namespace: targetNamespace}, &cronJob); err != nil {
+			return false, err
+		}
+		integrateBindingIntoPodTemplate(&cronJob.Spec.JobTemplate.Spec.Template, binding.Name, targetSecretName)
+		return true, r.Update(ctx, &cronJob)
+	case "Pod":
+		var pod corev1.Pod
+		if err := r.Get(ctx, types.NamespacedName{Name: targetName, Namespace: targetNamespace}, &pod); err != nil {
+			return false, err
+		}
+		integrateBindingIntoPodObject(&pod.ObjectMeta, &pod.Spec, binding.Name, targetSecretName)
+		return true, r.Update(ctx, &pod)
+	default:
+		return false, nil
+	}
+}
+
+func integrateBindingIntoPodTemplate(template *corev1.PodTemplateSpec, bindingName, secretName string) {
+	if template == nil {
+		return
+	}
+	integrateBindingIntoPodObject(&template.ObjectMeta, &template.Spec, bindingName, secretName)
+}
+
+func integrateBindingIntoPodObject(meta *metav1.ObjectMeta, spec *corev1.PodSpec, bindingName, secretName string) {
+	if meta != nil {
+		if meta.Annotations == nil {
+			meta.Annotations = map[string]string{}
+		}
+		meta.Annotations["servicer.io/binding-name"] = bindingName
+		meta.Annotations["servicer.io/binding-secret"] = secretName
+	}
+	if spec == nil {
+		return
+	}
+	for i := range spec.InitContainers {
+		ensureContainerSecretRef(&spec.InitContainers[i], secretName)
+	}
+	for i := range spec.Containers {
+		ensureContainerSecretRef(&spec.Containers[i], secretName)
+	}
+}
+
+func ensureContainerSecretRef(container *corev1.Container, secretName string) {
+	if container == nil {
+		return
+	}
+	for _, envFrom := range container.EnvFrom {
+		if envFrom.SecretRef != nil && envFrom.SecretRef.Name == secretName {
+			return
+		}
+	}
+	container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{
+		SecretRef: &corev1.SecretEnvSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+		},
+	})
 }
 
 func (r *ServiceBindingReconciler) ensureExternalSecretBindingProjection(ctx context.Context, binding *platformv1alpha1.ServiceBinding, sourceRef platformv1alpha1.NamespacedObjectReference, targetSecretName, targetNamespace string) error {
