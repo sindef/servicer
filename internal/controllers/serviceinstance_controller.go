@@ -181,6 +181,28 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		clusterTarget = &target
 	}
+	if requiresExternalSecretsOperator(instance.Spec.SecretPolicy) {
+		if clusterTarget == nil {
+			resolvedTarget, err := resolveClusterTargetForProject(ctx, r.Client, &project, clusterName)
+			if err != nil {
+				return r.handleDependencyError(ctx, &instance, originalStatus, "ClusterTargetUnavailable", fmt.Sprintf("Resolved ClusterTarget %q is not available.", clusterName), err)
+			}
+			clusterTarget = resolvedTarget
+		}
+		if ready, message := externalSecretsPackageReady(clusterTarget); !ready {
+			instance.Status.Phase = "PendingDependencies"
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "ExternalSecretsOperatorPending", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ExternalSecretsOperatorPending", "Service instance is waiting for External Secrets Operator packaging to become ready.")
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "ExternalSecretsOperatorPending", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "ExternalSecretsOperatorPending", "Service instance is blocked on an operator dependency, not failed.")
+			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+				if err := r.Status().Update(ctx, &instance); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+	}
 
 	adapter, ok := r.Adapters.Get(adapters.ServiceClass(instance.Spec.ServiceClassRef.Name))
 	if !ok {

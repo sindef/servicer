@@ -1,0 +1,19 @@
+apiVersion: platform.servicer.io/v1alpha1
+kind: OperatorPackage
+metadata:
+  name: external-secrets
+spec:
+  displayName: External Secrets Operator
+  description: >-
+    ESO synchronises secrets from external stores into Kubernetes and is
+    required for external-secret credential delivery modes.
+  version: "0.10.7"
+  targetNamespace: external-secrets
+  probes:
+    - crd: externalsecrets.external-secrets.io
+    - crd: secretstores.external-secrets.io
+  source:
+    manifestURL: https://github.com/external-secrets/external-secrets/releases/download/v0.10.7/install.yaml
+    repoURL: https://github.com/external-secrets/external-secrets
+    path: deploy/charts/external-secrets
+    targetRevision: v0.10.7

@@ -583,6 +583,133 @@ func TestServiceInstanceReconcilerRejectsTenantPolicyViolation(t *testing.T) {
 	}
 }
 
+func TestServiceInstanceReconcilerWaitsForExternalSecretsOperatorPackage(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	tenant := &platformv1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: platformv1alpha1.TenantSpec{
+			DisplayName:           "Acme Corp",
+			Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
+			QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "standard-tenant"},
+			AllowedServiceClasses: []string{"postgresql"},
+			Lifecycle:             platformv1alpha1.TenantLifecycleSpec{Phase: platformv1alpha1.TenantLifecyclePhaseActive},
+		},
+	}
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod", Generation: 1},
+		Spec: platformv1alpha1.ProjectSpec{
+			TenantRef:         platformv1alpha1.LocalObjectReference{Name: "acme"},
+			DisplayName:       "Acme Production",
+			Environment:       platformv1alpha1.EnvironmentProduction,
+			TargetSelector:    platformv1alpha1.TargetSelectorSpec{ClusterRef: &platformv1alpha1.LocalObjectReference{Name: "local-dev"}},
+			NamespaceStrategy: platformv1alpha1.NamespaceStrategySpec{Mode: platformv1alpha1.NamespaceStrategyDedicated, Prefix: "acme-prod"},
+		},
+		Status: platformv1alpha1.ProjectStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Placement:          platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ProjectReady", Message: "ready"},
+			},
+		},
+	}
+	serviceClass := &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Generation: 1},
+		Spec: platformv1alpha1.ServiceClassSpec{
+			DisplayName:       "PostgreSQL",
+			Driver:            "cnpg",
+			SupportedVersions: []string{"16"},
+			Published:         true,
+		},
+		Status: platformv1alpha1.ServiceClassStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	servicePlan := &platformv1alpha1.ServicePlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "postgresql-ha", Generation: 1},
+		Spec: platformv1alpha1.ServicePlanSpec{
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "postgresql"},
+			DisplayName:     "Standard HA",
+			DefaultVersion:  "16",
+		},
+		Status: platformv1alpha1.ServicePlanStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			RequiredPackages: []string{externalSecretsOperatorPackageName},
+		},
+		Status: platformv1alpha1.ClusterTargetStatus{
+			Reachable: true,
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+			Packages: []platformv1alpha1.PackageStatus{{
+				Name:    externalSecretsOperatorPackageName,
+				Phase:   platformv1alpha1.PackagePhaseDeploying,
+				Message: "Manifests applied; waiting for operator to become ready.",
+			}},
+		},
+	}
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef:      platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "postgresql"},
+			ServicePlanRef:  platformv1alpha1.LocalObjectReference{Name: "postgresql-ha"},
+			Version:         "16",
+			Exposure:        platformv1alpha1.ExposureSpec{Mode: platformv1alpha1.ExposureModeClusterInternal},
+			SecretPolicy:    platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeExternalSecret},
+		},
+	}
+
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceInstance{}).
+			WithObjects(tenant, project, serviceClass, servicePlan, clusterTarget, instance).
+			Build(),
+		Scheme:   scheme,
+		Adapters: registry,
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
+	}
+
+	var updated platformv1alpha1.ServiceInstance
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "PendingDependencies" {
+		t.Fatalf("expected phase PendingDependencies, got %q", updated.Status.Phase)
+	}
+	if isStatusConditionTrue(updated.Status.Conditions, "Ready") {
+		t.Fatalf("expected Ready condition to remain false while package is deploying")
+	}
+	if !conditionMessagesContain(updated.Status.Conditions, "external-secrets") {
+		t.Fatalf("expected dependency message to mention external-secrets, got %#v", updated.Status.Conditions)
+	}
+}
+
 func TestPolicyReconcilerMarksUserDefinedPolicyReady(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	policy := &platformv1alpha1.Policy{
@@ -1781,6 +1908,97 @@ func TestServiceBindingReconcilerProjectsSourceCredentialsViaExternalSecret(t *t
 	}
 }
 
+func TestServiceBindingReconcilerWaitsForExternalSecretsOperatorPackage(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod"},
+		Status: platformv1alpha1.ProjectStatus{
+			Placement: platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+		},
+	}
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			RequiredPackages: []string{externalSecretsOperatorPackageName},
+		},
+		Status: platformv1alpha1.ClusterTargetStatus{
+			Packages: []platformv1alpha1.PackageStatus{{
+				Name:    externalSecretsOperatorPackageName,
+				Phase:   platformv1alpha1.PackagePhaseDeploying,
+				Message: "Manifests applied; waiting for operator to become ready.",
+			}},
+		},
+	}
+	source := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+		},
+		Status: platformv1alpha1.ServiceInstanceStatus{
+			Placement: platformv1alpha1.PlacementStatus{
+				ClusterName: "local-dev",
+				Namespace:   "acme-prod-orders-db",
+			},
+			CredentialRefs: []platformv1alpha1.NamespacedObjectReference{{
+				Name:      "orders-db-app-projected",
+				Namespace: "acme-prod-orders-db",
+			}},
+		},
+	}
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db-app-projected", Namespace: "acme-prod-orders-db"},
+		Data: map[string][]byte{
+			"username": []byte("orders"),
+			"password": []byte("supersecret"),
+		},
+	}
+	binding := &platformv1alpha1.ServiceBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-api"},
+		Spec: platformv1alpha1.ServiceBindingSpec{
+			ProjectRef: platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			SourceRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: platformv1alpha1.GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       "orders-db",
+			},
+			TargetRef: platformv1alpha1.TypedObjectReference{
+				APIVersion: "v1",
+				Kind:       "Namespace",
+				Name:       "orders-api",
+				Namespace:  "acme-prod-api",
+			},
+			SecretPolicy: platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeExternalSecret},
+		},
+	}
+
+	reconciler := &ServiceBindingReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceBinding{}).
+			WithObjects(project, clusterTarget, source, sourceSecret, binding).
+			Build(),
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-api"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updated platformv1alpha1.ServiceBinding
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-api"}, &updated); err != nil {
+		t.Fatalf("get binding: %v", err)
+	}
+	if updated.Status.Phase != "PendingDependencies" {
+		t.Fatalf("expected PendingDependencies phase, got %q", updated.Status.Phase)
+	}
+	if isStatusConditionTrue(updated.Status.Conditions, "Ready") {
+		t.Fatalf("expected Ready condition to remain false while package is deploying")
+	}
+	if !conditionMessagesContain(updated.Status.Conditions, "external-secrets") {
+		t.Fatalf("expected dependency message to mention external-secrets, got %#v", updated.Status.Conditions)
+	}
+}
+
 func TestServiceBindingReconcilerIntegratesDeploymentTarget(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	project := &platformv1alpha1.Project{
@@ -2084,4 +2302,13 @@ func statusConditionByType(conditions []metav1.Condition, conditionType string) 
 		}
 	}
 	return nil
+}
+
+func conditionMessagesContain(conditions []metav1.Condition, needle string) bool {
+	for _, condition := range conditions {
+		if strings.Contains(condition.Message, needle) {
+			return true
+		}
+	}
+	return false
 }

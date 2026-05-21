@@ -86,6 +86,22 @@ func (r *ServiceBindingReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if requiresExternalSecretsOperator(binding.Spec.SecretPolicy) {
+		clusterTarget, err := resolveClusterTargetForProject(ctx, r.Client, project, source.Status.Placement.ClusterName)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				clusterTarget = nil
+			} else {
+				return ctrl.Result{}, err
+			}
+		}
+		if ready, message := externalSecretsPackageReady(clusterTarget); !ready {
+			binding.Status.Phase = "PendingDependencies"
+			setStatusCondition(&binding.Status.Conditions, binding.Generation, "Ready", metav1.ConditionFalse, "ExternalSecretsOperatorPending", message)
+			setStatusCondition(&binding.Status.Conditions, binding.Generation, "Failed", metav1.ConditionFalse, "ExternalSecretsOperatorPending", "Binding is waiting on an operator dependency, not failed.")
+			return r.updateStatusIfChanged(ctx, &binding, originalStatus)
+		}
+	}
 	targetSecretName := fmt.Sprintf("%s-binding", binding.Name)
 
 	switch binding.Spec.SecretPolicy.DeliveryMode {
