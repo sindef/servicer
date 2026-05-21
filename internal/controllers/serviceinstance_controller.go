@@ -489,6 +489,28 @@ func (r *ServiceInstanceReconciler) handleDeletion(ctx context.Context, instance
 		m = materializer.New("")
 	}
 
+	runtimeClient := r.Client
+	if instance.Spec.ProjectRef.Name != "" {
+		var project platformv1alpha1.Project
+		if err := r.Get(ctx, types.NamespacedName{Name: instance.Spec.ProjectRef.Name}, &project); err == nil {
+			clusterName := resolvedClusterName(&project)
+			if clusterName != "" {
+				clusterTarget, err := resolveClusterTargetForProject(ctx, r.Client, &project, clusterName)
+				if err == nil {
+					targetClient, targetErr := r.getTargetClient(ctx, clusterTarget)
+					if targetErr != nil {
+						return ctrl.Result{}, targetErr
+					}
+					if targetClient != nil {
+						runtimeClient = targetClient
+					}
+				}
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Remove materialized delivery artifacts so ArgoCD stops syncing this instance.
 	if instance.Status.Artifact.Path != "" {
 		if err := m.Purge(instance.Status.Artifact.Path); err != nil {
@@ -499,8 +521,8 @@ func (r *ServiceInstanceReconciler) handleDeletion(ctx context.Context, instance
 	// Delete the namespace directly for immediate cleanup.
 	if ns := instance.Status.Placement.Namespace; ns != "" {
 		var namespace corev1.Namespace
-		if err := r.Get(ctx, types.NamespacedName{Name: ns}, &namespace); err == nil {
-			if err := r.Delete(ctx, &namespace); err != nil && !apierrors.IsNotFound(err) {
+		if err := runtimeClient.Get(ctx, types.NamespacedName{Name: ns}, &namespace); err == nil {
+			if err := runtimeClient.Delete(ctx, &namespace); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, fmt.Errorf("delete namespace %q: %w", ns, err)
 			}
 		} else if !apierrors.IsNotFound(err) {
@@ -517,7 +539,7 @@ func (r *ServiceInstanceReconciler) handleDeletion(ctx context.Context, instance
 			obj.SetGroupVersionKind(schema.GroupVersionKind{Group: gv.Group, Version: gv.Version, Kind: ref.Kind})
 			obj.SetName(ref.Name)
 			obj.SetNamespace(ref.Namespace)
-			if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+			if err := runtimeClient.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) && !apimeta.IsNoMatchError(err) {
 				return ctrl.Result{}, fmt.Errorf("delete primary resource %s/%s %q: %w", ref.APIVersion, ref.Kind, ref.Name, err)
 			}
 		}
