@@ -37,9 +37,9 @@ Commit: `260deb3`
 **Plan 002** — `VirtualMachineClaim` now has an API type, generated CRD, webhook coverage, BFF list endpoint, and controller path that creates a backing `virtual-machine` `ServiceInstance`, maps image and power-state intent into KubeVirt parameters, and mirrors runtime/artifact/sync/health status back to the claim.
 Commit: `23298fb`
 
-### [~] ServiceBinding CRD
-**Plans 002, 004** — `ServiceBinding` now has an API type, generated CRD, controller, and BFF list endpoint. The controller can project source `ServiceInstance` credentials into a target namespace either as a managed Secret, via External Secrets Operator resources using the Kubernetes provider, or via Vault-backed ESO `SecretStore`/`ExternalSecret` delivery. The remaining open area is richer target integration beyond secret projection itself.  
-Commit: `4059a83`
+### [x] ServiceBinding CRD
+**Plans 002, 004** — `ServiceBinding` now has an API type, generated CRD, controller, and BFF list endpoint. The controller can project source `ServiceInstance` credentials into a target namespace either as a managed Secret, via External Secrets Operator resources using the Kubernetes provider, or via Vault-backed ESO `SecretStore`/`ExternalSecret` delivery, and can now wire those projected credentials directly into supported target workloads (`Deployment`, `StatefulSet`, `DaemonSet`, `Job`, `CronJob`, and `Pod`) by attaching the binding Secret as container `envFrom` input.  
+Commit: `4059a83`, `cb42b40`
 
 ### [x] Admission webhooks
 **Plan 002** — All current Servicer CRDs now have admission webhook coverage, including validating/defaulting handlers for `ActionRequest`, `ClusterTarget`, `OperatorPackage`, `Policy`, `Project`, `ServiceClass`, `ServiceInstance`, `ServicePlan`, `ServiceBinding`, `Tenant`, `NamespaceClaim`, and `VirtualMachineClaim`. Turnkey cluster install is also wired now via deployed webhook configurations, dedicated webhook Service, manager webhook TLS mount, and bootstrap Job logic that generates serving certificates and patches webhook `caBundle` values in-cluster.  
