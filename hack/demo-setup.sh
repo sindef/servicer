@@ -93,18 +93,36 @@ kubectl wait --for=condition=Established crd --all --timeout=120s
 # ── App manifests ─────────────────────────────────────────────────────────────
 echo "Applying deploy manifests..."
 kubectl apply -k config/deploy/
+
+# Restart deployments to pick up any image or config changes.
 kubectl rollout restart deployment/bff deployment/manager deployment/web -n servicer-system 2>/dev/null || true
 kubectl rollout status deployment/bff deployment/manager deployment/web -n servicer-system --timeout=120s 2>/dev/null || true
 
 # ── Service catalog + tenancy samples ─────────────────────────────────────────
+# The manager webhook needs a moment to become ready after the pods reach
+# Running state.  Retry the apply until it succeeds.
+# NOTE: We capture kubectl's exit code directly (not via a pipe) so that
+# set -o pipefail does not interfere with the retry logic.
 echo "Applying samples (catalog, tenancy)..."
-kubectl apply -k config/samples/
+for i in $(seq 1 12); do
+  if kubectl apply -k config/samples/ >/tmp/samples-apply.log 2>&1; then
+    cat /tmp/samples-apply.log
+    break
+  fi
+  if ! grep -q 'webhook\|connection refused' /tmp/samples-apply.log; then
+    cat /tmp/samples-apply.log
+    echo "ERROR: samples apply failed for a non-webhook reason, aborting."
+    exit 1
+  fi
+  echo "  Webhook not ready yet, retrying in 5s... ($i/12)"
+  sleep 5
+done
 
 # ── Target kubeconfig (pod-reachable) ─────────────────────────────────────────
-# The syncer pod runs inside the app cluster and needs to reach the target
-# cluster's API server. Kind nodes share the 'kind' Docker bridge network, so
-# the target control-plane container IP is routable from pods inside the app
-# cluster. The node IP is always included in Kind's generated TLS cert SANs.
+# Patched LAST because config/samples/ contains a placeholder empty kubeconfig
+# that would overwrite an earlier patch.  A targeted manager restart ensures the
+# syncer's subPath mount picks up the live kubeconfig.
+# (subPath mounts are NOT updated dynamically when the Secret changes.)
 echo "Patching local-dev-kubeconfig with target cluster address..."
 
 TARGET_NODE="${TARGET_CLUSTER}-control-plane"
@@ -127,6 +145,10 @@ kubectl create secret generic local-dev-kubeconfig \
   --namespace servicer-system \
   --from-literal=kubeconfig="${TARGET_KUBECONFIG}" \
   --dry-run=client -o yaml | kubectl apply -f -
+
+# Restart manager only — it owns the syncer sidecar that uses the kubeconfig.
+kubectl rollout restart deployment/manager -n servicer-system
+kubectl rollout status deployment/manager -n servicer-system --timeout=90s
 
 echo ""
 echo "Setup complete."

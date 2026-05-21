@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	externalSecretsAPIVersion = "external-secrets.io/v1"
+	externalSecretsAPIVersion = "external-secrets.io/v1beta1"
 )
 
 func projectedCredentialRefs(instance *platformv1alpha1.ServiceInstance, sourceRefs []platformv1alpha1.NamespacedObjectReference) []platformv1alpha1.NamespacedObjectReference {
