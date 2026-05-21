@@ -13,6 +13,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -41,6 +42,10 @@ func main() {
 	var argoCDNamespace string
 	var argoCDProject string
 	var enableWebhooks bool
+	var webhookBootstrapOnly bool
+	var systemNamespace string
+	var webhookServiceName string
+	var webhookCertSecretName string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -57,12 +62,31 @@ func main() {
 	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd", "Namespace where Argo CD Application resources are created.")
 	flag.StringVar(&argoCDProject, "argocd-project", "default", "Argo CD project used for Servicer-managed Applications.")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", false, "Enable admission webhooks for Servicer APIs.")
+	flag.BoolVar(&webhookBootstrapOnly, "webhook-bootstrap-only", false, "Generate webhook serving certificates and patch webhook configurations, then exit.")
+	flag.StringVar(&systemNamespace, "system-namespace", "servicer-system", "Namespace where Servicer control-plane components run.")
+	flag.StringVar(&webhookServiceName, "webhook-service-name", "servicer-webhook-service", "Service name used by admission webhook configurations.")
+	flag.StringVar(&webhookCertSecretName, "webhook-cert-secret-name", "servicer-webhook-server-cert", "Secret name that stores webhook serving certificates.")
 
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
+
+	if webhookBootstrapOnly {
+		restConfig := ctrl.GetConfigOrDie()
+		kubeClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+		if err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to create bootstrap client")
+			os.Exit(1)
+		}
+		if err := bootstrapWebhookPKI(ctrl.SetupSignalHandler(), kubeClient, systemNamespace, webhookServiceName, webhookCertSecretName); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to bootstrap webhook certificates")
+			os.Exit(1)
+		}
+		ctrl.Log.WithName("setup").Info("webhook certificates bootstrapped", "namespace", systemNamespace, "service", webhookServiceName, "secret", webhookCertSecretName)
+		return
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
@@ -139,8 +163,40 @@ func main() {
 		os.Exit(1)
 	}
 	if enableWebhooks {
+		if err := (&platformv1alpha1.ActionRequest{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register action request webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.ClusterTarget{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register cluster target webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.OperatorPackage{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register operator package webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.Policy{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register policy webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.Project{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register project webhook")
+			os.Exit(1)
+		}
 		if err := (&platformv1alpha1.ServiceInstance{}).SetupWebhookWithManager(mgr); err != nil {
 			ctrl.Log.WithName("setup").Error(err, "unable to register service instance webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.ServiceClass{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register service class webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.ServicePlan{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register service plan webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.Tenant{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register tenant webhook")
 			os.Exit(1)
 		}
 		if err := (&platformv1alpha1.NamespaceClaim{}).SetupWebhookWithManager(mgr); err != nil {

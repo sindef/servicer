@@ -4,6 +4,9 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - rbac.yaml
+  - webhook-service.yaml
+  - webhook-manifests.yaml
+  - webhook-bootstrap-job.yaml
   - manager.yaml
   - bff.yaml
   - web.yaml

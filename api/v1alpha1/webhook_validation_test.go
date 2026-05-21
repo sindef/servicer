@@ -118,3 +118,103 @@ func TestServiceBindingRejectsVaultProviderWithoutConfig(t *testing.T) {
 		t.Fatal("expected validation error for missing vault config")
 	}
 }
+
+func TestTenantDefaultsLifecycleAndRequiresOwner(t *testing.T) {
+	tenant := &Tenant{}
+	if err := tenant.Default(context.Background(), tenant); err != nil {
+		t.Fatalf("default failed: %v", err)
+	}
+	if tenant.Spec.Lifecycle.Phase != defaultLifecyclePhase {
+		t.Fatalf("expected default lifecycle %q, got %q", defaultLifecyclePhase, tenant.Spec.Lifecycle.Phase)
+	}
+
+	tenant = &Tenant{
+		Spec: TenantSpec{
+			DisplayName:           "Demo",
+			QuotaProfileRef:       LocalObjectReference{Name: "standard"},
+			AllowedServiceClasses: []string{"postgresql"},
+			Lifecycle:             TenantLifecycleSpec{Phase: TenantLifecyclePhaseActive},
+		},
+	}
+	if _, err := tenant.ValidateCreate(context.Background(), tenant); err == nil {
+		t.Fatal("expected validation error for missing owner")
+	}
+}
+
+func TestProjectDefaultsNamespaceStrategyPrefix(t *testing.T) {
+	project := &Project{}
+	project.Name = "demo"
+	if err := project.Default(context.Background(), project); err != nil {
+		t.Fatalf("default failed: %v", err)
+	}
+	if project.Spec.NamespaceStrategy.Mode != defaultNamespaceMode {
+		t.Fatalf("expected default namespace mode %q, got %q", defaultNamespaceMode, project.Spec.NamespaceStrategy.Mode)
+	}
+	if project.Spec.NamespaceStrategy.Prefix != "demo" {
+		t.Fatalf("expected default namespace prefix demo, got %q", project.Spec.NamespaceStrategy.Prefix)
+	}
+}
+
+func TestOperatorPackageDefaultsAndValidatesSource(t *testing.T) {
+	pkg := &OperatorPackage{}
+	if err := pkg.Default(context.Background(), pkg); err != nil {
+		t.Fatalf("default failed: %v", err)
+	}
+	if pkg.Spec.TargetNamespace != defaultOperatorNamespace {
+		t.Fatalf("expected default target namespace %q, got %q", defaultOperatorNamespace, pkg.Spec.TargetNamespace)
+	}
+	if pkg.Spec.Source.TargetRevision != defaultOperatorRevision {
+		t.Fatalf("expected default target revision %q, got %q", defaultOperatorRevision, pkg.Spec.Source.TargetRevision)
+	}
+
+	pkg = &OperatorPackage{
+		Spec: OperatorPackageSpec{
+			DisplayName: "CNPG",
+			Source:      OperatorPackageSource{RepoURL: "", Path: ""},
+		},
+	}
+	if _, err := pkg.ValidateCreate(context.Background(), pkg); err == nil {
+		t.Fatal("expected validation error for missing operator source")
+	}
+}
+
+func TestActionRequestDefaultsAndRejectsMissingRequester(t *testing.T) {
+	request := &ActionRequest{}
+	if err := request.Default(context.Background(), request); err != nil {
+		t.Fatalf("default failed: %v", err)
+	}
+	if request.Spec.Approval.Mode != defaultApprovalMode {
+		t.Fatalf("expected default approval mode %q, got %q", defaultApprovalMode, request.Spec.Approval.Mode)
+	}
+	if request.Spec.RequestedBy.Source != defaultRequestSource {
+		t.Fatalf("expected default request source %q, got %q", defaultRequestSource, request.Spec.RequestedBy.Source)
+	}
+
+	request = &ActionRequest{
+		Spec: ActionRequestSpec{
+			TargetRef:      TypedObjectReference{APIVersion: "v1", Kind: "Pod", Name: "demo"},
+			Action:         "restart",
+			IdempotencyKey: "abc",
+			Approval:       ApprovalSpec{Mode: ApprovalModeAuto},
+		},
+	}
+	if _, err := request.ValidateCreate(context.Background(), request); err == nil {
+		t.Fatal("expected validation error for missing requestedBy.subject")
+	}
+}
+
+func TestPolicyWebhookValidatesRuleSpec(t *testing.T) {
+	policy := &Policy{
+		Spec: PolicySpec{
+			DisplayName: "Demo",
+			TargetKinds: []PolicyTargetKind{PolicyTargetServiceInstance},
+			Rules: []PolicyRule{{
+				Name:     "bad",
+				Operator: PolicyOperatorEquals,
+			}},
+		},
+	}
+	if _, err := policy.ValidateCreate(context.Background(), policy); err == nil {
+		t.Fatal("expected validation error for incomplete rule")
+	}
+}

@@ -32,6 +32,10 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Admission webhook bootstrap and patching
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

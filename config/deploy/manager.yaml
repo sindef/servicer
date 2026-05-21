@@ -25,9 +25,16 @@ spec:
             - --delivery-root=/delivery
             - --metrics-bind-address=:0
             - --health-probe-bind-address=:8081
+            - --enable-webhooks=true
+          ports:
+            - containerPort: 9443
+              name: webhook-server
           volumeMounts:
             - name: delivery
               mountPath: /delivery
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
 
         - name: syncer
           image: servicer/syncer:demo
@@ -54,3 +61,6 @@ spec:
         - name: target-kubeconfig
           secret:
             secretName: local-dev-kubeconfig
+        - name: webhook-certs
+          secret:
+            secretName: servicer-webhook-server-cert
