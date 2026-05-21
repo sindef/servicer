@@ -61,9 +61,9 @@ Commit: `85f267b`
 
 ## Delivery and secrets
 
-### [~] Vault / external secret projection
-**Plan 003** — `ServiceInstance.Spec.SecretPolicy.DeliveryMode=external-secret` now renders External Secrets Operator artifacts into the delivery tree for both Kubernetes-provider and Vault-provider delivery modes, and published credential refs point at projected target secrets rather than raw source secrets. `ServiceBinding` now also supports Vault-backed external-secret delivery into its target namespace. This remains partial only because turnkey ESO/operator packaging is tracked separately.  
-Commit: `4059a83`
+### [x] Vault / external secret projection
+**Plans 003, 004** — `ServiceInstance.Spec.SecretPolicy.DeliveryMode=external-secret` renders External Secrets Operator artifacts into the delivery tree for both Kubernetes-provider and Vault-provider delivery modes, published credential refs point at projected target secrets rather than raw source secrets, and `ServiceBinding` supports the same projection model in target namespaces. Turnkey packaging is now part of the platform install as well: deploy manifests seed the `external-secrets` `OperatorPackage`, manager RBAC includes the ESO and workload-patching permissions needed for binding projection, and reconciler dependency checks can hold external-secret consumers in `PendingDependencies` while a managed ESO package is still deploying on a `ClusterTarget`.  
+Commit: `4059a83`, `c8e4ea1`
 
 ### [x] Sync and health status from Argo CD
 **Plan 003** — Runtime observation is part of the main reconcile path, Argo CD `Application` sync/health is ingested into `ServiceInstance.Status.Sync` when a managed `Application` exists, and multi-cluster deliveries now aggregate sync status from `ApplicationSet`-generated child applications. Remote Git publication is also automated as part of the delivery handoff.  
