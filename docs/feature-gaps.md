@@ -41,9 +41,9 @@ Commit: `23298fb`
 **Plans 002, 004** — `ServiceBinding` now has an API type, generated CRD, controller, and BFF list endpoint. The controller can project source `ServiceInstance` credentials into a target namespace either as a managed Secret, via External Secrets Operator resources using the Kubernetes provider, or via Vault-backed ESO `SecretStore`/`ExternalSecret` delivery. The remaining open area is richer target integration beyond secret projection itself.  
 Commit: `4059a83`
 
-### [~] Admission webhooks
-**Plan 002** — `ServiceInstance`, `NamespaceClaim`, `ServiceBinding`, and `VirtualMachineClaim` now have validating/defaulting webhook handlers, first-pass webhook manifests, and an explicit `--enable-webhooks` manager flag for safe rollout. Coverage is still partial: the remaining CRDs do not yet have admission handlers, and certificate/service packaging for turnkey cluster install is still open.  
-Commit: `73cdb41`
+### [x] Admission webhooks
+**Plan 002** — All current Servicer CRDs now have admission webhook coverage, including validating/defaulting handlers for `ActionRequest`, `ClusterTarget`, `OperatorPackage`, `Policy`, `Project`, `ServiceClass`, `ServiceInstance`, `ServicePlan`, `ServiceBinding`, `Tenant`, `NamespaceClaim`, and `VirtualMachineClaim`. Turnkey cluster install is also wired now via deployed webhook configurations, dedicated webhook Service, manager webhook TLS mount, and bootstrap Job logic that generates serving certificates and patches webhook `caBundle` values in-cluster.  
+Commit: `4f9093c`
 
 ---
 
