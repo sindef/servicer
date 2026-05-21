@@ -30,6 +30,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // ClusterTargetReconciler reconciles ClusterTarget resources.
@@ -88,7 +90,8 @@ func (r *ClusterTargetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Build a client for the target cluster.
-	targetClient, serverURL, err := buildTargetClient(connectionSecret.Data["kubeconfig"], r.Scheme)
+	kubeconfigBytes := clusterConnectionData(&connectionSecret)
+	targetClient, serverURL, err := buildTargetClient(kubeconfigBytes, r.Scheme)
 	if err != nil {
 		target.Status.Phase = "Failed"
 		target.Status.Reachable = false
@@ -117,12 +120,12 @@ func (r *ClusterTargetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Probe and reconcile required operator packages.
 	if len(effectivePackages) > 0 {
 		// Register the cluster with Argo CD so Applications can target it by name.
-		if err := r.ensureArgoCDClusterSecret(ctx, &target, connectionSecret.Data["kubeconfig"], serverURL); err != nil {
+		if err := r.ensureArgoCDClusterSecret(ctx, &target, kubeconfigBytes, serverURL); err != nil {
 			// Non-fatal: Argo CD may not be installed; log and continue.
 			ctrl.LoggerFrom(ctx).Info("ArgoCD cluster registration skipped", "target", target.Name, "reason", err.Error())
 		}
 
-		packageStatuses, err := r.reconcilePackages(ctx, &target, connectionSecret.Data["kubeconfig"], targetClient, effectivePackages)
+		packageStatuses, err := r.reconcilePackages(ctx, &target, kubeconfigBytes, targetClient, effectivePackages)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -619,7 +622,33 @@ func (r *ClusterTargetReconciler) argoCDProject() string {
 func (r *ClusterTargetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&platformv1alpha1.ClusterTarget{}).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.clusterTargetsForConnectionSecret),
+		).
 		Complete(r)
+}
+
+func (r *ClusterTargetReconciler) clusterTargetsForConnectionSecret(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	var targets platformv1alpha1.ClusterTargetList
+	if err := r.List(ctx, &targets); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(targets.Items))
+	for i := range targets.Items {
+		target := &targets.Items[i]
+		if target.Spec.ConnectionRef.Name != secret.Name || target.Spec.ConnectionRef.Namespace != secret.Namespace {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: target.Name}})
+	}
+	return requests
 }
 
 // buildTargetClient constructs a controller-runtime client and returns the server URL
@@ -661,14 +690,26 @@ func clusterCapabilityValue(capabilities map[string]string, keys ...string) stri
 }
 
 func hasClusterConnectionData(secret *corev1.Secret) bool {
+	return len(clusterConnectionData(secret)) > 0
+}
+
+func clusterConnectionData(secret *corev1.Secret) []byte {
 	if secret == nil {
-		return false
+		return nil
 	}
-	if len(secret.Data["kubeconfig"]) > 0 || len(secret.Data["value"]) > 0 {
-		return true
+	if len(secret.Data["kubeconfig"]) > 0 {
+		return secret.Data["kubeconfig"]
+	}
+	if len(secret.Data["value"]) > 0 {
+		return secret.Data["value"]
 	}
 	if secret.StringData != nil {
-		return secret.StringData["kubeconfig"] != "" || secret.StringData["value"] != ""
+		if secret.StringData["kubeconfig"] != "" {
+			return []byte(secret.StringData["kubeconfig"])
+		}
+		if secret.StringData["value"] != "" {
+			return []byte(secret.StringData["value"])
+		}
 	}
-	return false
+	return nil
 }

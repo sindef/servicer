@@ -90,6 +90,94 @@ users:
 	}
 }
 
+func TestClusterTargetReconcilerAcceptsValueKeyConnectionSecret(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			DisplayName:   "Local Development",
+			ConnectionRef: platformv1alpha1.NamespacedObjectReference{Name: "local-dev-kubeconfig", Namespace: "servicer-system"},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev-kubeconfig", Namespace: "servicer-system"},
+		Data: map[string][]byte{"value": []byte(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://local-dev.example.invalid
+  name: local-dev
+contexts:
+- context:
+    cluster: local-dev
+    user: local-dev
+  name: local-dev
+current-context: local-dev
+users:
+- name: local-dev
+  user:
+    token: demo-token
+`)},
+	}
+
+	reconciler := &ClusterTargetReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ClusterTarget{}).
+			WithObjects(clusterTarget, secret).
+			Build(),
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "local-dev"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updated platformv1alpha1.ClusterTarget
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "local-dev"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "Ready" {
+		t.Fatalf("expected phase Ready, got %q", updated.Status.Phase)
+	}
+	if !updated.Status.Reachable {
+		t.Fatalf("expected cluster target to be reachable")
+	}
+}
+
+func TestClusterTargetReconcilerMapsConnectionSecretToTarget(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			ConnectionRef: platformv1alpha1.NamespacedObjectReference{Name: "local-dev-kubeconfig", Namespace: "servicer-system"},
+		},
+	}
+	otherTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "other"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			ConnectionRef: platformv1alpha1.NamespacedObjectReference{Name: "other-kubeconfig", Namespace: "servicer-system"},
+		},
+	}
+	reconciler := &ClusterTargetReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(clusterTarget, otherTarget).
+			Build(),
+		Scheme: scheme,
+	}
+
+	requests := reconciler.clusterTargetsForConnectionSecret(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev-kubeconfig", Namespace: "servicer-system"},
+	})
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 reconcile request, got %#v", requests)
+	}
+	if requests[0].NamespacedName.Name != "local-dev" {
+		t.Fatalf("expected request for local-dev, got %#v", requests[0])
+	}
+}
+
 func TestEffectiveRequiredPackagesForClusterTargetIncludesPublishedServiceClasses(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	target := &platformv1alpha1.ClusterTarget{
