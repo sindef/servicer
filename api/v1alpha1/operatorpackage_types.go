@@ -2,12 +2,19 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// OperatorPackageSource describes where an operator's manifests live for ArgoCD delivery.
+// OperatorPackageSource describes where an operator's manifests live.
 type OperatorPackageSource struct {
+	// ManifestURL is a direct HTTP/HTTPS URL to a pre-built multi-document YAML
+	// manifest. Used for direct installation on target clusters when ArgoCD is
+	// not available.
+	// +optional
+	ManifestURL string `json:"manifestURL,omitempty"`
 	// RepoURL is the Git repository URL ArgoCD should use for this operator.
-	RepoURL string `json:"repoURL"`
+	// +optional
+	RepoURL string `json:"repoURL,omitempty"`
 	// Path is the directory within the repository containing the operator manifests or kustomize overlay.
-	Path string `json:"path"`
+	// +optional
+	Path string `json:"path,omitempty"`
 	// TargetRevision is the branch, tag, or commit SHA to track. Defaults to HEAD.
 	// +kubebuilder:default=HEAD
 	TargetRevision string `json:"targetRevision,omitempty"`

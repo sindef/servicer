@@ -2,10 +2,8 @@
 # These entries describe operators the platform can ensure are installed
 # on ClusterTargets that declare them as required.
 #
-# Source URLs point at kustomize overlays in this repo under
-# config/operators/<name>/. ArgoCD will reconcile them when a
-# ClusterTarget is onboarded and ArgoCD is available; the syncer
-# applies them directly otherwise.
+# manifestURL: direct single-file install manifest used when ArgoCD is absent.
+# source.repoURL/path: ArgoCD delivery path used when ArgoCD is present.
 ---
 apiVersion: platform.servicer.io/v1alpha1
 kind: OperatorPackage
@@ -16,14 +14,35 @@ spec:
   description: >-
     The CloudNativePG operator manages PostgreSQL clusters on Kubernetes.
     Required for the postgresql service class.
-  version: "1.24"
+  version: "1.24.0"
   targetNamespace: cnpg-system
   probes:
     - crd: clusters.postgresql.cnpg.io
   source:
+    manifestURL: https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.24.0/cnpg-1.24.0.yaml
     repoURL: https://github.com/cloudnative-pg/cloudnative-pg
     path: releases/cnpg-1.24.0.yaml
     targetRevision: release-1.24
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: OperatorPackage
+metadata:
+  name: external-secrets
+spec:
+  displayName: External Secrets Operator
+  description: >-
+    ESO synchronises secrets from external stores (Vault, AWS SM, etc.)
+    into Kubernetes. Required for cross-cluster credential projection.
+  version: "0.10.7"
+  targetNamespace: external-secrets
+  probes:
+    - crd: externalsecrets.external-secrets.io
+    - crd: secretstores.external-secrets.io
+  source:
+    manifestURL: https://github.com/external-secrets/external-secrets/releases/download/v0.10.7/install.yaml
+    repoURL: https://github.com/external-secrets/external-secrets
+    path: deploy/charts/external-secrets
+    targetRevision: v0.10.7
 ---
 apiVersion: platform.servicer.io/v1alpha1
 kind: OperatorPackage
@@ -42,22 +61,3 @@ spec:
     repoURL: https://github.com/yugabyte/yugabyte-operator
     path: config/default
     targetRevision: main
----
-apiVersion: platform.servicer.io/v1alpha1
-kind: OperatorPackage
-metadata:
-  name: external-secrets
-spec:
-  displayName: External Secrets Operator
-  description: >-
-    ESO synchronises secrets from external stores (Vault, AWS SM, etc.)
-    into Kubernetes. Required for cross-cluster credential projection.
-  version: "0.10"
-  targetNamespace: external-secrets
-  probes:
-    - crd: externalsecrets.external-secrets.io
-    - crd: secretstores.external-secrets.io
-  source:
-    repoURL: https://github.com/external-secrets/external-secrets
-    path: deploy/charts/external-secrets
-    targetRevision: v0.10.0

@@ -1,9 +1,13 @@
 package controllers
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -124,9 +129,11 @@ func (r *ClusterTargetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
-// reconcilePackages probes each required OperatorPackage on the target cluster and creates
-// Argo CD Applications for packages that are not yet installed.
+// reconcilePackages probes each required OperatorPackage on the target cluster,
+// installs any that are missing (directly via ManifestURL, or via ArgoCD), and
+// returns a status entry for each.
 func (r *ClusterTargetReconciler) reconcilePackages(ctx context.Context, target *platformv1alpha1.ClusterTarget, targetClient client.Client) ([]platformv1alpha1.PackageStatus, error) {
+	log := ctrl.LoggerFrom(ctx)
 	statuses := make([]platformv1alpha1.PackageStatus, 0, len(target.Spec.RequiredPackages))
 
 	for _, pkgName := range target.Spec.RequiredPackages {
@@ -165,23 +172,53 @@ func (r *ClusterTargetReconciler) reconcilePackages(ctx context.Context, target 
 			continue
 		}
 
-		// Not installed — ensure an Argo CD Application exists for this package.
+		// Not installed — try direct manifest install first.
+		if pkg.Spec.Source.ManifestURL != "" {
+			log.Info("Installing operator package directly", "package", pkgName, "url", pkg.Spec.Source.ManifestURL)
+			if installErr := r.installPackageDirect(ctx, targetClient, &pkg); installErr != nil {
+				log.Error(installErr, "Direct install failed", "package", pkgName)
+				statuses = append(statuses, platformv1alpha1.PackageStatus{
+					Name:          pkgName,
+					Phase:         platformv1alpha1.PackagePhaseError,
+					Message:       fmt.Sprintf("Direct install failed: %v", installErr),
+					LastProbeTime: &now,
+				})
+				continue
+			}
+			// Re-probe immediately — CRDs may already be established.
+			installed, _ = r.probePackage(ctx, targetClient, &pkg)
+			phase := platformv1alpha1.PackagePhaseDeploying
+			msg := "Manifests applied; waiting for operator to become ready."
+			if installed {
+				phase = platformv1alpha1.PackagePhaseInstalled
+				msg = "All CRD probes passed."
+			}
+			statuses = append(statuses, platformv1alpha1.PackageStatus{
+				Name:          pkgName,
+				Phase:         phase,
+				Message:       msg,
+				LastProbeTime: &now,
+			})
+			continue
+		}
+
+		// Fall back to ArgoCD Application.
 		appName, appErr := r.ensurePackageArgoApp(ctx, target, &pkg)
 		if appErr != nil {
 			statuses = append(statuses, platformv1alpha1.PackageStatus{
 				Name:          pkgName,
 				Phase:         platformv1alpha1.PackagePhaseMissing,
-				Message:       fmt.Sprintf("Not installed; Argo CD Application could not be created: %v", appErr),
+				Message:       fmt.Sprintf("Not installed; ArgoCD Application could not be created: %v", appErr),
 				LastProbeTime: &now,
 			})
 			continue
 		}
 
 		phase := platformv1alpha1.PackagePhaseMissing
-		msg := "Not installed; Argo CD is not available to deliver this package."
+		msg := "Not installed; no manifestURL configured and ArgoCD is not available."
 		if appName != "" {
 			phase = platformv1alpha1.PackagePhaseDeploying
-			msg = fmt.Sprintf("Argo CD Application %q created; waiting for CRD probes to pass.", appName)
+			msg = fmt.Sprintf("ArgoCD Application %q created; waiting for CRD probes to pass.", appName)
 		}
 		statuses = append(statuses, platformv1alpha1.PackageStatus{
 			Name:          pkgName,
@@ -192,6 +229,60 @@ func (r *ClusterTargetReconciler) reconcilePackages(ctx context.Context, target 
 		})
 	}
 	return statuses, nil
+}
+
+// installPackageDirect fetches the manifest from pkg.Spec.Source.ManifestURL and
+// applies every document to the target cluster using server-side apply.
+func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, targetClient client.Client, pkg *platformv1alpha1.OperatorPackage) error {
+	resp, err := http.Get(pkg.Spec.Source.ManifestURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("fetching manifest: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("manifest URL returned HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading manifest: %w", err)
+	}
+
+	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(body)))
+	var applyErr error
+	for {
+		docBytes, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("parsing manifest: %w", err)
+		}
+		docBytes = bytes.TrimSpace(docBytes)
+		if len(docBytes) == 0 {
+			continue
+		}
+		// Convert YAML → JSON so we can unmarshal into Unstructured.
+		jsonBytes, err := utilyaml.ToJSON(docBytes)
+		if err != nil || bytes.Equal(jsonBytes, []byte("null")) {
+			continue
+		}
+		obj := &unstructured.Unstructured{}
+		if err := json.Unmarshal(jsonBytes, obj); err != nil {
+			continue
+		}
+		if obj.GetKind() == "" || obj.GetAPIVersion() == "" {
+			continue
+		}
+		obj.SetManagedFields(nil)
+		if err := targetClient.Patch(ctx, obj, client.Apply,
+			client.FieldOwner("servicer-operator-installer"),
+			client.ForceOwnership,
+		); err != nil {
+			applyErr = fmt.Errorf("applying %s %s/%s: %w", obj.GetKind(), obj.GetNamespace(), obj.GetName(), err)
+		}
+	}
+	return applyErr
 }
 
 // probePackage returns true if all CRD probes in the package pass on the target cluster.

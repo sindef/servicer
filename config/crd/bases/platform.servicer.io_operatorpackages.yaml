@@ -62,8 +62,12 @@ spec:
                 minItems: 1
                 type: array
               source:
-                description: Source defines where the operator manifests live for ArgoCD delivery.
+                description: Source defines where the operator manifests live.
                 properties:
+                  manifestURL:
+                    description: ManifestURL is a direct HTTP/HTTPS URL to a pre-built multi-document
+                      YAML manifest. Used for direct installation when ArgoCD is not available.
+                    type: string
                   path:
                     description: Path is the directory within the repository containing the operator manifests or kustomize overlay.
                     type: string
@@ -74,9 +78,6 @@ spec:
                     default: HEAD
                     description: TargetRevision is the branch, tag, or commit SHA to track. Defaults to HEAD.
                     type: string
-                required:
-                - path
-                - repoURL
                 type: object
               targetNamespace:
                 default: operators
@@ -88,7 +89,6 @@ spec:
             required:
             - displayName
             - probes
-            - source
             type: object
           status:
             description: OperatorPackageStatus defines the observed state of an OperatorPackage.
