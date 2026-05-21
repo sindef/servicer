@@ -29,13 +29,24 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: OperatorPackage is a cluster-scoped catalog entry describing
-          an operator that the platform can ensure is installed on ClusterTargets
-          that require it.
+        description: |-
+          OperatorPackage is a cluster-scoped catalog entry describing an operator that
+          the platform can ensure is installed on ClusterTargets that require it.
         properties:
           apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
             type: string
           kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
           metadata:
             type: object
@@ -43,18 +54,25 @@ spec:
             description: OperatorPackageSpec defines the desired state of an OperatorPackage.
             properties:
               description:
-                description: Description provides a longer description of what this operator does.
+                description: Description provides a longer description of what this
+                  operator does.
                 type: string
               displayName:
-                description: DisplayName is the human-readable name for this operator package.
+                description: DisplayName is the human-readable name for this operator
+                  package.
                 type: string
               probes:
-                description: Probes lists CRD names whose presence indicates the operator is already installed.
+                description: |-
+                  Probes lists CRD names whose presence indicates the operator is already installed.
+                  All probes must pass for the operator to be considered installed.
                 items:
-                  description: OperatorProbe defines a CRD whose presence indicates the operator is installed.
+                  description: OperatorProbe defines a CRD whose presence indicates
+                    the operator is installed.
                   properties:
                     crd:
-                      description: 'CRD is the fully-qualified CustomResourceDefinition name to probe for. Example: "clusters.postgresql.cnpg.io"'
+                      description: |-
+                        CRD is the fully-qualified CustomResourceDefinition name to probe for.
+                        Example: "clusters.postgresql.cnpg.io"
                       type: string
                   required:
                   - crd
@@ -62,26 +80,49 @@ spec:
                 minItems: 1
                 type: array
               source:
-                description: Source defines where the operator manifests live.
+                description: Source defines where the operator manifests live for
+                  ArgoCD delivery.
                 properties:
+                  chartArchiveURL:
+                    description: |-
+                      ChartArchiveURL is a direct HTTP/HTTPS URL to a source archive that
+                      contains a Helm chart used for direct installation when ArgoCD is not
+                      available.
+                    type: string
+                  chartPath:
+                    description: ChartPath is the relative path to the Helm chart
+                      inside ChartArchiveURL.
+                    type: string
+                  helmValues:
+                    additionalProperties:
+                      type: string
+                    description: HelmValues are passed as --set key=value pairs when
+                      installing ChartArchiveURL.
+                    type: object
                   manifestURL:
-                    description: ManifestURL is a direct HTTP/HTTPS URL to a pre-built multi-document
-                      YAML manifest. Used for direct installation when ArgoCD is not available.
+                    description: |-
+                      ManifestURL is a direct HTTP/HTTPS URL to a pre-built multi-document YAML
+                      manifest. Used for direct installation on target clusters when ArgoCD is
+                      not available.
                     type: string
                   path:
-                    description: Path is the directory within the repository containing the operator manifests or kustomize overlay.
+                    description: Path is the directory within the repository containing
+                      the operator manifests or kustomize overlay.
                     type: string
                   repoURL:
-                    description: RepoURL is the Git repository URL ArgoCD should use for this operator.
+                    description: RepoURL is the Git repository URL ArgoCD should use
+                      for this operator.
                     type: string
                   targetRevision:
                     default: HEAD
-                    description: TargetRevision is the branch, tag, or commit SHA to track. Defaults to HEAD.
+                    description: TargetRevision is the branch, tag, or commit SHA
+                      to track. Defaults to HEAD.
                     type: string
                 type: object
               targetNamespace:
                 default: operators
-                description: TargetNamespace is the namespace the operator should be installed into on each cluster.
+                description: TargetNamespace is the namespace the operator should
+                  be installed into on each cluster.
                 type: string
               version:
                 description: Version is the operator package version label.
@@ -89,27 +130,59 @@ spec:
             required:
             - displayName
             - probes
+            - source
             type: object
           status:
             description: OperatorPackageStatus defines the observed state of an OperatorPackage.
             properties:
               conditions:
+                description: Conditions contains the current status conditions.
                 items:
-                  description: Condition contains details for one aspect of the current state of this API Resource.
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
                     lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
                       format: date-time
                       type: string
                     message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
                       type: string
                     observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
                       format: int64
+                      minimum: 0
                       type: integer
                     reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
                       type: string
                     status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
                       type: string
                     type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
                       type: string
                   required:
                   - lastTransitionTime
@@ -120,6 +193,7 @@ spec:
                   type: object
                 type: array
               observedGeneration:
+                description: ObservedGeneration is the most recently processed generation.
                 format: int64
                 type: integer
             type: object

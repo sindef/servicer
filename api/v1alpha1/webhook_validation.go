@@ -644,6 +644,12 @@ func validateOperatorPackageUpdate(previous, current *OperatorPackage) error {
 	if previous.Spec.Source.Path != current.Spec.Source.Path {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "source", "path"), current.Spec.Source.Path, "field is immutable"))
 	}
+	if previous.Spec.Source.ChartArchiveURL != current.Spec.Source.ChartArchiveURL {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "source", "chartArchiveURL"), current.Spec.Source.ChartArchiveURL, "field is immutable"))
+	}
+	if previous.Spec.Source.ChartPath != current.Spec.Source.ChartPath {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "source", "chartPath"), current.Spec.Source.ChartPath, "field is immutable"))
+	}
 	if len(allErrs) > 0 {
 		return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: operatorPackageKind}, current.Name, allErrs)
 	}
@@ -655,11 +661,23 @@ func validateOperatorPackageSpec(spec OperatorPackageSpec) field.ErrorList {
 	if strings.TrimSpace(spec.DisplayName) == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec", "displayName"), "displayName is required"))
 	}
-	if strings.TrimSpace(spec.Source.RepoURL) == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec", "source", "repoURL"), "repoURL is required"))
+	hasArgoSource := strings.TrimSpace(spec.Source.RepoURL) != "" || strings.TrimSpace(spec.Source.Path) != ""
+	hasChartSource := strings.TrimSpace(spec.Source.ChartArchiveURL) != "" || strings.TrimSpace(spec.Source.ChartPath) != "" || len(spec.Source.HelmValues) > 0
+	hasDirectSource := strings.TrimSpace(spec.Source.ManifestURL) != "" || hasChartSource
+	if !hasDirectSource && !hasArgoSource {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "source"), "one direct-install or Argo source is required"))
 	}
-	if strings.TrimSpace(spec.Source.Path) == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec", "source", "path"), "path is required"))
+	if strings.TrimSpace(spec.Source.RepoURL) == "" && strings.TrimSpace(spec.Source.Path) != "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "source", "repoURL"), "repoURL is required when path is set"))
+	}
+	if strings.TrimSpace(spec.Source.Path) == "" && strings.TrimSpace(spec.Source.RepoURL) != "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "source", "path"), "path is required when repoURL is set"))
+	}
+	if strings.TrimSpace(spec.Source.ChartArchiveURL) == "" && (strings.TrimSpace(spec.Source.ChartPath) != "" || len(spec.Source.HelmValues) > 0) {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "source", "chartArchiveURL"), "chartArchiveURL is required when chartPath or helmValues are set"))
+	}
+	if strings.TrimSpace(spec.Source.ChartArchiveURL) != "" && strings.TrimSpace(spec.Source.ChartPath) == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "source", "chartPath"), "chartPath is required when chartArchiveURL is set"))
 	}
 	if len(spec.Probes) == 0 {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec", "probes"), "at least one probe is required"))
@@ -771,6 +789,11 @@ func validateServiceClassSpec(spec ServiceClassSpec) field.ErrorList {
 	for i, version := range spec.SupportedVersions {
 		if strings.TrimSpace(version) == "" {
 			allErrs = append(allErrs, field.Required(field.NewPath("spec", "supportedVersions").Index(i), "supported version must not be empty"))
+		}
+	}
+	for i, requiredPackage := range spec.RequiredPackages {
+		if strings.TrimSpace(requiredPackage) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "requiredPackages").Index(i), "package name is required"))
 		}
 	}
 	return allErrs

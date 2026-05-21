@@ -9,6 +9,17 @@ type OperatorPackageSource struct {
 	// not available.
 	// +optional
 	ManifestURL string `json:"manifestURL,omitempty"`
+	// ChartArchiveURL is a direct HTTP/HTTPS URL to a source archive that
+	// contains a Helm chart used for direct installation when ArgoCD is not
+	// available.
+	// +optional
+	ChartArchiveURL string `json:"chartArchiveURL,omitempty"`
+	// ChartPath is the relative path to the Helm chart inside ChartArchiveURL.
+	// +optional
+	ChartPath string `json:"chartPath,omitempty"`
+	// HelmValues are passed as --set key=value pairs when installing ChartArchiveURL.
+	// +optional
+	HelmValues map[string]string `json:"helmValues,omitempty"`
 	// RepoURL is the Git repository URL ArgoCD should use for this operator.
 	// +optional
 	RepoURL string `json:"repoURL,omitempty"`

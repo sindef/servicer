@@ -39,7 +39,7 @@ spec:
     - crd: externalsecrets.external-secrets.io
     - crd: secretstores.external-secrets.io
   source:
-    manifestURL: https://github.com/external-secrets/external-secrets/releases/download/v0.10.7/install.yaml
+    manifestURL: https://github.com/external-secrets/external-secrets/releases/download/v0.10.7/external-secrets.yaml
     repoURL: https://github.com/external-secrets/external-secrets
     path: deploy/charts/external-secrets
     targetRevision: v0.10.7
@@ -53,11 +53,23 @@ spec:
   description: >-
     The YugabyteDB operator manages YBUniverse clusters on Kubernetes.
     Required for the yugabyte service class.
-  version: "2.21"
-  targetNamespace: yb-operator
+  version: "0.1.6"
+  targetNamespace: yugabyte-system
   probes:
     - crd: ybuniverses.operator.yugabyte.io
   source:
-    repoURL: https://github.com/yugabyte/yugabyte-operator
-    path: config/default
-    targetRevision: main
+    manifestURL: https://raw.githubusercontent.com/yugabyte/yugabyte-k8s-operator/v0.1.6/crd/concatenated_crd.yaml
+    chartArchiveURL: https://codeload.github.com/yugabyte/yugabyte-k8s-operator/tar.gz/refs/tags/v0.1.6
+    chartPath: chart
+    helmValues:
+      rbac.create: "true"
+      yugaware.kubernetesOperatorNamespace: yugabyte-system
+      yugaware.service.type: ClusterIP
+      yugaware.resources.requests.cpu: 500m
+      yugaware.resources.requests.memory: 1Gi
+      postgres.resources.requests.cpu: 250m
+      postgres.resources.requests.memory: 512Mi
+      yugaware.defaultUser.enabled: "true"
+      yugaware.defaultUser.username: servicer-demo
+      yugaware.defaultUser.email: servicer-demo@example.com
+      yugaware.defaultUser.password: ServicerDemo123!

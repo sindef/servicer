@@ -37,6 +37,8 @@ spec:
   displayName: PostgreSQL
   category: database
   driver: cnpg
+  requiredPackages:
+    - cnpg
   supportedVersions:
     - "16"
     - "15"
@@ -380,6 +382,8 @@ spec:
   displayName: YugabyteDB
   category: database
   driver: yb-operator
+  requiredPackages:
+    - yugabyte
   supportedVersions:
     - "2.20.1.3-b3"
     - "2.25.2.0-b359"

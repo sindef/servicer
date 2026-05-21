@@ -90,6 +90,47 @@ users:
 	}
 }
 
+func TestEffectiveRequiredPackagesForClusterTargetIncludesPublishedServiceClasses(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	target := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			RequiredPackages: []string{"external-secrets"},
+		},
+	}
+	published := &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "yugabyte"},
+		Spec: platformv1alpha1.ServiceClassSpec{
+			DisplayName:      "YugabyteDB",
+			Driver:           "yb-operator",
+			Published:        true,
+			RequiredPackages: []string{"yugabyte"},
+		},
+	}
+	draft := &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cassandra"},
+		Spec: platformv1alpha1.ServiceClassSpec{
+			DisplayName:      "Cassandra",
+			Driver:           "k8ssandra",
+			Published:        false,
+			RequiredPackages: []string{"k8ssandra"},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(target, published, draft).
+		Build()
+
+	packages, err := effectiveRequiredPackagesForClusterTarget(context.Background(), k8sClient, target)
+	if err != nil {
+		t.Fatalf("effectiveRequiredPackagesForClusterTarget returned error: %v", err)
+	}
+	if strings.Join(packages, ",") != "external-secrets,yugabyte" {
+		t.Fatalf("unexpected package set %#v", packages)
+	}
+}
+
 func TestServiceClassReconcilerPublishesImplementedPostgreSQLClass(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
@@ -430,6 +471,9 @@ func TestServiceInstanceReconcilerRejectsUnpublishedServicePlan(t *testing.T) {
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
 			},
+			Packages: []platformv1alpha1.PackageStatus{
+				{Name: externalSecretsOperatorPackageName, Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
+			},
 		},
 	}
 	instance := &platformv1alpha1.ServiceInstance{
@@ -546,6 +590,9 @@ func TestServiceInstanceReconcilerRejectsTenantPolicyViolation(t *testing.T) {
 			Reachable: true,
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+			Packages: []platformv1alpha1.PackageStatus{
+				{Name: externalSecretsOperatorPackageName, Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
 			},
 		},
 	}
@@ -710,6 +757,128 @@ func TestServiceInstanceReconcilerWaitsForExternalSecretsOperatorPackage(t *test
 	}
 }
 
+func TestServiceInstanceReconcilerWaitsForServiceClassOperatorPackage(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	registry, err := adapters.NewRegistry(adapters.NewYugabyteAdapter())
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	tenant := &platformv1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: platformv1alpha1.TenantSpec{
+			DisplayName:           "Acme Corp",
+			Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
+			QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "standard-tenant"},
+			AllowedServiceClasses: []string{"yugabyte"},
+			Lifecycle:             platformv1alpha1.TenantLifecycleSpec{Phase: platformv1alpha1.TenantLifecyclePhaseActive},
+		},
+	}
+	project := &platformv1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-prod", Generation: 1},
+		Spec: platformv1alpha1.ProjectSpec{
+			TenantRef:         platformv1alpha1.LocalObjectReference{Name: "acme"},
+			DisplayName:       "Acme Production",
+			Environment:       platformv1alpha1.EnvironmentProduction,
+			TargetSelector:    platformv1alpha1.TargetSelectorSpec{ClusterRef: &platformv1alpha1.LocalObjectReference{Name: "local-dev"}},
+			NamespaceStrategy: platformv1alpha1.NamespaceStrategySpec{Mode: platformv1alpha1.NamespaceStrategyDedicated, Prefix: "acme-prod"},
+		},
+		Status: platformv1alpha1.ProjectStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Placement:          platformv1alpha1.PlacementStatus{ClusterName: "local-dev"},
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ProjectReady", Message: "ready"},
+			},
+		},
+	}
+	serviceClass := &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "yugabyte", Generation: 1},
+		Spec: platformv1alpha1.ServiceClassSpec{
+			DisplayName:      "YugabyteDB",
+			Driver:           "yb-operator",
+			Published:        true,
+			RequiredPackages: []string{"yugabyte"},
+		},
+		Status: platformv1alpha1.ServiceClassStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	servicePlan := &platformv1alpha1.ServicePlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-dev", Generation: 1},
+		Spec: platformv1alpha1.ServicePlanSpec{
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "yugabyte"},
+			DisplayName:     "Development",
+			Topology:        "single-cluster",
+			DefaultVersion:  "2.20.1.3-b3",
+		},
+		Status: platformv1alpha1.ServicePlanStatus{
+			ObservedGeneration: 1,
+			Phase:              "Ready",
+			Published:          true,
+			Conditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 1, Reason: "ValidationSucceeded", Message: "accepted"},
+			},
+		},
+	}
+	clusterTarget := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Status: platformv1alpha1.ClusterTargetStatus{
+			Reachable: true,
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+			Packages: []platformv1alpha1.PackageStatus{{
+				Name:    "yugabyte",
+				Phase:   platformv1alpha1.PackagePhaseDeploying,
+				Message: "Manifests applied; waiting for operator to become ready.",
+			}},
+		},
+	}
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "ydb"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef:      platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "yugabyte"},
+			ServicePlanRef:  platformv1alpha1.LocalObjectReference{Name: "yugabyte-dev"},
+			Version:         "2.20.1.3-b3",
+			Exposure:        platformv1alpha1.ExposureSpec{Mode: platformv1alpha1.ExposureModeClusterInternal},
+			SecretPolicy:    platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeManual},
+		},
+	}
+
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceInstance{}).
+			WithObjects(tenant, project, serviceClass, servicePlan, clusterTarget, instance).
+			Build(),
+		Scheme:   scheme,
+		Adapters: registry,
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "ydb"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
+	}
+
+	var updated platformv1alpha1.ServiceInstance
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "ydb"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "PendingDependencies" {
+		t.Fatalf("expected phase PendingDependencies, got %q", updated.Status.Phase)
+	}
+	if !conditionMessagesContain(updated.Status.Conditions, "yugabyte") {
+		t.Fatalf("expected dependency message to mention yugabyte, got %#v", updated.Status.Conditions)
+	}
+}
+
 func TestPolicyReconcilerMarksUserDefinedPolicyReady(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	policy := &platformv1alpha1.Policy{
@@ -838,6 +1007,9 @@ func TestServiceInstanceReconcilerRejectsCustomPolicyViolation(t *testing.T) {
 			Reachable: true,
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+			Packages: []platformv1alpha1.PackageStatus{
+				{Name: externalSecretsOperatorPackageName, Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
 			},
 		},
 	}
@@ -1026,6 +1198,7 @@ func TestServiceInstanceReconcilerMaterializesCNPGArtifacts(t *testing.T) {
 		Spec: platformv1alpha1.ServiceClassSpec{
 			DisplayName:           "PostgreSQL",
 			Driver:                "cnpg",
+			RequiredPackages:      []string{"cnpg"},
 			SupportedVersions:     []string{"16"},
 			AllowsVersionOverride: true,
 			Published:             true,
@@ -1062,6 +1235,10 @@ func TestServiceInstanceReconcilerMaterializesCNPGArtifacts(t *testing.T) {
 			Reachable: true,
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+			Packages: []platformv1alpha1.PackageStatus{
+				{Name: "cnpg", Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
+				{Name: externalSecretsOperatorPackageName, Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
 			},
 		},
 	}
@@ -1198,6 +1375,9 @@ func TestServiceInstanceReconcilerEnsureArgoApplicationWhenConfigured(t *testing
 			Reachable: true,
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+			},
+			Packages: []platformv1alpha1.PackageStatus{
+				{Name: externalSecretsOperatorPackageName, Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
 			},
 		},
 	}
@@ -1447,6 +1627,9 @@ func TestServiceInstanceReconcilerMaterializesValkeyArtifacts(t *testing.T) {
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
 			},
+			Packages: []platformv1alpha1.PackageStatus{
+				{Name: externalSecretsOperatorPackageName, Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
+			},
 		},
 	}
 	instance := &platformv1alpha1.ServiceInstance{
@@ -1622,6 +1805,43 @@ func TestServiceInstanceReconcilerGeneratesYugabyteCredentialSecret(t *testing.T
 	}
 	if string(secret.Data["database"]) != "testy" {
 		t.Fatalf("expected default Yugabyte database name to derive from instance, got %#v", secret.Data)
+	}
+}
+
+func TestServiceInstanceReconcilerGeneratesCNPGCredentialSecret(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			Parameters:   rawJSON(t, map[string]any{"databaseName": "Orders DB"}),
+			SecretPolicy: platformv1alpha1.SecretPolicySpec{DeliveryMode: platformv1alpha1.SecretDeliveryModeExternalSecret},
+		},
+	}
+
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(instance).
+			Build(),
+		Scheme: scheme,
+	}
+
+	err := reconciler.ensureCredentialSecrets(context.Background(), instance, adapters.RenderResult{
+		RuntimeDriver: "cnpg",
+		CredentialRefs: []platformv1alpha1.NamespacedObjectReference{
+			{Name: "orders-db-app", Namespace: "acme-acme-prod-orders-db"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ensureCredentialSecrets returned error: %v", err)
+	}
+
+	var secret corev1.Secret
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db-app", Namespace: "acme-acme-prod-orders-db"}, &secret); err != nil {
+		t.Fatalf("expected generated CNPG credential Secret: %v", err)
+	}
+	if string(secret.Data["username"]) != "orders_db" || string(secret.Data["database"]) != "orders_db" || len(secret.Data["password"]) == 0 {
+		t.Fatalf("expected CNPG credential data, got %#v", secret.Data)
 	}
 }
 
@@ -2274,6 +2494,9 @@ func valkeyInventoryFixture() valkeyFixture {
 				Reachable: true,
 				Conditions: []metav1.Condition{
 					{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterValidated", Message: "ready"},
+				},
+				Packages: []platformv1alpha1.PackageStatus{
+					{Name: externalSecretsOperatorPackageName, Phase: platformv1alpha1.PackagePhaseInstalled, Message: "All CRD probes passed."},
 				},
 			},
 		},

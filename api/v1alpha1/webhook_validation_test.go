@@ -176,6 +176,24 @@ func TestOperatorPackageDefaultsAndValidatesSource(t *testing.T) {
 	if _, err := pkg.ValidateCreate(context.Background(), pkg); err == nil {
 		t.Fatal("expected validation error for missing operator source")
 	}
+
+	pkg = &OperatorPackage{
+		Spec: OperatorPackageSpec{
+			DisplayName: "YugabyteDB Operator",
+			Probes:      []OperatorProbe{{CRD: "ybuniverses.operator.yugabyte.io"}},
+			Source: OperatorPackageSource{
+				ManifestURL:     "https://example.invalid/crds.yaml",
+				ChartArchiveURL: "https://example.invalid/operator.tar.gz",
+				ChartPath:       "chart",
+				HelmValues: map[string]string{
+					"rbac.create": "true",
+				},
+			},
+		},
+	}
+	if _, err := pkg.ValidateCreate(context.Background(), pkg); err != nil {
+		t.Fatalf("expected chart-backed operator package to validate: %v", err)
+	}
 }
 
 func TestActionRequestDefaultsAndRejectsMissingRequester(t *testing.T) {
@@ -200,6 +218,20 @@ func TestActionRequestDefaultsAndRejectsMissingRequester(t *testing.T) {
 	}
 	if _, err := request.ValidateCreate(context.Background(), request); err == nil {
 		t.Fatal("expected validation error for missing requestedBy.subject")
+	}
+}
+
+func TestServiceClassRejectsEmptyRequiredPackageName(t *testing.T) {
+	serviceClass := &ServiceClass{
+		Spec: ServiceClassSpec{
+			DisplayName:      "PostgreSQL",
+			Driver:           "cnpg",
+			RequiredPackages: []string{"cnpg", ""},
+		},
+	}
+
+	if _, err := serviceClass.ValidateCreate(context.Background(), serviceClass); err == nil {
+		t.Fatal("expected validation error for empty required package name")
 	}
 }
 

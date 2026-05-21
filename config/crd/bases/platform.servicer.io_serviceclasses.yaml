@@ -82,6 +82,13 @@ spec:
                 description: Published indicates whether the class should be visible
                   in the product catalog.
                 type: boolean
+              requiredPackages:
+                description: |-
+                  RequiredPackages lists OperatorPackage names that should be installed on
+                  a target cluster before instances of this class are delivered there.
+                items:
+                  type: string
+                type: array
               supportedVersions:
                 description: SupportedVersions lists the engine versions supported
                   by the class.

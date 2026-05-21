@@ -1,4 +1,5 @@
 FROM golang:1.25-alpine AS builder
+ARG HELM_VERSION=v3.17.3
 
 WORKDIR /build
 
@@ -8,11 +9,16 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /manager ./cmd/manager
+RUN apk add --no-cache curl tar && \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz && \
+    tar -xzf /tmp/helm.tgz -C /tmp && \
+    mv /tmp/linux-amd64/helm /helm
 
 # ---- runtime ----
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /manager /manager
+COPY --from=builder /helm /helm
 
 EXPOSE 8080 8081
 

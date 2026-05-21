@@ -181,7 +181,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		clusterTarget = &target
 	}
-	if requiresExternalSecretsOperator(instance.Spec.SecretPolicy) {
+	requiredPackages := requiredPackagesForServiceInstance(&class, &instance)
+	if len(requiredPackages) > 0 {
 		if clusterTarget == nil {
 			resolvedTarget, err := resolveClusterTargetForProject(ctx, r.Client, &project, clusterName)
 			if err != nil {
@@ -189,12 +190,12 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 			clusterTarget = resolvedTarget
 		}
-		if ready, message := externalSecretsPackageReady(clusterTarget); !ready {
+		if ready, message := packagesReady(clusterTarget, requiredPackages); !ready {
 			instance.Status.Phase = "PendingDependencies"
-			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "ExternalSecretsOperatorPending", message)
-			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ExternalSecretsOperatorPending", "Service instance is waiting for External Secrets Operator packaging to become ready.")
-			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "ExternalSecretsOperatorPending", message)
-			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "ExternalSecretsOperatorPending", "Service instance is blocked on an operator dependency, not failed.")
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "OperatorPackagePending", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "OperatorPackagePending", "Service instance is waiting for required operator packages to become ready.")
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "OperatorPackagePending", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "OperatorPackagePending", "Service instance is blocked on an operator dependency, not failed.")
 			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
 				if err := r.Status().Update(ctx, &instance); err != nil {
 					return ctrl.Result{}, err
@@ -648,7 +649,7 @@ func endpointStatus(endpoints []adapters.Endpoint) map[string]string {
 }
 
 func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context, instance *platformv1alpha1.ServiceInstance, renderResult adapters.RenderResult) error {
-	if renderResult.RuntimeDriver != "servicer-valkey" && renderResult.RuntimeDriver != "servicer-nats" && renderResult.RuntimeDriver != "yb-operator" && renderResult.RuntimeDriver != "servicer-mysql" {
+	if renderResult.RuntimeDriver != "servicer-valkey" && renderResult.RuntimeDriver != "servicer-nats" && renderResult.RuntimeDriver != "yb-operator" && renderResult.RuntimeDriver != "servicer-mysql" && renderResult.RuntimeDriver != "cnpg" {
 		return nil
 	}
 	if instance.Spec.SecretPolicy.DeliveryMode == platformv1alpha1.SecretDeliveryModeManual {
@@ -726,6 +727,10 @@ func managedCredentialData(runtimeDriver string, instance *platformv1alpha1.Serv
 		data["username"] = []byte("nats")
 	case "servicer-valkey":
 		data["username"] = []byte("default")
+	case "cnpg":
+		name := instanceDatabaseName(instance)
+		data["username"] = []byte(name)
+		data["database"] = []byte(name)
 	case "yb-operator":
 		data["username"] = []byte("yugabyte")
 		data["database"] = []byte(instanceDatabaseName(instance))

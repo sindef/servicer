@@ -19,6 +19,9 @@ type ServiceClassSpec struct {
 	SupportedVersions []string `json:"supportedVersions,omitempty"`
 	// CapabilityFlags describes optional behaviors the class supports.
 	CapabilityFlags []string `json:"capabilityFlags,omitempty"`
+	// RequiredPackages lists OperatorPackage names that should be installed on
+	// a target cluster before instances of this class are delivered there.
+	RequiredPackages []string `json:"requiredPackages,omitempty"`
 	// AllowsVersionOverride indicates whether instances may override the default version.
 	AllowsVersionOverride bool `json:"allowsVersionOverride,omitempty"`
 	// DefaultParameters provides class-wide default parameters.

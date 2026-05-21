@@ -105,8 +105,10 @@ spec:
                 description: Region identifies the logical region or site of the cluster.
                 type: string
               requiredPackages:
-                description: RequiredPackages lists OperatorPackage names that the
-                  platform should ensure are installed on this cluster.
+                description: |-
+                  RequiredPackages lists OperatorPackage names that the platform should ensure are
+                  installed on this cluster. The ClusterTargetReconciler probes for each package and
+                  creates an Argo CD Application to install any that are missing.
                 items:
                   type: string
                 type: array
@@ -205,17 +207,20 @@ spec:
                         created to install this package, if any.
                       type: string
                     lastProbeTime:
-                      description: LastProbeTime is when the CRD probes were last evaluated.
+                      description: LastProbeTime is when the CRD probes were last
+                        evaluated.
                       format: date-time
                       type: string
                     message:
-                      description: Message is a human-readable explanation of the current phase.
+                      description: Message is a human-readable explanation of the
+                        current phase.
                       type: string
                     name:
                       description: Name is the OperatorPackage resource name.
                       type: string
                     phase:
-                      description: Phase is the coarse lifecycle state of this package on the cluster.
+                      description: Phase is the coarse lifecycle state of this package
+                        on the cluster.
                       type: string
                   required:
                   - name
