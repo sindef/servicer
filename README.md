@@ -190,6 +190,3 @@ This repo does not intentionally store live production credentials. It does incl
 - [Feature gap analysis](docs/feature-gaps.md)
 - [Product standards](docs/product-standards.md)
 
-## License
-
-Copyright 2026 Michael Norris. Licensed under the [Apache License, Version 2.0](LICENSE).
