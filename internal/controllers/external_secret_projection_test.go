@@ -36,7 +36,9 @@ func TestRenderExternalSecretArtifacts(t *testing.T) {
 	}
 	projectedRefs := projectedCredentialRefs(instance, sourceRefs)
 
-	artifacts, err := renderExternalSecretArtifacts(instance, "clusters/local-dev/projects/demo/orders-db", sourceRefs, projectedRefs)
+	artifacts, err := renderExternalSecretArtifacts(instance, "clusters/local-dev/projects/demo/orders-db", sourceRefs, projectedRefs, map[string][]string{
+		"demo-prod-orders/orders-db-app": {"username", "password"},
+	})
 	if err != nil {
 		t.Fatalf("renderExternalSecretArtifacts returned error: %v", err)
 	}
@@ -64,6 +66,9 @@ func TestRenderExternalSecretArtifacts(t *testing.T) {
 	if !strings.Contains(all, "remoteNamespace: demo-prod-orders") {
 		t.Fatalf("expected source namespace in SecretStore, got %s", all)
 	}
+	if !strings.Contains(all, "property: username") || !strings.Contains(all, "property: password") {
+		t.Fatalf("expected explicit property mappings, got %s", all)
+	}
 }
 
 func TestRenderExternalSecretArtifactsVaultProvider(t *testing.T) {
@@ -88,7 +93,7 @@ func TestRenderExternalSecretArtifactsVaultProvider(t *testing.T) {
 	}
 	projectedRefs := projectedCredentialRefs(instance, sourceRefs)
 
-	artifacts, err := renderExternalSecretArtifacts(instance, "clusters/local-dev/projects/demo/orders-db", sourceRefs, projectedRefs)
+	artifacts, err := renderExternalSecretArtifacts(instance, "clusters/local-dev/projects/demo/orders-db", sourceRefs, projectedRefs, nil)
 	if err != nil {
 		t.Fatalf("renderExternalSecretArtifacts returned error: %v", err)
 	}

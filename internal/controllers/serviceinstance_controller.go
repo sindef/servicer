@@ -272,10 +272,42 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return ctrl.Result{}, nil
 	}
+	targetClient, err := r.getTargetClient(ctx, clusterTarget)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult, targetClient); err != nil {
+		if apierrors.IsNotFound(err) {
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionPending", "Credential projection is waiting for the delivered runtime namespace.")
+			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
+					return ctrl.Result{}, updateErr
+				}
+			}
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		instance.Status.Phase = "Failed"
+		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionFailed", err.Error())
+		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "CredentialProjectionFailed", "Service instance credential projection failed.")
+		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
+				return ctrl.Result{}, updateErr
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
 	statusCredentialRefs := append([]platformv1alpha1.NamespacedObjectReference(nil), renderResult.CredentialRefs...)
 	if instance.Spec.SecretPolicy.DeliveryMode == platformv1alpha1.SecretDeliveryModeExternalSecret {
 		projectedRefs := projectedCredentialRefs(&instance, renderResult.CredentialRefs)
-		externalSecretArtifacts, projectionErr := renderExternalSecretArtifacts(&instance, renderResult.PackagePath, renderResult.CredentialRefs, projectedRefs)
+		sourceSecretKeys, projectionErr := r.credentialSecretKeys(ctx, targetClient, renderResult.CredentialRefs)
+		if projectionErr == nil {
+			externalSecretArtifacts, projectionErr := renderExternalSecretArtifacts(&instance, renderResult.PackagePath, renderResult.CredentialRefs, projectedRefs, sourceSecretKeys)
+			if projectionErr == nil {
+				renderResult.Artifacts = append(renderResult.Artifacts, externalSecretArtifacts...)
+				statusCredentialRefs = projectedRefs
+			}
+		}
 		if projectionErr != nil {
 			instance.Status.Phase = "Failed"
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "ExternalSecretRenderFailed", projectionErr.Error())
@@ -287,8 +319,6 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 			return ctrl.Result{}, nil
 		}
-		renderResult.Artifacts = append(renderResult.Artifacts, externalSecretArtifacts...)
-		statusCredentialRefs = projectedRefs
 	}
 
 	m := r.Materializer
@@ -375,32 +405,6 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		instance.Status.Phase = "Failed"
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationFailed", err.Error())
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ArgoApplicationFailed", "Argo CD application could not be reconciled.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-				return ctrl.Result{}, updateErr
-			}
-		}
-		return ctrl.Result{}, nil
-	}
-
-	targetClient, err := r.getTargetClient(ctx, clusterTarget)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult, targetClient); err != nil {
-		if apierrors.IsNotFound(err) {
-			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionPending", "Credential projection is waiting for the delivered runtime namespace.")
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-					return ctrl.Result{}, updateErr
-				}
-			}
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		instance.Status.Phase = "Failed"
-		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionFailed", err.Error())
-		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "CredentialProjectionFailed", "Service instance credential projection failed.")
 		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
 			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
 				return ctrl.Result{}, updateErr
@@ -743,6 +747,29 @@ func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context,
 		}
 	}
 	return nil
+}
+
+func (r *ServiceInstanceReconciler) credentialSecretKeys(ctx context.Context, targetClient client.Client, refs []platformv1alpha1.NamespacedObjectReference) (map[string][]string, error) {
+	secretClient := targetClient
+	if secretClient == nil {
+		secretClient = r.Client
+	}
+	keysBySecret := make(map[string][]string, len(refs))
+	for _, ref := range refs {
+		if ref.Name == "" || ref.Namespace == "" {
+			continue
+		}
+		var secret corev1.Secret
+		if err := secretClient.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &secret); err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(secret.Data))
+		for key := range secret.Data {
+			keys = append(keys, key)
+		}
+		keysBySecret[ref.Namespace+"/"+ref.Name] = keys
+	}
+	return keysBySecret, nil
 }
 
 func managedCredentialData(runtimeDriver string, instance *platformv1alpha1.ServiceInstance, password string) map[string][]byte {

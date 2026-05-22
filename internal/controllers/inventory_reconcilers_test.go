@@ -306,6 +306,34 @@ func TestEnsureClusterTopologyLabelsPreservesExistingNodeTopology(t *testing.T) 
 	}
 }
 
+func TestProbePackageRequiresTargetNamespaceWhenSpecified(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&apiextensionsv1.CustomResourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "ybuniverses.operator.yugabyte.io"},
+		}).
+		Build()
+	reconciler := &ClusterTargetReconciler{Scheme: scheme}
+	pkg := &platformv1alpha1.OperatorPackage{
+		Spec: platformv1alpha1.OperatorPackageSpec{
+			TargetNamespace: "yugabyte-system",
+			Probes:          []platformv1alpha1.OperatorProbe{{CRD: "ybuniverses.operator.yugabyte.io"}},
+		},
+	}
+
+	installed, err := reconciler.probePackage(context.Background(), targetClient, pkg)
+	if err != nil {
+		t.Fatalf("probePackage returned error: %v", err)
+	}
+	if installed {
+		t.Fatal("expected package probe to stay false until target namespace exists")
+	}
+}
+
 func TestServiceClassReconcilerPublishesImplementedPostgreSQLClass(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())

@@ -447,6 +447,15 @@ func resolveExtractedChartPath(workdir, chartPath string) (string, error) {
 
 // probePackage returns true if all CRD probes in the package pass on the target cluster.
 func (r *ClusterTargetReconciler) probePackage(ctx context.Context, targetClient client.Client, pkg *platformv1alpha1.OperatorPackage) (bool, error) {
+	if pkg.Spec.TargetNamespace != "" {
+		var namespace corev1.Namespace
+		if err := targetClient.Get(ctx, types.NamespacedName{Name: pkg.Spec.TargetNamespace}, &namespace); err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("probing namespace %q: %w", pkg.Spec.TargetNamespace, err)
+		}
+	}
 	for _, probe := range pkg.Spec.Probes {
 		crd := &unstructured.Unstructured{}
 		crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})

@@ -35,7 +35,7 @@ func projectedCredentialRefs(instance *platformv1alpha1.ServiceInstance, sourceR
 	return projected
 }
 
-func renderExternalSecretArtifacts(instance *platformv1alpha1.ServiceInstance, packagePath string, sourceRefs, projectedRefs []platformv1alpha1.NamespacedObjectReference) ([]adapters.RenderedArtifact, error) {
+func renderExternalSecretArtifacts(instance *platformv1alpha1.ServiceInstance, packagePath string, sourceRefs, projectedRefs []platformv1alpha1.NamespacedObjectReference, sourceSecretKeys map[string][]string) ([]adapters.RenderedArtifact, error) {
 	if instance == nil || len(sourceRefs) == 0 || len(sourceRefs) != len(projectedRefs) {
 		return nil, nil
 	}
@@ -210,13 +210,7 @@ func renderExternalSecretArtifacts(instance *platformv1alpha1.ServiceInstance, p
 					"creationPolicy": "Owner",
 					"deletionPolicy": "Delete",
 				},
-				"dataFrom": []map[string]any{
-					{
-						"extract": map[string]any{
-							"key": sourceRef.Name,
-						},
-					},
-				},
+				"data": externalSecretDataEntries(sourceRef, sourceSecretKeys[sourceRef.Namespace+"/"+sourceRef.Name]),
 			},
 		})
 		if err != nil {
@@ -357,6 +351,33 @@ func externalSecretProvider(policy platformv1alpha1.SecretPolicySpec) platformv1
 		return platformv1alpha1.ExternalSecretProviderKubernetes
 	}
 	return policy.ExternalSecretProvider
+}
+
+func externalSecretDataEntries(sourceRef platformv1alpha1.NamespacedObjectReference, keys []string) []map[string]any {
+	if len(keys) == 0 {
+		return []map[string]any{{
+			"secretKey": sourceRef.Name,
+			"remoteRef": map[string]any{
+				"key": sourceRef.Name,
+			},
+		}}
+	}
+
+	sort.Strings(keys)
+	entries := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		entries = append(entries, map[string]any{
+			"secretKey": key,
+			"remoteRef": map[string]any{
+				"key":      sourceRef.Name,
+				"property": key,
+			},
+		})
+	}
+	return entries
 }
 
 func vaultRemoteSecretKey(mountPath, secretName string) string {
