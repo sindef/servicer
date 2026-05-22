@@ -360,6 +360,9 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 	if err != nil {
 		return err
 	}
+	if err := ensureHelmChartDependencies(chartPath); err != nil {
+		return err
+	}
 
 	releaseName := pkg.Name
 	targetNamespace := firstNonEmptyTrimmed(pkg.Spec.TargetNamespace, "operators")
@@ -396,6 +399,15 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 	}
 	if err := applyManifestBytes(ctx, targetClient, output, targetNamespace); err != nil {
 		return fmt.Errorf("applying rendered helm chart: %w", err)
+	}
+	return nil
+}
+
+func ensureHelmChartDependencies(chartPath string) error {
+	cmd := exec.Command("/helm", "dependency", "build", chartPath) //nolint:gosec
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("helm dependency build failed: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
