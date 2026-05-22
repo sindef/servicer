@@ -31,8 +31,7 @@ type Server struct {
 	client     client.Client
 	kubeHost   string
 	kubeClient *http.Client
-	auth       authenticator
-	authConfig authSettings
+	auth       *authRuntime
 	metrics    *serverMetrics
 	auditStore *auditStore
 	handler    http.Handler
@@ -44,16 +43,11 @@ func NewServer(client client.Client) *Server {
 
 func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server {
 	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client)}
-	authConfig, err := authSettingsFromEnv()
+	authRuntime, err := newAuthRuntime(client)
 	if err != nil {
 		panic(err)
 	}
-	server.authConfig = authConfig
-	auth, err := newAuthenticatorFromEnv(context.Background())
-	if err != nil {
-		panic(err)
-	}
-	server.auth = auth
+	server.auth = authRuntime
 	if restConfig != nil {
 		if httpClient, err := rest.HTTPClientFor(restConfig); err == nil {
 			server.kubeHost = strings.TrimRight(restConfig.Host, "/")
@@ -71,6 +65,7 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /api/auth/config", server.handleAuthConfig)
 	mux.HandleFunc("GET /api/auth/session", server.handleAuthSession)
 	mux.HandleFunc("GET /api/auth/login", server.handleAuthLogin)
+	mux.HandleFunc("POST /api/auth/login", server.handleAuthLogin)
 	mux.HandleFunc("GET /api/auth/logout", server.handleAuthLogout)
 	mux.HandleFunc("GET /api/auth/callback", server.handleAuthCallback)
 	mux.HandleFunc("GET /api/overview", server.handleOverview)
@@ -108,6 +103,22 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /api/admin/serviceclasses", server.handleListServiceClasses)
 	mux.HandleFunc("POST /api/admin/serviceclasses", server.handleRegisterServiceClass)
 	mux.HandleFunc("PUT /api/admin/serviceclasses/{name}", server.handleUpdateServiceClass)
+	mux.HandleFunc("GET /api/admin/auth/providers", server.handleListAuthProviders)
+	mux.HandleFunc("POST /api/admin/auth/providers", server.handleCreateAuthProvider)
+	mux.HandleFunc("PUT /api/admin/auth/providers/{name}", server.handleUpdateAuthProvider)
+	mux.HandleFunc("DELETE /api/admin/auth/providers/{name}", server.handleDeleteAuthProvider)
+	mux.HandleFunc("GET /api/admin/auth/users", server.handleListUsers)
+	mux.HandleFunc("POST /api/admin/auth/users", server.handleCreateUser)
+	mux.HandleFunc("PUT /api/admin/auth/users/{name}", server.handleUpdateUser)
+	mux.HandleFunc("DELETE /api/admin/auth/users/{name}", server.handleDeleteUser)
+	mux.HandleFunc("GET /api/admin/auth/groups", server.handleListGroups)
+	mux.HandleFunc("POST /api/admin/auth/groups", server.handleCreateGroup)
+	mux.HandleFunc("PUT /api/admin/auth/groups/{name}", server.handleUpdateGroup)
+	mux.HandleFunc("DELETE /api/admin/auth/groups/{name}", server.handleDeleteGroup)
+	mux.HandleFunc("GET /api/admin/auth/rolebindings", server.handleListRoleBindings)
+	mux.HandleFunc("POST /api/admin/auth/rolebindings", server.handleCreateRoleBinding)
+	mux.HandleFunc("PUT /api/admin/auth/rolebindings/{name}", server.handleUpdateRoleBinding)
+	mux.HandleFunc("DELETE /api/admin/auth/rolebindings/{name}", server.handleDeleteRoleBinding)
 	mux.HandleFunc("GET /api/projects/{project}/repositories", server.handleListProjectRepositories)
 	mux.HandleFunc("POST /api/projects/{project}/repositories", server.handleCreateProjectRepository)
 	mux.HandleFunc("DELETE /api/projects/{project}/repositories/{repo}", server.handleDeleteProjectRepository)
@@ -140,12 +151,10 @@ func (s *Server) withAuthentication(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication failed"})
 			return
 		}
-		if result.Session != nil && s.auth.Mode() == "oidc" {
-			if oidcAuth, ok := s.auth.(*oidcAuthenticator); ok {
-				encoded, encodeErr := oidcAuth.sessionCodec.Encode(result.Session)
-				if encodeErr == nil {
-					http.SetCookie(w, authCookie(r, authSessionCookieName, encoded, 24*time.Hour))
-				}
+		if result.Session != nil {
+			encoded, encodeErr := s.auth.sessionCodec.Encode(result.Session)
+			if encodeErr == nil {
+				http.SetCookie(w, authCookie(r, authSessionCookieName, encoded, 24*time.Hour))
 			}
 		}
 		next.ServeHTTP(w, withActor(r, result.Actor))
@@ -157,75 +166,59 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
-	response := AuthConfigResponse{
-		Mode:             s.authConfig.Mode,
-		AllowDemoHeaders: s.authConfig.AllowDemoHeaders,
-		LoginPath:        "/api/auth/login",
-		LogoutPath:       "/api/auth/logout",
-	}
-	if s.authConfig.OIDC != nil {
-		response.OIDC = &AuthOIDCConfig{
-			IssuerURL:    s.authConfig.OIDC.IssuerURL,
-			ClientID:     s.authConfig.OIDC.ClientID,
-			Scopes:       append([]string(nil), s.authConfig.OIDC.Scopes...),
-			RedirectPath: s.authConfig.OIDC.RedirectPath,
-		}
+	response, err := s.auth.Config(context.Background())
+	if err != nil {
+		writeError(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 	if s.auth == nil {
-		writeJSON(w, http.StatusOK, AuthSessionResponse{Mode: "header", Authenticated: false})
+		writeJSON(w, http.StatusOK, AuthSessionResponse{Mode: "multi", Authenticated: false})
 		return
 	}
-	if s.auth.Mode() == "oidc" {
-		oidcAuth, ok := s.auth.(*oidcAuthenticator)
-		if !ok {
-			writeJSON(w, http.StatusOK, AuthSessionResponse{Mode: "oidc", Authenticated: false})
-			return
+	response, session, _ := s.auth.SessionFromRequest(r.Context(), r)
+	if session != nil {
+		if encoded, err := s.auth.sessionCodec.Encode(session); err == nil {
+			http.SetCookie(w, authCookie(r, authSessionCookieName, encoded, 24*time.Hour))
 		}
-		response, session, _ := oidcAuth.SessionFromRequest(r.Context(), r)
-		response.AllowDemoHeaders = s.authConfig.AllowDemoHeaders
-		if session != nil {
-			if encoded, err := oidcAuth.sessionCodec.Encode(session); err == nil {
-				http.SetCookie(w, authCookie(r, authSessionCookieName, encoded, 24*time.Hour))
-			}
-		} else {
-			http.SetCookie(w, clearAuthCookie(r, authSessionCookieName))
-		}
-		writeJSON(w, http.StatusOK, response)
-		return
+	} else {
+		http.SetCookie(w, clearAuthCookie(r, authSessionCookieName))
 	}
-	current := actorFromHeaders(r)
-	writeJSON(w, http.StatusOK, AuthSessionResponse{
-		Mode:             s.authConfig.Mode,
-		Name:             current.Name,
-		Roles:            sortedKeys(current.Roles),
-		Groups:           sortedKeys(current.Groups),
-		Authenticated:    current.Name != "" && current.Name != "anonymous",
-		AllowDemoHeaders: s.authConfig.AllowDemoHeaders,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
-	oidcAuth, ok := s.auth.(*oidcAuthenticator)
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "OIDC authentication is not configured"})
-		return
-	}
-	if err := oidcAuth.StartLogin(w, r, absoluteRedirectURL(r, s.authConfig.OIDC.RedirectPath)); err != nil {
-		writeError(w, err)
+	switch r.Method {
+	case http.MethodGet:
+		providerName := strings.TrimSpace(r.URL.Query().Get("provider"))
+		if providerName == "" {
+			providerName = s.auth.defaultProviderName(r.Context(), []platformv1alpha1.AuthProviderType{platformv1alpha1.AuthProviderTypeOIDC})
+		}
+		if err := s.auth.StartLogin(r.Context(), w, r, providerName, absoluteRedirectURL(r, defaultOIDCRedirect)); err != nil {
+			writeError(w, err)
+		}
+	case http.MethodPost:
+		var req loginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		if err := s.auth.CompletePasswordLogin(r.Context(), w, r, req); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+			return
+		}
+		response, _, _ := s.auth.SessionFromRequest(r.Context(), r)
+		writeJSON(w, http.StatusOK, response)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
-	oidcAuth, ok := s.auth.(*oidcAuthenticator)
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "OIDC authentication is not configured"})
-		return
-	}
-	if err := oidcAuth.HandleCallback(r.Context(), w, r, absoluteRedirectURL(r, s.authConfig.OIDC.RedirectPath)); err != nil {
+	if err := s.auth.HandleCallback(r.Context(), w, r, absoluteRedirectURL(r, defaultOIDCRedirect)); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 	}
 }
@@ -233,12 +226,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, clearAuthCookie(r, authSessionCookieName))
 	http.SetCookie(w, clearAuthCookie(r, authFlowCookieName))
-	oidcAuth, ok := s.auth.(*oidcAuthenticator)
-	if !ok {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-	http.Redirect(w, r, oidcAuth.LogoutRedirectURL(r), http.StatusFound)
+	http.Redirect(w, r, s.auth.LogoutRedirectURL(r.Context(), r), http.StatusFound)
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {

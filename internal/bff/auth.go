@@ -8,16 +8,26 @@ import (
 
 const (
 	rolePlatformAdmin   = "platform-admin"
+	roleTenantAdmin     = "tenant-admin"
 	roleTenantOperator  = "tenant-operator"
 	roleServiceConsumer = "service-consumer"
+	roleAuditor         = "auditor"
+	roleCatalogAdmin    = "catalog-admin"
+	roleClusterAdmin    = "cluster-admin"
 )
 
 type actorContextKey struct{}
 
 type actor struct {
-	Name   string
-	Roles  map[string]struct{}
-	Groups map[string]struct{}
+	Name          string
+	Email         string
+	UserName      string
+	Provider      string
+	Subject       string
+	Authenticated bool
+	Roles         map[string]struct{}
+	TenantRoles   map[string]map[string]struct{}
+	Groups        map[string]struct{}
 }
 
 func actorFromRequest(r *http.Request) actor {
@@ -58,7 +68,7 @@ func actorFromHeaders(r *http.Request) actor {
 			groups[group] = struct{}{}
 		}
 	}
-	return actor{Name: name, Roles: roles, Groups: groups}
+	return actor{Name: name, Roles: roles, TenantRoles: map[string]map[string]struct{}{}, Groups: groups, Authenticated: name != "" && name != "anonymous"}
 }
 
 func withActor(r *http.Request, actor actor) *http.Request {
@@ -70,6 +80,11 @@ func (a actor) hasAny(roles ...string) bool {
 		if _, ok := a.Roles[role]; ok {
 			return true
 		}
+		for _, tenantRoles := range a.TenantRoles {
+			if _, ok := tenantRoles[role]; ok {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -78,10 +93,44 @@ func (a actor) isPlatformAdmin() bool {
 	return a.hasAny(rolePlatformAdmin)
 }
 
+func (a actor) hasTenantRole(tenantName string, roles ...string) bool {
+	if tenantName == "" {
+		return false
+	}
+	tenantRoles, ok := a.TenantRoles[tenantName]
+	if !ok {
+		return false
+	}
+	for _, role := range roles {
+		if _, ok := tenantRoles[role]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (a actor) hasTenantAccess(tenantName string) bool {
+	if a.isPlatformAdmin() {
+		return true
+	}
+	return len(a.TenantRoles[tenantName]) > 0
+}
+
 func requireRole(w http.ResponseWriter, r *http.Request, roles ...string) (actor, bool) {
 	actor := actorFromRequest(r)
 	if actor.hasAny(roles...) {
 		return actor, true
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient Servicer role"})
+	return actor, false
+}
+
+func requirePlatformRole(w http.ResponseWriter, r *http.Request, roles ...string) (actor, bool) {
+	actor := actorFromRequest(r)
+	for _, role := range roles {
+		if _, ok := actor.Roles[role]; ok {
+			return actor, true
+		}
 	}
 	writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient Servicer role"})
 	return actor, false

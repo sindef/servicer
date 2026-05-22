@@ -51,7 +51,7 @@ func TestCatalogReturnsProductShapedEntries(t *testing.T) {
 	}
 }
 
-func TestAuthConfigEndpointReturnsHeaderModeByDefault(t *testing.T) {
+func TestAuthConfigEndpointReturnsConfiguredProviders(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/auth/config", nil)
@@ -65,8 +65,8 @@ func TestAuthConfigEndpointReturnsHeaderModeByDefault(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &config); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if config.Mode != "header" {
-		t.Fatalf("expected header auth mode, got %#v", config)
+	if config.Mode != "multi" {
+		t.Fatalf("expected multi auth mode, got %#v", config)
 	}
 }
 
@@ -950,7 +950,9 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 			testValkeyCredentialSecret(),
 		).
 		Build()
-	return NewServerWithConfig(client, restConfig)
+	server := NewServerWithConfig(client, restConfig)
+	server.auth.allowTestHeaders = true
+	return server
 }
 
 func testTenant() *platformv1alpha1.Tenant {

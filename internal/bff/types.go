@@ -13,27 +13,36 @@ type OverviewResponse struct {
 }
 
 type AuthConfigResponse struct {
-	Mode             string          `json:"mode"`
-	AllowDemoHeaders bool            `json:"allowDemoHeaders,omitempty"`
-	LoginPath        string          `json:"loginPath,omitempty"`
-	LogoutPath       string          `json:"logoutPath,omitempty"`
-	OIDC             *AuthOIDCConfig `json:"oidc,omitempty"`
+	Mode            string                  `json:"mode"`
+	LoginPath       string                  `json:"loginPath,omitempty"`
+	LogoutPath      string                  `json:"logoutPath,omitempty"`
+	CallbackPath    string                  `json:"callbackPath,omitempty"`
+	DefaultProvider string                  `json:"defaultProvider,omitempty"`
+	Providers       []AuthProviderLoginView `json:"providers,omitempty"`
 }
 
-type AuthOIDCConfig struct {
-	IssuerURL    string   `json:"issuerUrl"`
-	ClientID     string   `json:"clientId"`
-	Scopes       []string `json:"scopes,omitempty"`
-	RedirectPath string   `json:"redirectPath,omitempty"`
+type AuthProviderLoginView struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Type        string `json:"type"`
+	Default     bool   `json:"default,omitempty"`
 }
 
 type AuthSessionResponse struct {
-	Mode             string   `json:"mode"`
-	Name             string   `json:"name"`
-	Roles            []string `json:"roles,omitempty"`
-	Groups           []string `json:"groups,omitempty"`
-	Authenticated    bool     `json:"authenticated"`
-	AllowDemoHeaders bool     `json:"allowDemoHeaders,omitempty"`
+	Mode          string              `json:"mode"`
+	Name          string              `json:"name"`
+	Email         string              `json:"email,omitempty"`
+	UserName      string              `json:"userName,omitempty"`
+	Provider      string              `json:"provider,omitempty"`
+	Roles         []string            `json:"roles,omitempty"`
+	Groups        []string            `json:"groups,omitempty"`
+	Tenants       []TenantRoleSummary `json:"tenants,omitempty"`
+	Authenticated bool                `json:"authenticated"`
+}
+
+type TenantRoleSummary struct {
+	TenantName string   `json:"tenantName"`
+	Roles      []string `json:"roles"`
 }
 
 type HealthBreakdown struct {
@@ -412,4 +421,121 @@ type UpdateServiceClassRequest struct {
 
 type RegisterServiceClassRequest struct {
 	Name string `json:"name"`
+}
+
+type AuthProviderSummary struct {
+	Name                  string `json:"name"`
+	DisplayName           string `json:"displayName"`
+	Type                  string `json:"type"`
+	Enabled               bool   `json:"enabled"`
+	Default               bool   `json:"default"`
+	Phase                 string `json:"phase,omitempty"`
+	OIDCIssuerURL         string `json:"oidcIssuerUrl,omitempty"`
+	OIDCClientID          string `json:"oidcClientId,omitempty"`
+	OIDCRedirectPath      string `json:"oidcRedirectPath,omitempty"`
+	LDAPURL               string `json:"ldapUrl,omitempty"`
+	LDAPUserBaseDN        string `json:"ldapUserBaseDn,omitempty"`
+	LDAPUserFilter        string `json:"ldapUserFilter,omitempty"`
+	LDAPUsernameAttribute string `json:"ldapUsernameAttribute,omitempty"`
+	LDAPEmailAttribute    string `json:"ldapEmailAttribute,omitempty"`
+	LDAPGroupBaseDN       string `json:"ldapGroupBaseDn,omitempty"`
+	LDAPGroupFilter       string `json:"ldapGroupFilter,omitempty"`
+	LDAPGroupNameAttr     string `json:"ldapGroupNameAttribute,omitempty"`
+	LDAPStartTLS          bool   `json:"ldapStartTls,omitempty"`
+	InsecureSkipVerify    bool   `json:"insecureSkipVerify,omitempty"`
+	SecretConfigured      bool   `json:"secretConfigured,omitempty"`
+}
+
+type AuthProviderRequest struct {
+	Name                  string   `json:"name"`
+	DisplayName           string   `json:"displayName"`
+	Type                  string   `json:"type"`
+	Enabled               bool     `json:"enabled"`
+	Default               bool     `json:"default"`
+	OIDCIssuerURL         string   `json:"oidcIssuerUrl,omitempty"`
+	OIDCClientID          string   `json:"oidcClientId,omitempty"`
+	OIDCClientSecret      string   `json:"oidcClientSecret,omitempty"`
+	OIDCScopes            []string `json:"oidcScopes,omitempty"`
+	OIDCUsernameClaim     string   `json:"oidcUsernameClaim,omitempty"`
+	OIDCEmailClaim        string   `json:"oidcEmailClaim,omitempty"`
+	OIDCRolesClaim        string   `json:"oidcRolesClaim,omitempty"`
+	OIDCGroupsClaim       string   `json:"oidcGroupsClaim,omitempty"`
+	OIDCRedirectPath      string   `json:"oidcRedirectPath,omitempty"`
+	OIDCEndSessionURL     string   `json:"oidcEndSessionUrl,omitempty"`
+	LDAPURL               string   `json:"ldapUrl,omitempty"`
+	LDAPBindUsername      string   `json:"ldapBindUsername,omitempty"`
+	LDAPBindPassword      string   `json:"ldapBindPassword,omitempty"`
+	LDAPUserBaseDN        string   `json:"ldapUserBaseDn,omitempty"`
+	LDAPUserFilter        string   `json:"ldapUserFilter,omitempty"`
+	LDAPUsernameAttribute string   `json:"ldapUsernameAttribute,omitempty"`
+	LDAPEmailAttribute    string   `json:"ldapEmailAttribute,omitempty"`
+	LDAPGroupBaseDN       string   `json:"ldapGroupBaseDn,omitempty"`
+	LDAPGroupFilter       string   `json:"ldapGroupFilter,omitempty"`
+	LDAPGroupNameAttr     string   `json:"ldapGroupNameAttribute,omitempty"`
+	LDAPStartTLS          bool     `json:"ldapStartTls,omitempty"`
+	InsecureSkipVerify    bool     `json:"insecureSkipVerify,omitempty"`
+}
+
+type UserSummary struct {
+	Name               string                    `json:"name"`
+	DisplayName        string                    `json:"displayName,omitempty"`
+	Email              string                    `json:"email,omitempty"`
+	LocalAuthEnabled   bool                      `json:"localAuthEnabled"`
+	ExternalIdentities []ExternalIdentitySummary `json:"externalIdentities,omitempty"`
+}
+
+type ExternalIdentitySummary struct {
+	Provider string `json:"provider"`
+	Subject  string `json:"subject"`
+}
+
+type UserRequest struct {
+	Name               string                    `json:"name"`
+	DisplayName        string                    `json:"displayName,omitempty"`
+	Email              string                    `json:"email,omitempty"`
+	LocalAuthEnabled   bool                      `json:"localAuthEnabled"`
+	Password           string                    `json:"password,omitempty"`
+	ExternalIdentities []ExternalIdentitySummary `json:"externalIdentities,omitempty"`
+}
+
+type GroupSummary struct {
+	Name           string                 `json:"name"`
+	DisplayName    string                 `json:"displayName,omitempty"`
+	Members        []string               `json:"members,omitempty"`
+	ExternalGroups []ExternalGroupSummary `json:"externalGroups,omitempty"`
+}
+
+type ExternalGroupSummary struct {
+	Provider string `json:"provider"`
+	Name     string `json:"name"`
+}
+
+type GroupRequest struct {
+	Name           string                 `json:"name"`
+	DisplayName    string                 `json:"displayName,omitempty"`
+	Members        []string               `json:"members,omitempty"`
+	ExternalGroups []ExternalGroupSummary `json:"externalGroups,omitempty"`
+}
+
+type RoleBindingSummary struct {
+	Name        string               `json:"name"`
+	DisplayName string               `json:"displayName,omitempty"`
+	Scope       string               `json:"scope"`
+	TenantName  string               `json:"tenantName,omitempty"`
+	Subjects    []RoleBindingSubject `json:"subjects"`
+	Roles       []string             `json:"roles"`
+}
+
+type RoleBindingSubject struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
+type RoleBindingRequest struct {
+	Name        string               `json:"name"`
+	DisplayName string               `json:"displayName,omitempty"`
+	Scope       string               `json:"scope"`
+	TenantName  string               `json:"tenantName,omitempty"`
+	Subjects    []RoleBindingSubject `json:"subjects"`
+	Roles       []string             `json:"roles"`
 }

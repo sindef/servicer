@@ -17,7 +17,7 @@ import (
 // ── Clusters ─────────────────────────────────────────────────────────────────
 
 func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, rolePlatformAdmin); !ok {
+	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin, roleClusterAdmin); !ok {
 		return
 	}
 	var list platformv1alpha1.ClusterTargetList
@@ -33,7 +33,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin)
+	actor, ok := requirePlatformRole(w, r, rolePlatformAdmin, roleClusterAdmin)
 	if !ok {
 		return
 	}
@@ -77,7 +77,7 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateCluster(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin)
+	actor, ok := requirePlatformRole(w, r, rolePlatformAdmin, roleClusterAdmin)
 	if !ok {
 		return
 	}
@@ -289,7 +289,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 // ── Service classes (admin) ───────────────────────────────────────────────────
 
 func (s *Server) handleListServiceClasses(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, rolePlatformAdmin); !ok {
+	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin, roleCatalogAdmin); !ok {
 		return
 	}
 	var list platformv1alpha1.ServiceClassList
@@ -332,7 +332,7 @@ func (s *Server) handleListServiceClasses(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleRegisterServiceClass(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin)
+	actor, ok := requirePlatformRole(w, r, rolePlatformAdmin, roleCatalogAdmin)
 	if !ok {
 		return
 	}
@@ -369,7 +369,7 @@ func (s *Server) handleRegisterServiceClass(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleUpdateServiceClass(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin)
+	actor, ok := requirePlatformRole(w, r, rolePlatformAdmin, roleCatalogAdmin)
 	if !ok {
 		return
 	}
@@ -451,7 +451,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteCluster(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin)
+	actor, ok := requirePlatformRole(w, r, rolePlatformAdmin, roleClusterAdmin)
 	if !ok {
 		return
 	}

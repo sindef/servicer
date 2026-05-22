@@ -56,9 +56,12 @@ func tenantVisibleToActor(actor actor, tenant platformv1alpha1.Tenant) bool {
 	if actor.isPlatformAdmin() {
 		return true
 	}
+	if actor.hasTenantAccess(tenant.Name) {
+		return true
+	}
 	if actor.Name != "" {
 		for _, user := range tenant.Spec.Owners.Users {
-			if user == actor.Name {
+			if user == actor.Name || user == actor.Email || user == actor.UserName || user == actor.Subject {
 				return true
 			}
 		}
