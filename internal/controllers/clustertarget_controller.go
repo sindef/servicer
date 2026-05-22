@@ -262,7 +262,7 @@ func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, kube
 		}
 	}
 	if pkg.Spec.Source.ChartArchiveURL != "" {
-		if err := installPackageHelmChart(kubeconfigBytes, pkg); err != nil {
+		if err := installPackageHelmChart(ctx, kubeconfigBytes, targetClient, pkg); err != nil {
 			return err
 		}
 	}
@@ -322,7 +322,8 @@ func applyManifestBytes(ctx context.Context, targetClient client.Client, body []
 	return applyErr
 }
 
-func installPackageHelmChart(kubeconfigBytes []byte, pkg *platformv1alpha1.OperatorPackage) error {
+func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, targetClient client.Client, pkg *platformv1alpha1.OperatorPackage) error {
+	_ = kubeconfigBytes
 	archiveBytes, err := fetchURLBytes(pkg.Spec.Source.ChartArchiveURL)
 	if err != nil {
 		return err
@@ -343,17 +344,13 @@ func installPackageHelmChart(kubeconfigBytes []byte, pkg *platformv1alpha1.Opera
 		return err
 	}
 
-	kubeconfigPath := filepath.Join(workdir, "kubeconfig")
-	if err := os.WriteFile(kubeconfigPath, kubeconfigBytes, 0o600); err != nil {
-		return fmt.Errorf("writing helm kubeconfig: %w", err)
-	}
-
 	releaseName := pkg.Name
+	targetNamespace := firstNonEmptyTrimmed(pkg.Spec.TargetNamespace, "operators")
 	args := []string{
-		"upgrade", "--install", releaseName, chartPath,
-		"--kubeconfig", kubeconfigPath,
-		"--namespace", firstNonEmptyTrimmed(pkg.Spec.TargetNamespace, "operators"),
-		"--create-namespace",
+		"template", releaseName, chartPath,
+		"--namespace", targetNamespace,
+		"--include-crds",
+		"--no-hooks",
 	}
 	keys := make([]string, 0, len(pkg.Spec.Source.HelmValues))
 	for key := range pkg.Spec.Source.HelmValues {
@@ -367,7 +364,10 @@ func installPackageHelmChart(kubeconfigBytes []byte, pkg *platformv1alpha1.Opera
 	cmd := exec.Command("/helm", args...) //nolint:gosec
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("helm install failed: %w: %s", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("helm template failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := applyManifestBytes(ctx, targetClient, output); err != nil {
+		return fmt.Errorf("applying rendered helm chart: %w", err)
 	}
 	return nil
 }
