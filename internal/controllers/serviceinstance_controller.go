@@ -699,9 +699,15 @@ func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context,
 		if len(renderResult.CredentialRefs) > 0 && renderResult.CredentialRefs[0].Namespace != "" {
 			namespace = renderResult.CredentialRefs[0].Namespace
 		}
+		if err := ensureNamespaceExists(ctx, secretClient, namespace); err != nil {
+			return err
+		}
 		return r.ensureNATSCredentialSecrets(ctx, secretClient, instance, namespace)
 	}
 	for _, ref := range renderResult.CredentialRefs {
+		if err := ensureNamespaceExists(ctx, secretClient, ref.Namespace); err != nil {
+			return err
+		}
 		var secret corev1.Secret
 		err := secretClient.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, &secret)
 		if err == nil {
@@ -753,6 +759,28 @@ func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context,
 		if err := secretClient.Create(ctx, &secret); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func ensureNamespaceExists(ctx context.Context, c client.Client, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return nil
+	}
+	var existing corev1.Namespace
+	if err := c.Get(ctx, types.NamespacedName{Name: namespace}, &existing); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespace,
+		},
+	}
+	if err := c.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
 	}
 	return nil
 }

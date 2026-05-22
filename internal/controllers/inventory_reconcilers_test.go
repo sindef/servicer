@@ -2016,6 +2016,49 @@ func TestMarkCredentialProjectionPendingSetsProvisioningPhase(t *testing.T) {
 	}
 }
 
+func TestEnsureCredentialSecretsCreatesTargetNamespace(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+		Scheme: scheme,
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "postgresql"},
+		},
+		Status: platformv1alpha1.ServiceInstanceStatus{
+			Placement: platformv1alpha1.PlacementStatus{
+				Namespace: "acme-acme-prod-orders-db",
+			},
+		},
+	}
+	renderResult := adapters.RenderResult{
+		RuntimeDriver: "cnpg",
+		CredentialRefs: []platformv1alpha1.NamespacedObjectReference{
+			{Name: "orders-db-app", Namespace: "acme-acme-prod-orders-db"},
+		},
+	}
+
+	if err := reconciler.ensureCredentialSecrets(context.Background(), instance, renderResult, targetClient); err != nil {
+		t.Fatalf("ensureCredentialSecrets returned error: %v", err)
+	}
+
+	var namespace corev1.Namespace
+	if err := targetClient.Get(context.Background(), client.ObjectKey{Name: "acme-acme-prod-orders-db"}, &namespace); err != nil {
+		t.Fatalf("expected namespace to be created on target client: %v", err)
+	}
+
+	var secret corev1.Secret
+	if err := targetClient.Get(context.Background(), client.ObjectKey{Name: "orders-db-app", Namespace: "acme-acme-prod-orders-db"}, &secret); err != nil {
+		t.Fatalf("expected credential secret to be created on target client: %v", err)
+	}
+	if len(secret.Data["password"]) == 0 {
+		t.Fatalf("expected generated password data in credential secret")
+	}
+}
+
 func TestServiceInstanceReconcilerObservesReadyValkeyRuntime(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewValkeyAdapter())
