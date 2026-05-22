@@ -43,6 +43,11 @@ spec:
     repoURL: https://github.com/external-secrets/external-secrets
     path: deploy/charts/external-secrets
     chartPath: deploy/charts/external-secrets
+    helmValues:
+      installCRDs: "true"
+      webhook.create: "false"
+      certController.create: "false"
+      crds.conversion.enabled: "false"
     targetRevision: v0.10.7
 ---
 apiVersion: platform.servicer.io/v1alpha1
