@@ -7,7 +7,7 @@ Status legend:
 - `[~]` In progress / partial
 - `[x]` Completed
 
-Implementation notes in this review are current as of 2026-05-21.
+Implementation notes in this review are current as of 2026-05-22.
 
 ---
 

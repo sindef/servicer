@@ -1,221 +1,194 @@
 # Servicer
 
-Kubernetes-native control plane for self-service managed services. Purpose-built alternative to developer portals — delivers a PaaS-like UX backed by authoritative Kubernetes CRDs.
+Kubernetes-native control plane for self-service managed services. Servicer gives platform teams a product-shaped API and UI for curated services, while keeping Kubernetes CRDs as the source of truth.
 
-## Overview
+## What it does
 
-Servicer lets platform teams publish curated service products (PostgreSQL, MySQL, Valkey, NATS, namespaces) that users provision via a product-shaped UI and API. No raw YAML, no operator forms. Operations are task-oriented: request, observe, act.
+Servicer publishes managed service products such as PostgreSQL, MySQL, Valkey, NATS, YugabyteDB, Kubernetes namespaces, and first-pass VM/KubeVirt and Cassandra/K8ssandra offerings. Users request products through the Vue UI or BFF API, and Servicer reconciles them onto one or more target clusters through operator-backed adapters and Git/Argo delivery.
 
+High-level flow:
+
+```text
+User -> Vue UI -> BFF -> Servicer CRDs -> Controllers/Adapters -> Target clusters
 ```
-User → Vue UI → BFF (:8090) → Kubernetes CRDs → Operators/Argo CD
-```
 
-## Architecture
+## Repo layout
 
-| Layer | Path | Purpose |
-|-------|------|---------|
-| CRD/API | `api/v1alpha1/` | Cluster-scoped Kubernetes resources |
-| BFF | `cmd/bff/`, `internal/bff/` | HTTP aggregation server — product-shaped responses |
-| Controller | `cmd/manager/`, `internal/controllers/` | CRD reconciliation |
-| Adapters | `internal/adapters/` | Normalized driver contracts (PostgreSQL, MySQL, Valkey, NATS) |
-| Frontend | `web/` | Vue 3 + TypeScript UI |
+| Path | Purpose |
+|------|---------|
+| `api/v1alpha1/` | CRD and API types |
+| `cmd/manager/` | Main controller manager binary |
+| `cmd/bff/` | Product-facing backend-for-frontend |
+| `internal/controllers/` | Reconciliation logic, package installation, projection |
+| `internal/adapters/` | Product adapters and runtime contracts |
+| `internal/deliveryrepo/` | Git publication for delivery artifacts |
+| `config/crd/` | Generated CRDs |
+| `config/deploy/` | Platform install manifests |
+| `config/samples/` | Demo catalog, packages, tenancy, and targets |
+| `web/` | Vue 3 + TypeScript frontend |
+| `hack/` | Demo bootstrap and operator/dev scripts |
+
+## Current platform surface
 
 ### CRDs
 
-| Resource | Purpose |
-|----------|---------|
-| `Tenant` | Tenancy boundary — owners, allowed service classes, quotas |
-| `Project` | Cluster placement, namespace strategy; child of Tenant |
-| `ServiceClass` | Product definition — driver, capabilities |
-| `ServicePlan` | Tiers, topology, versions |
-| `ServiceInstance` | Provisioned service — phase, health, endpoints |
-| `NamespaceClaim` | First-class managed namespace request |
-| `ServiceBinding` | Credential sharing between services and consumers |
-| `VirtualMachineClaim` | Curated virtual machine request surface |
-| `ActionRequest` | Day-2 operations (scale, failover, etc.) |
-| `ClusterTarget` | Target cluster definitions |
+- `Tenant`
+- `Project`
+- `ClusterTarget`
+- `ServiceClass`
+- `ServicePlan`
+- `ServiceInstance`
+- `NamespaceClaim`
+- `ServiceBinding`
+- `VirtualMachineClaim`
+- `ActionRequest`
+- `OperatorPackage`
+- `Policy`
 
 API group: `platform.servicer.io/v1alpha1`
 
-### BFF Endpoints
+### Main BFF routes
 
-```
-GET  /api/overview                  Health dashboard rollup
-GET  /api/tenants                   Tenant list
-GET  /api/projects                  Project list
-GET  /api/catalog                   Available service classes + plans
-POST /api/requests                  Provision a new service
-GET  /api/instances                 All provisioned instances
-GET  /api/instances/{name}          Full instance detail (topology, conditions, endpoints)
-PUT  /api/instances/{name}          Update instance
-DELETE /api/instances/{name}        Delete instance
-POST /api/instances/{name}/actions  Submit day-2 ActionRequest
-GET  /api/audit                     Queryable audit trail
-```
+- `GET /api/auth/config`, `GET /api/auth/session`, `GET /api/auth/login`, `GET /api/auth/callback`, `GET /api/auth/logout`
+- `GET /api/overview`
+- `GET /api/tenants`
+- `GET /api/projects`
+- `GET /api/catalog`
+- `POST /api/requests`
+- `GET /api/instances`
+- `GET /api/instances/{name}`
+- `PUT /api/instances/{name}`
+- `DELETE /api/instances/{name}`
+- `POST /api/instances/{name}/actions`
+- `POST /api/actions/{name}/approval`
+- `GET /api/namespaceclaims`
+- `POST /api/namespaceclaims`
+- `GET|PUT|DELETE /api/namespaceclaims/{name}`
+- `GET /api/servicebindings`
+- `GET /api/virtualmachineclaims`
+- `GET /api/audit`
+- `GET|POST|PUT|DELETE /api/admin/...`
 
-### Frontend Routes
+### Product status
 
-| Route | View |
-|-------|------|
-| `/` | Overview — health dashboard |
-| `/catalog` | Request a new service |
-| `/instances` | Provisioned services (filterable) |
-| `/instances/:name` | Instance detail — topology, actions, endpoints |
-| `/tenancy` | Tenants + projects |
-| `/audit` | Change audit trail |
-
-## Supported Services
-
-| Service | Status |
+| Product | Status |
 |---------|--------|
 | Kubernetes Namespace | Available |
 | PostgreSQL (CloudNativePG) | Available |
-| MySQL (Servicer-owned) | Available |
-| Valkey / Redis | Available |
-| NATS (JetStream) | Available |
-| YugabyteDB | Planned |
-| Cassandra (K8ssandra) | Planned |
-| KubeVirt | Planned |
+| MySQL | Available |
+| Valkey | Available |
+| NATS | Available |
+| YugabyteDB | Available |
+| Cassandra (K8ssandra) | Partial |
+| Virtual Machine (KubeVirt) | Partial |
 
-## Getting Started
+See [docs/feature-gaps.md](docs/feature-gaps.md) for the remaining partial areas.
 
-### Docker demo
+## Demo environment
 
-Runs the app against a local Kind cluster. Requires Docker Engine and `kind` + `kubectl` on your host. Port 8080 must be free.
+`hack/demo-setup.sh` is the primary demo/bootstrap path and is intended to be representative of the real platform shape, not a one-off toy environment.
 
-**Step 1 — create the cluster (once):**
+It creates two Kind clusters:
+
+- `servicer-app`: runs the Servicer control plane
+- `servicer-target`: acts as the managed target cluster
+
+The app cluster runs:
+
+- `manager`
+- `syncer`
+- `bff`
+- `web`
+
+The target cluster receives operator packages and materialized runtime resources.
+
+### Prerequisites
+
+- Docker
+- `kind`
+- `kubectl`
+
+### Bring the demo up
 
 ```bash
 ./hack/demo-setup.sh
 ```
 
-Creates a Kind cluster named `servicer-demo`, installs CRDs, and applies the demo catalog and tenancy. Writes a standalone kubeconfig to `generated/demo-kubeconfig`. Re-run any time you change CRDs or `config/samples/`.
+Then open:
 
-**Step 2 — start the app:**
-
-```bash
-docker compose -f docker-compose.demo.yml up --build
+```text
+http://localhost:5173
 ```
 
-Open **http://localhost:8080**.
-
-Services started:
-- `manager` — reconciles `ServiceInstance` CRDs, materialises delivery artifacts
-- `syncer` — applies generated manifests to the Kind cluster every 3 s (`bitnami/kubectl`)
-- `bff` — the Servicer API backend on `:8090`
-- `web` — nginx serving the Vue SPA, proxies `/api/` → bff
-
-All services use `network_mode: host` so they reach the Kind API server at `127.0.0.1:6443` exactly as in local development — no kubeconfig patching or extra networking.
-
-**Rebuild after code changes (cluster is unaffected):**
+### Tear the demo down
 
 ```bash
-docker compose -f docker-compose.demo.yml up --build --no-deps bff
-docker compose -f docker-compose.demo.yml up --build --no-deps manager
-docker compose -f docker-compose.demo.yml up --build --no-deps web
+./hack/demo-setup.sh down
 ```
 
-**Tear down:**
+## Local build and verification
 
-```bash
-docker compose -f docker-compose.demo.yml down
-kind delete cluster --name servicer-demo
-```
-
----
-
-### Local development (go run)
-
-**Prerequisites:** Go 1.23+, Node 20+, `kind`, `kubectl`
-
-```bash
-./hack/kind-demo.sh
-```
-
-Creates a Kind cluster, installs CRDs, and starts the BFF + controller + demo sync loop directly via `go run`. Use this for active development where you want fast recompile cycles.
-
-### Build
-
-```bash
-go build ./cmd/bff
-go build ./cmd/manager
-cd web && npm ci && npm run build
-```
-
-### Run BFF
-
-```bash
-./bff --listen :8090 --tls-listen :8443
-```
-
-### Run frontend (dev)
-
-```bash
-cd web && npm run dev
-# Serves on :5173, proxies /api → :8090
-```
-
-### Install CRDs
-
-```bash
-kubectl apply -f config/crd/bases/
-```
-
-### Sample resources
-
-```bash
-kubectl apply -f config/samples/
-```
-
-## Development
-
-### Tests
+### Go tests
 
 ```bash
 go test ./...
 ```
 
-### Control-plane backup
-
-Best-effort backup and restore tooling for Servicer control-plane state:
+### Frontend build
 
 ```bash
-./hack/control-plane-backup.sh backup
-./hack/control-plane-backup.sh restore ./backups/servicer-YYYYMMDD-HHMMSS
+cd web
+npm ci
+npm run build
 ```
 
-This snapshots:
-- Servicer cluster-scoped CRDs
-- `servicer-system` Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings
-- Servicer-managed Argo CD `Application` objects
-- local `generated/` delivery tree when present
-
-This is not full etcd backup, but useful for demo recovery, migration drills, and control-plane state export/import.
-
-### CRD generation
-
-Requires `controller-gen v0.17.3`:
+### Manifest validation
 
 ```bash
-controller-gen crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
-controller-gen object paths="./api/..."
+kubectl kustomize config/deploy > /dev/null
+kubectl kustomize config/samples > /dev/null
 ```
 
-## Delivery
+### Container builds
 
-Services are delivered via Argo CD. Servicer CRDs are the authoritative source of desired state — not Git-first workflows. The controller materialises Argo `Application` objects from `ServiceInstance` specs.
+```bash
+docker build -f Containerfile.manager -t servicer/manager:dev .
+docker build -f Containerfile.syncer -t servicer/syncer:dev .
+docker build -f Containerfile.bff -t servicer/bff:dev .
+docker build -f Containerfile.web -t servicer/web:dev .
+```
 
-For Argo-backed delivery beyond the local demo flow, the manager can be configured with:
+## Delivery model
 
-- `--delivery-repo-url` for the Git repo Argo should track
-- `--delivery-repo-path` for the repo-relative root that receives generated packages
-- `--delivery-repo-worktree` for a local checked-out worktree that Servicer publishes into
-- `--delivery-repo-auto-commit` to create local Git commits after publication
-- `--argocd-namespace` and `--argocd-project` for managed `Application` placement
+Servicer can publish rendered artifacts into a Git worktree/repository and create Argo CD `Application` or `ApplicationSet` resources to drive sync onto target clusters. The control plane remains CRD-first: Git publication and Argo are delivery mechanisms, not the authoring system of record.
 
-## Product Standards
+Relevant manager flags include:
 
-- [Product standards](docs/product-standards.md) - shared product contract rules, including relational database naming defaults and normalization
+- `--delivery-repo-url`
+- `--delivery-repo-path`
+- `--delivery-repo-worktree`
+- `--delivery-repo-auto-commit`
+- `--argocd-namespace`
+- `--argocd-project`
+
+## Authentication
+
+The BFF supports:
+
+- OIDC browser login with callback flow
+- server-managed encrypted browser session cookies
+- refresh-token renewal
+- bearer-token API access
+- optional demo-header auth fallback for local development
+
+## Secrets note
+
+This repo does not intentionally store live production credentials. It does include demo/bootstrap defaults in sample manifests where certain upstream operators require initial local-only credentials to self-initialize during demo bring-up.
+
+## Additional docs
+
+- [Feature gap analysis](docs/feature-gaps.md)
+- [Product standards](docs/product-standards.md)
 
 ## License
 
