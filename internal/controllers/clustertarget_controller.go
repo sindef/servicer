@@ -252,12 +252,24 @@ func (r *ClusterTargetReconciler) reconcilePackages(ctx context.Context, target 
 // installPackageDirect fetches the manifest from pkg.Spec.Source.ManifestURL and
 // applies every document to the target cluster using server-side apply.
 func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, kubeconfigBytes []byte, targetClient client.Client, pkg *platformv1alpha1.OperatorPackage) error {
+	targetNamespace := firstNonEmptyTrimmed(pkg.Spec.TargetNamespace, "operators")
+	if targetNamespace != "" {
+		namespace := &corev1.Namespace{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: targetNamespace,
+			},
+		}
+		if err := targetClient.Patch(ctx, namespace, client.Apply, client.FieldOwner("servicer-operator-installer"), client.ForceOwnership); err != nil {
+			return fmt.Errorf("ensuring target namespace %q: %w", targetNamespace, err)
+		}
+	}
 	if pkg.Spec.Source.ManifestURL != "" {
 		body, err := fetchURLBytes(pkg.Spec.Source.ManifestURL)
 		if err != nil {
 			return err
 		}
-		if err := applyManifestBytes(ctx, targetClient, body); err != nil {
+		if err := applyManifestBytes(ctx, targetClient, body, targetNamespace); err != nil {
 			return err
 		}
 	}
@@ -285,7 +297,7 @@ func fetchURLBytes(url string) ([]byte, error) {
 	return body, nil
 }
 
-func applyManifestBytes(ctx context.Context, targetClient client.Client, body []byte) error {
+func applyManifestBytes(ctx context.Context, targetClient client.Client, body []byte, defaultNamespace string) error {
 	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(body)))
 	var applyErr error
 	for {
@@ -310,6 +322,9 @@ func applyManifestBytes(ctx context.Context, targetClient client.Client, body []
 		}
 		if obj.GetKind() == "" || obj.GetAPIVersion() == "" {
 			continue
+		}
+		if shouldDefaultObjectNamespace(obj) && strings.TrimSpace(obj.GetNamespace()) == "" && defaultNamespace != "" {
+			obj.SetNamespace(defaultNamespace)
 		}
 		obj.SetManagedFields(nil)
 		if err := targetClient.Patch(ctx, obj, client.Apply,
@@ -347,7 +362,12 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 	releaseName := pkg.Name
 	targetNamespace := firstNonEmptyTrimmed(pkg.Spec.TargetNamespace, "operators")
 	if targetNamespace != "" {
-		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: targetNamespace}}
+		namespace := &corev1.Namespace{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: targetNamespace,
+			},
+		}
 		if err := targetClient.Patch(ctx, namespace, client.Apply, client.FieldOwner("servicer-operator-installer"), client.ForceOwnership); err != nil {
 			return fmt.Errorf("ensuring target namespace %q: %w", targetNamespace, err)
 		}
@@ -372,10 +392,29 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 	if err != nil {
 		return fmt.Errorf("helm template failed: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	if err := applyManifestBytes(ctx, targetClient, output); err != nil {
+	if err := applyManifestBytes(ctx, targetClient, output, targetNamespace); err != nil {
 		return fmt.Errorf("applying rendered helm chart: %w", err)
 	}
 	return nil
+}
+
+func shouldDefaultObjectNamespace(obj *unstructured.Unstructured) bool {
+	if obj == nil {
+		return false
+	}
+	if obj.GetKind() == "Namespace" {
+		return false
+	}
+	switch obj.GroupVersionKind().Group {
+	case "apiextensions.k8s.io", "admissionregistration.k8s.io", "apiregistration.k8s.io", "rbac.authorization.k8s.io", "storage.k8s.io", "scheduling.k8s.io":
+		switch obj.GetKind() {
+		case "Role", "RoleBinding":
+			return true
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func extractTarGz(destDir string, data []byte) error {

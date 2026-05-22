@@ -334,6 +334,57 @@ func TestProbePackageRequiresTargetNamespaceWhenSpecified(t *testing.T) {
 	}
 }
 
+func TestShouldDefaultObjectNamespace(t *testing.T) {
+	tests := []struct {
+		name string
+		obj  *unstructured.Unstructured
+		want bool
+	}{
+		{
+			name: "service account defaults",
+			obj: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ServiceAccount",
+				"metadata":   map[string]any{"name": "external-secrets"},
+			}},
+			want: true,
+		},
+		{
+			name: "namespace stays cluster scoped",
+			obj: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Namespace",
+				"metadata":   map[string]any{"name": "external-secrets"},
+			}},
+			want: false,
+		},
+		{
+			name: "cluster role stays cluster scoped",
+			obj: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "rbac.authorization.k8s.io/v1",
+				"kind":       "ClusterRole",
+				"metadata":   map[string]any{"name": "external-secrets"},
+			}},
+			want: false,
+		},
+		{
+			name: "role remains namespaced",
+			obj: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "rbac.authorization.k8s.io/v1",
+				"kind":       "Role",
+				"metadata":   map[string]any{"name": "external-secrets"},
+			}},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		if got := shouldDefaultObjectNamespace(tt.obj); got != tt.want {
+			t.Fatalf("%s: expected %t, got %t", tt.name, tt.want, got)
+		}
+	}
+}
+
 func TestServiceClassReconcilerPublishesImplementedPostgreSQLClass(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
