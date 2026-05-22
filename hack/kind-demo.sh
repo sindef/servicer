@@ -15,6 +15,7 @@ BFF_TLS_ADDR="${BFF_TLS_ADDR:-127.0.0.1:8443}"
 DELIVERY_ROOT="${DELIVERY_ROOT:-$(pwd)/generated/demo-delivery}"
 INSTANCE_NAME="${INSTANCE_NAME:-demo-namespace}"
 YUGABYTE_OPERATOR_REF="${YUGABYTE_OPERATOR_REF:-main}"
+COOKIE_JAR="$(mktemp)"
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -44,6 +45,7 @@ wait_for_jsonpath() {
 }
 
 cleanup() {
+  rm -f "${COOKIE_JAR}" >/dev/null 2>&1 || true
   if [[ -n "${MANAGER_PID:-}" ]]; then
     kill "${MANAGER_PID}" >/dev/null 2>&1 || true
   fi
@@ -107,6 +109,10 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 curl -fsS "http://${BFF_ADDR}/api/healthz" >/dev/null
+curl -fsS -X POST "http://${BFF_ADDR}/api/auth/login" \
+  -c "${COOKIE_JAR}" -b "${COOKIE_JAR}" \
+  -H "Content-Type: application/json" \
+  --data '{"provider":"local","username":"demo-admin","password":"demo-admin"}' >/dev/null
 
 wait_for_jsonpath "tenant/demo" "{.status.phase}" "Ready"
 wait_for_jsonpath "project/demo-prod" "{.status.phase}" "Ready"
@@ -117,9 +123,8 @@ kubectl delete "serviceinstance/${INSTANCE_NAME}" --ignore-not-found >/dev/null
 kubectl delete "namespace/demo-prod-${INSTANCE_NAME}" --ignore-not-found >/dev/null
 
 curl -fsS -X POST "http://${BFF_ADDR}/api/requests" \
+  -c "${COOKIE_JAR}" -b "${COOKIE_JAR}" \
   -H "Content-Type: application/json" \
-  -H "X-Servicer-User: demo@servicer.local" \
-  -H "X-Servicer-Roles: platform-admin,tenant-operator,service-consumer" \
   --data "{\"name\":\"${INSTANCE_NAME}\",\"projectName\":\"demo-prod\",\"serviceClass\":\"namespace\",\"servicePlan\":\"namespace-team\"}" >/dev/null
 
 wait_for_jsonpath "serviceinstance/${INSTANCE_NAME}" "{.status.phase}" "Provisioning"
@@ -134,12 +139,11 @@ kubectl annotate "serviceinstance/${INSTANCE_NAME}" "servicer.io/demo-refresh=$(
 wait_for_jsonpath "serviceinstance/${INSTANCE_NAME}" "{.status.phase}" "Ready"
 
 curl -fsS -X POST "http://${BFF_ADDR}/api/instances/${INSTANCE_NAME}/actions" \
+  -c "${COOKIE_JAR}" -b "${COOKIE_JAR}" \
   -H "Content-Type: application/json" \
-  -H "X-Servicer-User: demo@servicer.local" \
-  -H "X-Servicer-Roles: platform-admin,tenant-operator,service-consumer" \
   --data '{"action":"update-quota","reason":"KIND demo smoke test","parameters":{"cpu":"2","memory":"4Gi","pods":"20"}}' >/dev/null
 
-curl -fsS "http://${BFF_ADDR}/api/instances/${INSTANCE_NAME}" >/dev/null
-curl -fsS "http://${BFF_ADDR}/api/audit?q=update-quota" >/dev/null
+curl -fsS -b "${COOKIE_JAR}" "http://${BFF_ADDR}/api/instances/${INSTANCE_NAME}" >/dev/null
+curl -fsS -b "${COOKIE_JAR}" "http://${BFF_ADDR}/api/audit?q=update-quota" >/dev/null
 
 echo "KIND demo smoke test passed for ${INSTANCE_NAME} in ${CLUSTER_NAME}."

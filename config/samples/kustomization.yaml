@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - local-dev-cluster-target.yaml
+  - demo-auth.yaml
   - operator-packages.yaml
   - service-catalog.yaml
   - demo-tenancy.yaml

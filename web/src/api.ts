@@ -304,6 +304,129 @@ export interface UpdateServiceClassRequest {
   defaultParameters?: Record<string, unknown>
 }
 
+export interface AuthProviderSummary {
+  name: string
+  displayName: string
+  type: 'local' | 'oidc' | 'ldap'
+  enabled: boolean
+  default: boolean
+  phase?: string
+  oidcIssuerUrl?: string
+  oidcClientId?: string
+  oidcScopes?: string[]
+  oidcUsernameClaim?: string
+  oidcEmailClaim?: string
+  oidcRolesClaim?: string
+  oidcGroupsClaim?: string
+  oidcRedirectPath?: string
+  oidcEndSessionUrl?: string
+  ldapUrl?: string
+  ldapUserBaseDn?: string
+  ldapUserFilter?: string
+  ldapUsernameAttribute?: string
+  ldapEmailAttribute?: string
+  ldapGroupBaseDn?: string
+  ldapGroupFilter?: string
+  ldapGroupNameAttribute?: string
+  ldapStartTls?: boolean
+  insecureSkipVerify?: boolean
+  secretConfigured?: boolean
+}
+
+export interface AuthProviderRequest {
+  name: string
+  displayName: string
+  type: 'local' | 'oidc' | 'ldap'
+  enabled: boolean
+  default: boolean
+  oidcIssuerUrl?: string
+  oidcClientId?: string
+  oidcClientSecret?: string
+  oidcScopes?: string[]
+  oidcUsernameClaim?: string
+  oidcEmailClaim?: string
+  oidcRolesClaim?: string
+  oidcGroupsClaim?: string
+  oidcRedirectPath?: string
+  oidcEndSessionUrl?: string
+  ldapUrl?: string
+  ldapBindUsername?: string
+  ldapBindPassword?: string
+  ldapUserBaseDn?: string
+  ldapUserFilter?: string
+  ldapUsernameAttribute?: string
+  ldapEmailAttribute?: string
+  ldapGroupBaseDn?: string
+  ldapGroupFilter?: string
+  ldapGroupNameAttribute?: string
+  ldapStartTls?: boolean
+  insecureSkipVerify?: boolean
+}
+
+export interface ExternalIdentitySummary {
+  provider: string
+  subject: string
+}
+
+export interface UserSummary {
+  name: string
+  displayName?: string
+  email?: string
+  localAuthEnabled: boolean
+  externalIdentities?: ExternalIdentitySummary[]
+}
+
+export interface UserRequest {
+  name: string
+  displayName?: string
+  email?: string
+  localAuthEnabled: boolean
+  password?: string
+  externalIdentities?: ExternalIdentitySummary[]
+}
+
+export interface ExternalGroupSummary {
+  provider: string
+  name: string
+}
+
+export interface GroupSummary {
+  name: string
+  displayName?: string
+  members?: string[]
+  externalGroups?: ExternalGroupSummary[]
+}
+
+export interface GroupRequest {
+  name: string
+  displayName?: string
+  members?: string[]
+  externalGroups?: ExternalGroupSummary[]
+}
+
+export interface RoleBindingSubject {
+  kind: 'User' | 'Group'
+  name: string
+}
+
+export interface RoleBindingSummary {
+  name: string
+  displayName?: string
+  scope: 'platform' | 'tenant'
+  tenantName?: string
+  subjects: RoleBindingSubject[]
+  roles: string[]
+}
+
+export interface RoleBindingRequest {
+  name: string
+  displayName?: string
+  scope: 'platform' | 'tenant'
+  tenantName?: string
+  subjects: RoleBindingSubject[]
+  roles: string[]
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -432,6 +555,66 @@ export const api = {
       request<{ name: string; message: string }>(`/api/admin/serviceclasses/${encodeURIComponent(name)}`, {
         method: 'PUT',
         body: JSON.stringify(body)
+      }),
+    authProviders: () => request<AuthProviderSummary[]>('/api/admin/auth/providers'),
+    createAuthProvider: (body: AuthProviderRequest) =>
+      request<{ name: string; message: string }>('/api/admin/auth/providers', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    updateAuthProvider: (name: string, body: AuthProviderRequest) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/providers/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
+    deleteAuthProvider: (name: string) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/providers/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      }),
+    users: () => request<UserSummary[]>('/api/admin/auth/users'),
+    createUser: (body: UserRequest) =>
+      request<{ name: string; message: string }>('/api/admin/auth/users', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    updateUser: (name: string, body: UserRequest) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/users/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
+    deleteUser: (name: string) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/users/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      }),
+    groups: () => request<GroupSummary[]>('/api/admin/auth/groups'),
+    createGroup: (body: GroupRequest) =>
+      request<{ name: string; message: string }>('/api/admin/auth/groups', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    updateGroup: (name: string, body: GroupRequest) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/groups/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
+    deleteGroup: (name: string) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/groups/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      }),
+    roleBindings: () => request<RoleBindingSummary[]>('/api/admin/auth/rolebindings'),
+    createRoleBinding: (body: RoleBindingRequest) =>
+      request<{ name: string; message: string }>('/api/admin/auth/rolebindings', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    updateRoleBinding: (name: string, body: RoleBindingRequest) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/rolebindings/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
+    deleteRoleBinding: (name: string) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/rolebindings/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
       })
   },
 

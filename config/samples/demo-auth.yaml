@@ -1,0 +1,46 @@
+apiVersion: platform.servicer.io/v1alpha1
+kind: AuthProvider
+metadata:
+  name: local
+spec:
+  displayName: Local
+  type: local
+  enabled: true
+  default: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: user-demo-admin-local-auth
+  namespace: servicer-system
+type: Opaque
+stringData:
+  passwordHash: "$2a$10$35h/N7nkzkey92ab7o8v9eJV5iu7KaQ3MkYXR8uWDovOrezANG/Dy"
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: User
+metadata:
+  name: demo-admin
+spec:
+  displayName: Demo Administrator
+  email: demo-admin@servicer.local
+  localAuth:
+    enabled: true
+    passwordHashSecretRef:
+      name: user-demo-admin-local-auth
+      namespace: servicer-system
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: RoleBinding
+metadata:
+  name: demo-platform-admin
+spec:
+  displayName: Demo platform admin
+  scope: platform
+  subjects:
+    - kind: User
+      name: demo-admin
+  roles:
+    - platform-admin
+    - catalog-admin
+    - cluster-admin

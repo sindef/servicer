@@ -25,12 +25,12 @@ TENANT_NAME="demo-tenant"
 PROJECT_NAME="demo-project"
 REPO_NAME="argocd-examples"
 INSTANCE_NAME="guestbook"
+COOKIE_JAR="$(mktemp)"
 
-# In demo mode the BFF accepts role headers directly.
-AUTH_HEADERS=(
-  -H "X-Servicer-Actor: demo-admin"
-  -H "X-Servicer-Roles: platform-admin,tenant-operator,service-consumer"
-)
+cleanup() {
+  rm -f "${COOKIE_JAR}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -44,7 +44,7 @@ bff() {
   local path="$2"
   shift 2
   curl -fsSL -X "${method}" "${BFF_ADDR}${path}" \
-    "${AUTH_HEADERS[@]}" \
+    -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" \
     -H "Content-Type: application/json" \
     "$@"
 }
@@ -55,6 +55,8 @@ require jq
 
 echo "==> Checking BFF is reachable at ${BFF_ADDR}..."
 bff GET /api/healthz >/dev/null
+echo "==> Logging in with local demo admin..."
+bff POST /api/auth/login -d '{"provider":"local","username":"demo-admin","password":"demo-admin"}' >/dev/null
 
 # ── 1. Tenant ──────────────────────────────────────────────────────────────────
 echo "==> Ensuring tenant '${TENANT_NAME}'..."

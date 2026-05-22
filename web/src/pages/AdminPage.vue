@@ -10,10 +10,11 @@ import {
 } from '../api'
 import { useApi } from '../composables/useApi'
 import StatusPill from '../components/StatusPill.vue'
+import AuthAdminPanel from '../components/AuthAdminPanel.vue'
 
 // ── tabs ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'tenants' | 'projects' | 'clusters' | 'catalog' | 'repositories'
+type Tab = 'tenants' | 'projects' | 'clusters' | 'catalog' | 'repositories' | 'auth'
 const activeTab = ref<Tab>('tenants')
 
 // ── data ──────────────────────────────────────────────────────────────────────
@@ -452,7 +453,7 @@ async function executeDelete() {
   <!-- Tab strip -->
   <div class="tab-strip">
     <button
-      v-for="tab in (['tenants', 'projects', 'clusters', 'catalog', 'repositories'] as const)"
+      v-for="tab in (['tenants', 'projects', 'clusters', 'catalog', 'repositories', 'auth'] as const)"
       :key="tab"
       class="tab-btn"
       :class="{ active: activeTab === tab }"
@@ -737,6 +738,10 @@ async function executeDelete() {
         </tbody>
       </table>
     </section>
+  </template>
+
+  <template v-if="activeTab === 'auth'">
+    <AuthAdminPanel />
   </template>
 
   <!-- ── REPOSITORY MODAL ────────────────────────────────────────────────── -->

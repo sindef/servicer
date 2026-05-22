@@ -81,7 +81,5 @@ services:
       dockerfile: Containerfile.web
     environment:
       BFF_URL: "http://127.0.0.1:8090"
-      DEMO_USER: "demo-admin"
-      DEMO_ROLES: "platform-admin,tenant-operator,service-consumer"
     network_mode: host
     restart: on-failure

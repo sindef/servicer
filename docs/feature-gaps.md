@@ -17,9 +17,9 @@ Implementation notes in this review are current as of 2026-05-22.
 **Plan 003** — The controller now auto-creates and updates Argo CD `Application` resources for single-cluster deliveries, pushes generated artifacts to a configured remote Git repository after local publication, and switches to Argo CD `ApplicationSet` fan-out when adapters render multiple cluster package paths. The platform continues to expose a first-class `argo-application` product contract, project-scoped repository registry endpoints, and UI flows to register Git repositories and request Argo-backed app deployments without manual secret setup in Argo CD.  
 Commit: `4ae28c8`
 
-### [x] OIDC / real authentication
-**Plans 005, 006** — Backend auth is no longer header-only: the BFF now supports OIDC JWT validation with issuer/client-id configuration, roles/groups claim extraction, encrypted server-managed browser session cookies, refresh-token renewal for browser sessions, explicit login/callback/logout endpoints, and an opt-in demo-header fallback for local/dev use. The frontend now bootstraps auth mode from the BFF, relies on the server-managed browser session rather than local token storage, and supports browser sign-in/sign-out through the BFF flow.  
-Commit: `76c9a05`
+### [x] Enterprise authentication and authorization
+**Plans 005, 006** — Servicer now has a CRD-backed auth stack instead of demo/header auth. `AuthProvider`, `User`, `Group`, and `RoleBinding` APIs drive local username/password, OIDC, and LDAP authentication; the frontend discovers configured providers dynamically and supports provider choice at sign-in; browser sessions are sealed server-managed cookies; OIDC sessions support callback and refresh-token renewal; and BFF authorization now resolves platform roles plus tenant-scoped role bindings for users and groups, with scoped admin roles for catalog and cluster management.  
+Commit: `76c9a05`, `05e9b04`
 
 ### [x] Approvals workflow
 **Plan 006** — `ActionRequest` approval is now enforced end to end. Sensitive actions stop in `PendingApproval`, the BFF exposes an approval/rejection path for approver roles, self-approval is blocked for non-admins, and the controller refuses “approved” actions that do not carry approver identity.  

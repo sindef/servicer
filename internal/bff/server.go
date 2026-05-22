@@ -210,8 +210,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
 		}
-		response, _, _ := s.auth.SessionFromRequest(r.Context(), r)
-		writeJSON(w, http.StatusOK, response)
+		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}

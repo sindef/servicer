@@ -1,5 +1,56 @@
 <script setup lang="ts">
-import { authConfig, authError, authReady, authSession, beginLogin, logout } from './auth'
+import { computed, reactive, ref, watch } from 'vue'
+import {
+  authConfig,
+  authError,
+  authReady,
+  authSession,
+  availableAuthProviders,
+  beginOIDCLogin,
+  completePasswordLogin,
+  logout
+} from './auth'
+
+const selectedProvider = ref('')
+const loginForm = reactive({
+  username: '',
+  password: ''
+})
+const loginError = ref<string | null>(null)
+const loginLoading = ref(false)
+
+const providers = computed(() => availableAuthProviders.value)
+const providerDetails = computed(() =>
+  providers.value.find((provider) => provider.name === selectedProvider.value) ?? null
+)
+
+watch(
+  providers,
+  (nextProviders) => {
+    if (!selectedProvider.value && nextProviders.length > 0) {
+      selectedProvider.value =
+        authConfig.value?.defaultProvider ||
+        nextProviders.find((provider) => provider.default)?.name ||
+        nextProviders[0]?.name ||
+        ''
+    }
+  },
+  { immediate: true }
+)
+
+async function submitPasswordLogin() {
+  if (!providerDetails.value) return
+  loginLoading.value = true
+  loginError.value = null
+  try {
+    await completePasswordLogin(providerDetails.value.name, loginForm.username, loginForm.password)
+    loginForm.password = ''
+  } catch (err) {
+    loginError.value = err instanceof Error ? err.message : 'Login failed'
+  } finally {
+    loginLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -22,19 +73,14 @@ import { authConfig, authError, authReady, authSession, beginLogin, logout } fro
         <RouterLink to="/admin">Admin</RouterLink>
       </nav>
       <div class="auth-panel">
-        <template v-if="authReady && authConfig?.mode === 'oidc' && authSession?.authenticated">
+        <template v-if="authReady && authSession?.authenticated">
           <strong>{{ authSession.name }}</strong>
-          <small>{{ authSession.roles.join(', ') || 'Authenticated user' }}</small>
+          <small>{{ authSession.provider || 'authenticated' }} · {{ authSession.roles.join(', ') || 'no platform roles' }}</small>
           <button class="button secondary compact-button" @click="logout">Sign out</button>
         </template>
-        <template v-else-if="authReady && authConfig?.mode === 'oidc'">
-          <strong>Sign in required</strong>
-          <small>Use your identity provider account to access Servicer.</small>
-          <button class="button primary compact-button" @click="beginLogin()">Sign in</button>
-        </template>
         <template v-else>
-          <strong>Demo mode</strong>
-          <small>{{ authSession?.name || 'demo@servicer.local' }}</small>
+          <strong>Authentication required</strong>
+          <small>Select a configured identity provider to continue.</small>
         </template>
       </div>
     </aside>
@@ -47,15 +93,43 @@ import { authConfig, authError, authReady, authSession, beginLogin, logout } fro
       <section v-else-if="authError" class="content-band">
         <h2>Authentication error</h2>
         <p class="error-text">{{ authError }}</p>
-        <button v-if="authConfig?.mode === 'oidc'" class="button primary" @click="beginLogin()">Try sign in again</button>
       </section>
-      <section v-else-if="authConfig?.mode === 'oidc' && !authSession?.authenticated" class="content-band auth-splash">
+      <section v-else-if="!authSession?.authenticated" class="content-band auth-splash">
         <p class="eyebrow">Authentication</p>
         <h1>Sign in to Servicer</h1>
-        <p class="muted">Your control plane is configured for OpenID Connect. Use browser sign-in to establish a session.</p>
-        <div class="form-actions">
-          <button class="button primary" @click="beginLogin()">Continue to login</button>
+        <p class="muted">Choose one of the configured authentication providers below.</p>
+        <div class="form-grid modal-form-grid">
+          <label>
+            Provider
+            <select v-model="selectedProvider">
+              <option v-for="provider in providers" :key="provider.name" :value="provider.name">
+                {{ provider.displayName }} ({{ provider.type }})
+              </option>
+            </select>
+          </label>
         </div>
+        <div v-if="providerDetails?.type === 'oidc'" class="form-actions">
+          <button class="button primary" @click="beginOIDCLogin(providerDetails.name)">
+            Continue with {{ providerDetails.displayName }}
+          </button>
+        </div>
+        <form v-else class="form-grid modal-form-grid" @submit.prevent="submitPasswordLogin">
+          <label>
+            Username
+            <input v-model="loginForm.username" type="text" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input v-model="loginForm.password" type="password" autocomplete="current-password" />
+          </label>
+          <p v-if="loginError" class="error-text">{{ loginError }}</p>
+          <div class="form-actions">
+            <button class="button primary" :disabled="loginLoading || !providerDetails" type="submit">
+              <span v-if="providerDetails">Sign in with {{ providerDetails.displayName }}</span>
+              <span v-else>Sign in</span>
+            </button>
+          </div>
+        </form>
       </section>
       <RouterView v-else />
     </main>

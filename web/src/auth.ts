@@ -1,31 +1,44 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+
+export interface AuthProviderView {
+  name: string
+  displayName: string
+  type: 'local' | 'oidc' | 'ldap'
+  default?: boolean
+}
 
 export interface AuthConfig {
-  mode: 'header' | 'oidc'
-  allowDemoHeaders?: boolean
+  mode: 'multi'
   loginPath?: string
   logoutPath?: string
-  oidc?: {
-    issuerUrl: string
-    clientId: string
-    scopes?: string[]
-    redirectPath?: string
-  }
+  callbackPath?: string
+  defaultProvider?: string
+  providers?: AuthProviderView[]
+}
+
+export interface TenantRoleSummary {
+  tenantName: string
+  roles: string[]
 }
 
 export interface AuthSession {
-  mode: 'header' | 'oidc'
+  mode: 'multi'
   name: string
+  email?: string
+  userName?: string
+  provider?: string
   roles: string[]
   groups: string[]
+  tenants?: TenantRoleSummary[]
   authenticated: boolean
-  allowDemoHeaders?: boolean
 }
 
 export const authConfig = ref<AuthConfig | null>(null)
 export const authSession = ref<AuthSession | null>(null)
 export const authReady = ref(false)
 export const authError = ref<string | null>(null)
+
+export const availableAuthProviders = computed(() => authConfig.value?.providers ?? [])
 
 export async function initializeAuth() {
   authReady.value = false
@@ -43,29 +56,33 @@ export async function initializeAuth() {
 }
 
 export function authHeaders(): HeadersInit {
-  const config = authConfig.value
-  if (!config || config.mode === 'header') {
-    return {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-Servicer-User': localStorage.getItem('servicer.user') || 'demo@servicer.local',
-      'X-Servicer-Roles':
-        localStorage.getItem('servicer.roles') || 'platform-admin,tenant-operator,service-consumer'
-    }
-  }
   return {
     Accept: 'application/json',
     'Content-Type': 'application/json'
   }
 }
 
-export function beginLogin(returnTo?: string | Event) {
+export function beginOIDCLogin(provider?: string, returnTo?: string | Event) {
   const targetPath =
     typeof returnTo === 'string' ? returnTo : window.location.pathname + window.location.search
   const path = authConfig.value?.loginPath || '/api/auth/login'
   const url = new URL(path, window.location.origin)
   url.searchParams.set('returnTo', targetPath)
+  if (provider) {
+    url.searchParams.set('provider', provider)
+  }
   window.location.assign(url.toString())
+}
+
+export async function completePasswordLogin(provider: string, username: string, password: string) {
+  await fetchJSON<AuthSession>('/api/auth/login', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ provider, username, password })
+  })
+  authSession.value = await fetchJSON<AuthSession>('/api/auth/session', {
+    headers: authHeaders()
+  })
 }
 
 export function logout(returnTo?: string | Event) {

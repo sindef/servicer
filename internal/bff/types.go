@@ -424,26 +424,32 @@ type RegisterServiceClassRequest struct {
 }
 
 type AuthProviderSummary struct {
-	Name                  string `json:"name"`
-	DisplayName           string `json:"displayName"`
-	Type                  string `json:"type"`
-	Enabled               bool   `json:"enabled"`
-	Default               bool   `json:"default"`
-	Phase                 string `json:"phase,omitempty"`
-	OIDCIssuerURL         string `json:"oidcIssuerUrl,omitempty"`
-	OIDCClientID          string `json:"oidcClientId,omitempty"`
-	OIDCRedirectPath      string `json:"oidcRedirectPath,omitempty"`
-	LDAPURL               string `json:"ldapUrl,omitempty"`
-	LDAPUserBaseDN        string `json:"ldapUserBaseDn,omitempty"`
-	LDAPUserFilter        string `json:"ldapUserFilter,omitempty"`
-	LDAPUsernameAttribute string `json:"ldapUsernameAttribute,omitempty"`
-	LDAPEmailAttribute    string `json:"ldapEmailAttribute,omitempty"`
-	LDAPGroupBaseDN       string `json:"ldapGroupBaseDn,omitempty"`
-	LDAPGroupFilter       string `json:"ldapGroupFilter,omitempty"`
-	LDAPGroupNameAttr     string `json:"ldapGroupNameAttribute,omitempty"`
-	LDAPStartTLS          bool   `json:"ldapStartTls,omitempty"`
-	InsecureSkipVerify    bool   `json:"insecureSkipVerify,omitempty"`
-	SecretConfigured      bool   `json:"secretConfigured,omitempty"`
+	Name                  string   `json:"name"`
+	DisplayName           string   `json:"displayName"`
+	Type                  string   `json:"type"`
+	Enabled               bool     `json:"enabled"`
+	Default               bool     `json:"default"`
+	Phase                 string   `json:"phase,omitempty"`
+	OIDCIssuerURL         string   `json:"oidcIssuerUrl,omitempty"`
+	OIDCClientID          string   `json:"oidcClientId,omitempty"`
+	OIDCScopes            []string `json:"oidcScopes,omitempty"`
+	OIDCUsernameClaim     string   `json:"oidcUsernameClaim,omitempty"`
+	OIDCEmailClaim        string   `json:"oidcEmailClaim,omitempty"`
+	OIDCRolesClaim        string   `json:"oidcRolesClaim,omitempty"`
+	OIDCGroupsClaim       string   `json:"oidcGroupsClaim,omitempty"`
+	OIDCRedirectPath      string   `json:"oidcRedirectPath,omitempty"`
+	OIDCEndSessionURL     string   `json:"oidcEndSessionUrl,omitempty"`
+	LDAPURL               string   `json:"ldapUrl,omitempty"`
+	LDAPUserBaseDN        string   `json:"ldapUserBaseDn,omitempty"`
+	LDAPUserFilter        string   `json:"ldapUserFilter,omitempty"`
+	LDAPUsernameAttribute string   `json:"ldapUsernameAttribute,omitempty"`
+	LDAPEmailAttribute    string   `json:"ldapEmailAttribute,omitempty"`
+	LDAPGroupBaseDN       string   `json:"ldapGroupBaseDn,omitempty"`
+	LDAPGroupFilter       string   `json:"ldapGroupFilter,omitempty"`
+	LDAPGroupNameAttr     string   `json:"ldapGroupNameAttribute,omitempty"`
+	LDAPStartTLS          bool     `json:"ldapStartTls,omitempty"`
+	InsecureSkipVerify    bool     `json:"insecureSkipVerify,omitempty"`
+	SecretConfigured      bool     `json:"secretConfigured,omitempty"`
 }
 
 type AuthProviderRequest struct {

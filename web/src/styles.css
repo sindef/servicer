@@ -273,6 +273,23 @@ h3 {
   margin-bottom: 8px;
 }
 
+.stack-gap {
+  display: grid;
+  gap: 18px;
+}
+
+.split-admin {
+  display: grid;
+  gap: 18px;
+}
+
+@media (min-width: 1080px) {
+  .split-admin {
+    grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+    align-items: start;
+  }
+}
+
 .auth-splash {
   max-width: 760px;
 }

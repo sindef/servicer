@@ -40,7 +40,13 @@ func (s *Server) handleListAuthProviders(w http.ResponseWriter, r *http.Request)
 			if provider.Spec.OIDC != nil {
 				summary.OIDCIssuerURL = provider.Spec.OIDC.IssuerURL
 				summary.OIDCClientID = provider.Spec.OIDC.ClientID
+				summary.OIDCScopes = append([]string(nil), provider.Spec.OIDC.Scopes...)
+				summary.OIDCUsernameClaim = provider.Spec.OIDC.UsernameClaim
+				summary.OIDCEmailClaim = provider.Spec.OIDC.EmailClaim
+				summary.OIDCRolesClaim = provider.Spec.OIDC.RolesClaim
+				summary.OIDCGroupsClaim = provider.Spec.OIDC.GroupsClaim
 				summary.OIDCRedirectPath = provider.Spec.OIDC.RedirectPath
+				summary.OIDCEndSessionURL = provider.Spec.OIDC.EndSessionURL
 				summary.SecretConfigured = provider.Spec.OIDC.ClientSecretRef.Name != ""
 			}
 		case platformv1alpha1.AuthProviderTypeLDAP:
@@ -116,6 +122,12 @@ func (s *Server) handleUpdateAuthProvider(w http.ResponseWriter, r *http.Request
 	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
 		writeError(w, err)
 		return
+	}
+	if existing.Spec.OIDC != nil && provider.Spec.OIDC != nil && provider.Spec.OIDC.ClientSecretRef.Name == "" {
+		provider.Spec.OIDC.ClientSecretRef = existing.Spec.OIDC.ClientSecretRef
+	}
+	if existing.Spec.LDAP != nil && provider.Spec.LDAP != nil && provider.Spec.LDAP.BindSecretRef.Name == "" {
+		provider.Spec.LDAP.BindSecretRef = existing.Spec.LDAP.BindSecretRef
 	}
 	existing.Spec = provider.Spec
 	if err := s.client.Update(r.Context(), &existing); err != nil {
@@ -246,6 +258,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+	if req.LocalAuthEnabled && strings.TrimSpace(req.Password) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password is required when local auth is enabled"})
+		return
+	}
 	user, secret, err := userFromRequest(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -290,6 +306,9 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
 		writeError(w, err)
 		return
+	}
+	if user.Spec.LocalAuth != nil && secret == nil {
+		user.Spec.LocalAuth.PasswordHashSecretRef = existing.Spec.LocalAuth.PasswordHashSecretRef
 	}
 	existing.Spec = user.Spec
 	if err := s.client.Update(r.Context(), &existing); err != nil {
@@ -338,17 +357,16 @@ func userFromRequest(req UserRequest) (*platformv1alpha1.User, *corev1.Secret, e
 	}
 	var secret *corev1.Secret
 	if req.LocalAuthEnabled {
-		if strings.TrimSpace(req.Password) == "" {
-			return nil, nil, fmt.Errorf("password is required when local auth is enabled")
-		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			return nil, nil, err
-		}
 		secretName := localUserSecretName(req.Name)
-		secret = &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: authSecretNamespace},
-			StringData: map[string]string{"passwordHash": string(hash)},
+		if strings.TrimSpace(req.Password) != "" {
+			hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+			if err != nil {
+				return nil, nil, err
+			}
+			secret = &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: authSecretNamespace},
+				StringData: map[string]string{"passwordHash": string(hash)},
+			}
 		}
 		user.Spec.LocalAuth = &platformv1alpha1.LocalAuthSpec{
 			Enabled:               true,

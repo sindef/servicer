@@ -49,7 +49,7 @@ API group: `platform.servicer.io/v1alpha1`
 
 ### Main BFF routes
 
-- `GET /api/auth/config`, `GET /api/auth/session`, `GET /api/auth/login`, `GET /api/auth/callback`, `GET /api/auth/logout`
+- `GET /api/auth/config`, `GET /api/auth/session`, `GET|POST /api/auth/login`, `GET /api/auth/callback`, `GET /api/auth/logout`
 - `GET /api/overview`
 - `GET /api/tenants`
 - `GET /api/projects`
@@ -120,6 +120,14 @@ Then open:
 http://localhost:5173
 ```
 
+Sample login for the seeded demo auth objects:
+
+```text
+username: demo-admin
+password: demo-admin
+provider: Local
+```
+
 ### Tear the demo down
 
 ```bash
@@ -175,11 +183,19 @@ Relevant manager flags include:
 
 The BFF supports:
 
+- local username/password authentication backed by Servicer `User` and `AuthProvider` CRDs
 - OIDC browser login with callback flow
+- LDAP username/password authentication with directory search/bind configuration from CRDs
 - server-managed encrypted browser session cookies
 - refresh-token renewal
 - bearer-token API access
-- optional demo-header auth fallback for local development
+
+Optional bootstrap env vars for first-run access:
+
+- `SERVICER_BOOTSTRAP_ADMIN_USERNAME`
+- `SERVICER_BOOTSTRAP_ADMIN_PASSWORD`
+- `SERVICER_BOOTSTRAP_ADMIN_EMAIL`
+- `SERVICER_SESSION_SECRET`
 
 ## Secrets note
 
@@ -189,4 +205,3 @@ This repo does not intentionally store live production credentials. It does incl
 
 - [Feature gap analysis](docs/feature-gaps.md)
 - [Product standards](docs/product-standards.md)
-
