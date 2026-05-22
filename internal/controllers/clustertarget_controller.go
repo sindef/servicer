@@ -346,6 +346,12 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 
 	releaseName := pkg.Name
 	targetNamespace := firstNonEmptyTrimmed(pkg.Spec.TargetNamespace, "operators")
+	if targetNamespace != "" {
+		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: targetNamespace}}
+		if err := targetClient.Patch(ctx, namespace, client.Apply, client.FieldOwner("servicer-operator-installer"), client.ForceOwnership); err != nil {
+			return fmt.Errorf("ensuring target namespace %q: %w", targetNamespace, err)
+		}
+	}
 	args := []string{
 		"template", releaseName, chartPath,
 		"--namespace", targetNamespace,
