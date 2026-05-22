@@ -13,6 +13,7 @@ spec:
     - crd: externalsecrets.external-secrets.io
     - crd: secretstores.external-secrets.io
   source:
+    manifestURL: https://raw.githubusercontent.com/external-secrets/external-secrets/v0.10.7/deploy/crds/bundle.yaml
     chartArchiveURL: https://codeload.github.com/external-secrets/external-secrets/tar.gz/refs/tags/v0.10.7
     repoURL: https://github.com/external-secrets/external-secrets
     path: deploy/charts/external-secrets
