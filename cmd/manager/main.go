@@ -183,6 +183,22 @@ func main() {
 			ctrl.Log.WithName("setup").Error(err, "unable to register project webhook")
 			os.Exit(1)
 		}
+		if err := (&platformv1alpha1.AuthProvider{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register auth provider webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.User{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register user webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.Group{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register group webhook")
+			os.Exit(1)
+		}
+		if err := (&platformv1alpha1.RoleBinding{}).SetupWebhookWithManager(mgr); err != nil {
+			ctrl.Log.WithName("setup").Error(err, "unable to register role binding webhook")
+			os.Exit(1)
+		}
 		if err := (&platformv1alpha1.ServiceInstance{}).SetupWebhookWithManager(mgr); err != nil {
 			ctrl.Log.WithName("setup").Error(err, "unable to register service instance webhook")
 			os.Exit(1)

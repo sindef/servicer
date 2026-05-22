@@ -250,3 +250,84 @@ func TestPolicyWebhookValidatesRuleSpec(t *testing.T) {
 		t.Fatal("expected validation error for incomplete rule")
 	}
 }
+
+func TestAuthProviderRejectsMissingOIDCSecretRef(t *testing.T) {
+	provider := &AuthProvider{
+		Spec: AuthProviderSpec{
+			DisplayName: "Corp SSO",
+			Type:        AuthProviderTypeOIDC,
+			Enabled:     true,
+			OIDC: &OIDCAuthProviderSpec{
+				IssuerURL: "https://issuer.example.com",
+				ClientID:  "servicer",
+			},
+		},
+	}
+
+	if _, err := provider.ValidateCreate(context.Background(), provider); err == nil {
+		t.Fatal("expected validation error for missing oidc clientSecretRef")
+	}
+}
+
+func TestUserRejectsMissingIdentitySources(t *testing.T) {
+	user := &User{Spec: UserSpec{DisplayName: "Alice"}}
+
+	if _, err := user.ValidateCreate(context.Background(), user); err == nil {
+		t.Fatal("expected validation error for user without local or external identity")
+	}
+}
+
+func TestGroupRejectsEmptyMembership(t *testing.T) {
+	group := &Group{Spec: GroupSpec{DisplayName: "Operators"}}
+
+	if _, err := group.ValidateCreate(context.Background(), group); err == nil {
+		t.Fatal("expected validation error for group without members or external groups")
+	}
+}
+
+func TestRoleBindingRequiresTenantForTenantScope(t *testing.T) {
+	binding := &RoleBinding{
+		Spec: RoleBindingSpec{
+			Scope: AccessScopeTenant,
+			Subjects: []SubjectReference{{
+				Kind: SubjectKindUser,
+				Name: "alice",
+			}},
+			Roles: []ServicerRole{RoleTenantOperator},
+		},
+	}
+
+	if _, err := binding.ValidateCreate(context.Background(), binding); err == nil {
+		t.Fatal("expected validation error for tenant-scoped binding without tenantRef")
+	}
+}
+
+func TestRoleBindingRejectsScopeMutation(t *testing.T) {
+	oldBinding := &RoleBinding{
+		Spec: RoleBindingSpec{
+			Scope: AccessScopePlatform,
+			Subjects: []SubjectReference{{
+				Kind: SubjectKindUser,
+				Name: "alice",
+			}},
+			Roles: []ServicerRole{RolePlatformAdmin},
+		},
+	}
+	newBinding := &RoleBinding{
+		Spec: RoleBindingSpec{
+			Scope: AccessScopeTenant,
+			TenantRef: &LocalObjectReference{
+				Name: "demo",
+			},
+			Subjects: []SubjectReference{{
+				Kind: SubjectKindUser,
+				Name: "alice",
+			}},
+			Roles: []ServicerRole{RoleTenantAdmin},
+		},
+	}
+
+	if _, err := newBinding.ValidateUpdate(context.Background(), oldBinding, newBinding); err == nil {
+		t.Fatal("expected validation error for scope mutation")
+	}
+}

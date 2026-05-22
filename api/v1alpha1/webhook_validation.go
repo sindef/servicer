@@ -32,6 +32,10 @@ const (
 	operatorPackageKind      = "OperatorPackage"
 	policyKind               = "Policy"
 	projectKind              = "Project"
+	authProviderKind         = "AuthProvider"
+	userKind                 = "User"
+	groupKind                = "Group"
+	roleBindingKind          = "RoleBinding"
 	serviceInstanceKind      = "ServiceInstance"
 	serviceClassKind         = "ServiceClass"
 	servicePlanKind          = "ServicePlan"
@@ -53,6 +57,14 @@ var (
 	_ webhook.CustomValidator = &Policy{}
 	_ webhook.CustomDefaulter = &Project{}
 	_ webhook.CustomValidator = &Project{}
+	_ webhook.CustomDefaulter = &AuthProvider{}
+	_ webhook.CustomValidator = &AuthProvider{}
+	_ webhook.CustomDefaulter = &User{}
+	_ webhook.CustomValidator = &User{}
+	_ webhook.CustomDefaulter = &Group{}
+	_ webhook.CustomValidator = &Group{}
+	_ webhook.CustomDefaulter = &RoleBinding{}
+	_ webhook.CustomValidator = &RoleBinding{}
 	_ webhook.CustomDefaulter = &ServiceInstance{}
 	_ webhook.CustomValidator = &ServiceInstance{}
 	_ webhook.CustomDefaulter = &ServiceClass{}
@@ -262,6 +274,138 @@ func (r *Project) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Objec
 }
 
 func (r *Project) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+	return nil, nil
+}
+
+// +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-authprovider,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=authproviders,verbs=create;update,versions=v1alpha1,name=mauthprovider.platform.servicer.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-authprovider,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=authproviders,verbs=create;update,versions=v1alpha1,name=vauthprovider.platform.servicer.io,admissionReviewVersions=v1
+func (r *AuthProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+}
+
+func (r *AuthProvider) Default(_ context.Context, _ runtime.Object) error {
+	return nil
+}
+
+func (r *AuthProvider) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+	provider, ok := obj.(*AuthProvider)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected an AuthProvider for create validation")
+	}
+	return nil, validateAuthProvider(provider)
+}
+
+func (r *AuthProvider) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	previous, ok := oldObj.(*AuthProvider)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected an AuthProvider for old update validation object")
+	}
+	current, ok := newObj.(*AuthProvider)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected an AuthProvider for new update validation object")
+	}
+	return nil, validateAuthProviderUpdate(previous, current)
+}
+
+func (r *AuthProvider) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+	return nil, nil
+}
+
+// +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-user,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=users,verbs=create;update,versions=v1alpha1,name=muser.platform.servicer.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-user,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=users,verbs=create;update,versions=v1alpha1,name=vuser.platform.servicer.io,admissionReviewVersions=v1
+func (r *User) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+}
+
+func (r *User) Default(_ context.Context, _ runtime.Object) error {
+	return nil
+}
+
+func (r *User) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+	user, ok := obj.(*User)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a User for create validation")
+	}
+	return nil, validateUser(user)
+}
+
+func (r *User) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	previous, ok := oldObj.(*User)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a User for old update validation object")
+	}
+	current, ok := newObj.(*User)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a User for new update validation object")
+	}
+	return nil, validateUserUpdate(previous, current)
+}
+
+func (r *User) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+	return nil, nil
+}
+
+// +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-group,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=groups,verbs=create;update,versions=v1alpha1,name=mgroup.platform.servicer.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-group,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=groups,verbs=create;update,versions=v1alpha1,name=vgroup.platform.servicer.io,admissionReviewVersions=v1
+func (r *Group) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+}
+
+func (r *Group) Default(_ context.Context, _ runtime.Object) error {
+	return nil
+}
+
+func (r *Group) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+	group, ok := obj.(*Group)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a Group for create validation")
+	}
+	return nil, validateGroup(group)
+}
+
+func (r *Group) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	current, ok := newObj.(*Group)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a Group for update validation")
+	}
+	return nil, validateGroup(current)
+}
+
+func (r *Group) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+	return nil, nil
+}
+
+// +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-rolebinding,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=rolebindings,verbs=create;update,versions=v1alpha1,name=mrolebinding.platform.servicer.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-rolebinding,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=rolebindings,verbs=create;update,versions=v1alpha1,name=vrolebinding.platform.servicer.io,admissionReviewVersions=v1
+func (r *RoleBinding) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+}
+
+func (r *RoleBinding) Default(_ context.Context, _ runtime.Object) error {
+	return nil
+}
+
+func (r *RoleBinding) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+	binding, ok := obj.(*RoleBinding)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a RoleBinding for create validation")
+	}
+	return nil, validateRoleBinding(binding)
+}
+
+func (r *RoleBinding) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	previous, ok := oldObj.(*RoleBinding)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a RoleBinding for old update validation object")
+	}
+	current, ok := newObj.(*RoleBinding)
+	if !ok {
+		return nil, apierrors.NewBadRequest("expected a RoleBinding for new update validation object")
+	}
+	return nil, validateRoleBindingUpdate(previous, current)
+}
+
+func (r *RoleBinding) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
 }
 
@@ -756,6 +900,194 @@ func validateProjectSpec(spec ProjectSpec) field.ErrorList {
 	}
 	allErrs = append(allErrs, validatePolicyRefs(spec.PolicyRefs, field.NewPath("spec", "policyRefs"))...)
 	allErrs = append(allErrs, validateLabelMap(spec.Labels, field.NewPath("spec", "labels"))...)
+	return allErrs
+}
+
+func validateAuthProvider(provider *AuthProvider) error {
+	allErrs := validateAuthProviderSpec(provider.Spec)
+	if len(allErrs) > 0 {
+		return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: authProviderKind}, provider.Name, allErrs)
+	}
+	return nil
+}
+
+func validateAuthProviderUpdate(previous, current *AuthProvider) error {
+	allErrs := validateAuthProviderSpec(current.Spec)
+	if previous.Spec.Type != current.Spec.Type {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "type"), current.Spec.Type, "field is immutable"))
+	}
+	if len(allErrs) > 0 {
+		return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: authProviderKind}, current.Name, allErrs)
+	}
+	return nil
+}
+
+func validateAuthProviderSpec(spec AuthProviderSpec) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if strings.TrimSpace(spec.DisplayName) == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "displayName"), "displayName is required"))
+	}
+	if spec.Default && !spec.Enabled {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "default"), "default providers must be enabled"))
+	}
+	switch spec.Type {
+	case AuthProviderTypeLocal:
+		if spec.OIDC != nil {
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "oidc"), "oidc config is only valid when type=oidc"))
+		}
+		if spec.LDAP != nil {
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "ldap"), "ldap config is only valid when type=ldap"))
+		}
+	case AuthProviderTypeOIDC:
+		if spec.OIDC == nil {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "oidc"), "oidc config is required when type=oidc"))
+			return allErrs
+		}
+		if spec.LDAP != nil {
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "ldap"), "ldap config is only valid when type=ldap"))
+		}
+		if strings.TrimSpace(spec.OIDC.IssuerURL) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "oidc", "issuerUrl"), "issuerUrl is required"))
+		}
+		if strings.TrimSpace(spec.OIDC.ClientID) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "oidc", "clientId"), "clientId is required"))
+		}
+		allErrs = append(allErrs, validateNamespacedRef(spec.OIDC.ClientSecretRef, field.NewPath("spec", "oidc", "clientSecretRef"))...)
+	case AuthProviderTypeLDAP:
+		if spec.LDAP == nil {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "ldap"), "ldap config is required when type=ldap"))
+			return allErrs
+		}
+		if spec.OIDC != nil {
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "oidc"), "oidc config is only valid when type=oidc"))
+		}
+		if strings.TrimSpace(spec.LDAP.URL) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "ldap", "url"), "url is required"))
+		}
+		allErrs = append(allErrs, validateNamespacedRef(spec.LDAP.BindSecretRef, field.NewPath("spec", "ldap", "bindSecretRef"))...)
+		if strings.TrimSpace(spec.LDAP.UserBaseDN) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "ldap", "userBaseDn"), "userBaseDn is required"))
+		}
+		if strings.TrimSpace(spec.LDAP.UserFilter) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "ldap", "userFilter"), "userFilter is required"))
+		}
+	default:
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("spec", "type"), spec.Type, []string{string(AuthProviderTypeLocal), string(AuthProviderTypeOIDC), string(AuthProviderTypeLDAP)}))
+	}
+	return allErrs
+}
+
+func validateUser(user *User) error {
+	allErrs := validateUserSpec(user.Spec)
+	if len(allErrs) > 0 {
+		return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: userKind}, user.Name, allErrs)
+	}
+	return nil
+}
+
+func validateUserUpdate(_, current *User) error {
+	return validateUser(current)
+}
+
+func validateUserSpec(spec UserSpec) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if spec.LocalAuth == nil && len(spec.ExternalIdentities) == 0 {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec"), "at least one local or external identity is required"))
+	}
+	if spec.LocalAuth != nil {
+		if !spec.LocalAuth.Enabled {
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "localAuth", "enabled"), "localAuth must be enabled when configured"))
+		}
+		allErrs = append(allErrs, validateNamespacedRef(spec.LocalAuth.PasswordHashSecretRef, field.NewPath("spec", "localAuth", "passwordHashSecretRef"))...)
+	}
+	for i, identity := range spec.ExternalIdentities {
+		allErrs = append(allErrs, validateLocalRef(identity.ProviderRef, field.NewPath("spec", "externalIdentities").Index(i).Child("providerRef"))...)
+		if strings.TrimSpace(identity.Subject) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "externalIdentities").Index(i).Child("subject"), "subject is required"))
+		}
+	}
+	return allErrs
+}
+
+func validateGroup(group *Group) error {
+	allErrs := validateGroupSpec(group.Spec)
+	if len(allErrs) > 0 {
+		return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: groupKind}, group.Name, allErrs)
+	}
+	return nil
+}
+
+func validateGroupSpec(spec GroupSpec) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if len(spec.Members) == 0 && len(spec.ExternalGroups) == 0 {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec"), "at least one member or external group is required"))
+	}
+	for i, member := range spec.Members {
+		allErrs = append(allErrs, validateLocalRef(member.UserRef, field.NewPath("spec", "members").Index(i).Child("userRef"))...)
+	}
+	for i, externalGroup := range spec.ExternalGroups {
+		allErrs = append(allErrs, validateLocalRef(externalGroup.ProviderRef, field.NewPath("spec", "externalGroups").Index(i).Child("providerRef"))...)
+		if strings.TrimSpace(externalGroup.Name) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "externalGroups").Index(i).Child("name"), "name is required"))
+		}
+	}
+	return allErrs
+}
+
+func validateRoleBinding(binding *RoleBinding) error {
+	allErrs := validateRoleBindingSpec(binding.Spec)
+	if len(allErrs) > 0 {
+		return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: roleBindingKind}, binding.Name, allErrs)
+	}
+	return nil
+}
+
+func validateRoleBindingUpdate(previous, current *RoleBinding) error {
+	allErrs := validateRoleBindingSpec(current.Spec)
+	if previous.Spec.Scope != current.Spec.Scope {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "scope"), current.Spec.Scope, "field is immutable"))
+	}
+	switch {
+	case previous.Spec.TenantRef == nil && current.Spec.TenantRef != nil:
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "tenantRef"), current.Spec.TenantRef.Name, "field is immutable"))
+	case previous.Spec.TenantRef != nil && current.Spec.TenantRef == nil:
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "tenantRef"), "", "field is immutable"))
+	case previous.Spec.TenantRef != nil && current.Spec.TenantRef != nil:
+		allErrs = append(allErrs, validateImmutableLocalRef(*previous.Spec.TenantRef, *current.Spec.TenantRef, field.NewPath("spec", "tenantRef"))...)
+	}
+	if len(allErrs) > 0 {
+		return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: roleBindingKind}, current.Name, allErrs)
+	}
+	return nil
+}
+
+func validateRoleBindingSpec(spec RoleBindingSpec) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if len(spec.Subjects) == 0 {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "subjects"), "at least one subject is required"))
+	}
+	if len(spec.Roles) == 0 {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec", "roles"), "at least one role is required"))
+	}
+	for i, subject := range spec.Subjects {
+		if strings.TrimSpace(subject.Name) == "" {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "subjects").Index(i).Child("name"), "name is required"))
+		}
+	}
+	switch spec.Scope {
+	case AccessScopePlatform:
+		if spec.TenantRef != nil {
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "tenantRef"), "tenantRef is only valid when scope=tenant"))
+		}
+	case AccessScopeTenant:
+		if spec.TenantRef == nil {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec", "tenantRef"), "tenantRef is required when scope=tenant"))
+		} else {
+			allErrs = append(allErrs, validateLocalRef(*spec.TenantRef, field.NewPath("spec", "tenantRef"))...)
+		}
+	default:
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("spec", "scope"), spec.Scope, []string{string(AccessScopePlatform), string(AccessScopeTenant)}))
+	}
 	return allErrs
 }
 

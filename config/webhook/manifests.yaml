@@ -73,6 +73,62 @@ webhooks:
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["projects"]
+  - name: mauthprovider.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-authprovider
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["authproviders"]
+  - name: muser.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-user
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["users"]
+  - name: mgroup.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-group
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["groups"]
+  - name: mrolebinding.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-rolebinding
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["rolebindings"]
   - name: mserviceinstance.platform.servicer.io
     admissionReviewVersions: ["v1"]
     sideEffects: None
@@ -247,6 +303,62 @@ webhooks:
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["projects"]
+  - name: vauthprovider.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-authprovider
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["authproviders"]
+  - name: vuser.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-user
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["users"]
+  - name: vgroup.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-group
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["groups"]
+  - name: vrolebinding.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-rolebinding
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["rolebindings"]
   - name: vserviceinstance.platform.servicer.io
     admissionReviewVersions: ["v1"]
     sideEffects: None
