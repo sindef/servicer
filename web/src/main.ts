@@ -10,12 +10,14 @@ import NamespaceClaimDetailPage from './pages/NamespaceClaimDetailPage.vue'
 import TenancyPage from './pages/TenancyPage.vue'
 import AuditPage from './pages/AuditPage.vue'
 import AdminPage from './pages/AdminPage.vue'
-import { initializeAuth } from './auth'
+import LoginPage from './pages/LoginPage.vue'
+import { authSession, initializeAuth } from './auth'
 import './styles.css'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/login', name: 'login', component: LoginPage, meta: { publicLayout: true } },
     { path: '/', name: 'overview', component: OverviewPage },
     { path: '/catalog', name: 'catalog', component: CatalogPage },
     { path: '/instances', name: 'instances', component: InstancesPage },
@@ -29,5 +31,25 @@ const router = createRouter({
 })
 
 await initializeAuth()
+
+router.beforeEach((to) => {
+  const authenticated = authSession.value?.authenticated === true
+  if (to.name === 'login') {
+    if (authenticated) {
+      const returnTo = typeof to.query.returnTo === 'string' ? to.query.returnTo : '/'
+      return returnTo.startsWith('/') ? returnTo : '/'
+    }
+    return true
+  }
+  if (!authenticated) {
+    return {
+      name: 'login',
+      query: {
+        returnTo: to.fullPath
+      }
+    }
+  }
+  return true
+})
 
 createApp(App).use(router).mount('#app')
