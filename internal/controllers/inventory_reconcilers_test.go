@@ -334,6 +334,41 @@ func TestProbePackageRequiresTargetNamespaceWhenSpecified(t *testing.T) {
 	}
 }
 
+func TestProbePackageRequiresOperatorWorkloadsToBeReady(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	replicas := int32(1)
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "external-secrets"}},
+			&apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: "externalsecrets.external-secrets.io"}},
+			&appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "external-secrets", Namespace: "external-secrets"},
+				Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+				Status:     appsv1.DeploymentStatus{AvailableReplicas: 0},
+			},
+		).
+		Build()
+	reconciler := &ClusterTargetReconciler{Scheme: scheme}
+	pkg := &platformv1alpha1.OperatorPackage{
+		Spec: platformv1alpha1.OperatorPackageSpec{
+			TargetNamespace: "external-secrets",
+			Probes:          []platformv1alpha1.OperatorProbe{{CRD: "externalsecrets.external-secrets.io"}},
+		},
+	}
+
+	installed, err := reconciler.probePackage(context.Background(), targetClient, pkg)
+	if err != nil {
+		t.Fatalf("probePackage returned error: %v", err)
+	}
+	if installed {
+		t.Fatal("expected package probe to stay false until workloads are ready")
+	}
+}
+
 func TestShouldDefaultObjectNamespace(t *testing.T) {
 	tests := []struct {
 		name string

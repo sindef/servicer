@@ -18,6 +18,7 @@ import (
 	"time"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -323,7 +324,7 @@ func applyManifestBytes(ctx context.Context, targetClient client.Client, body []
 		if obj.GetKind() == "" || obj.GetAPIVersion() == "" {
 			continue
 		}
-		if shouldDefaultObjectNamespace(obj) && strings.TrimSpace(obj.GetNamespace()) == "" && defaultNamespace != "" {
+		if shouldDefaultObjectNamespace(obj) && defaultNamespace != "" {
 			obj.SetNamespace(defaultNamespace)
 		}
 		obj.SetManagedFields(nil)
@@ -505,7 +506,59 @@ func (r *ClusterTargetReconciler) probePackage(ctx context.Context, targetClient
 			return false, fmt.Errorf("probing CRD %q: %w", probe.CRD, err)
 		}
 	}
+	if pkg.Spec.TargetNamespace != "" {
+		ready, err := operatorWorkloadsReady(ctx, targetClient, pkg.Spec.TargetNamespace)
+		if err != nil {
+			return false, err
+		}
+		if !ready {
+			return false, nil
+		}
+	}
 	return true, nil
+}
+
+func operatorWorkloadsReady(ctx context.Context, targetClient client.Client, namespace string) (bool, error) {
+	var deployments appsv1.DeploymentList
+	if err := targetClient.List(ctx, &deployments, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("listing deployments in namespace %q: %w", namespace, err)
+	}
+	var statefulSets appsv1.StatefulSetList
+	if err := targetClient.List(ctx, &statefulSets, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("listing statefulsets in namespace %q: %w", namespace, err)
+	}
+	var daemonSets appsv1.DaemonSetList
+	if err := targetClient.List(ctx, &daemonSets, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("listing daemonsets in namespace %q: %w", namespace, err)
+	}
+
+	workloadCount := len(deployments.Items) + len(statefulSets.Items) + len(daemonSets.Items)
+	if workloadCount == 0 {
+		return false, nil
+	}
+	for _, deployment := range deployments.Items {
+		if deployment.Status.AvailableReplicas < replicasOrDefault(deployment.Spec.Replicas) {
+			return false, nil
+		}
+	}
+	for _, statefulSet := range statefulSets.Items {
+		if statefulSet.Status.ReadyReplicas < replicasOrDefault(statefulSet.Spec.Replicas) {
+			return false, nil
+		}
+	}
+	for _, daemonSet := range daemonSets.Items {
+		if daemonSet.Status.NumberAvailable < daemonSet.Status.DesiredNumberScheduled {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func replicasOrDefault(replicas *int32) int32 {
+	if replicas == nil {
+		return 1
+	}
+	return *replicas
 }
 
 // ensurePackageArgoApp creates (or updates) an Argo CD Application on the management cluster
