@@ -278,7 +278,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult, targetClient); err != nil {
 		if apierrors.IsNotFound(err) {
-			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionPending", "Credential projection is waiting for the delivered runtime namespace.")
+			markCredentialProjectionPending(&instance)
 			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
 				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
 					return ctrl.Result{}, updateErr
@@ -673,6 +673,14 @@ func endpointStatus(endpoints []adapters.Endpoint) map[string]string {
 		status[endpoint.Name] = endpoint.Address
 	}
 	return status
+}
+
+func markCredentialProjectionPending(instance *platformv1alpha1.ServiceInstance) {
+	if instance == nil {
+		return
+	}
+	instance.Status.Phase = "Provisioning"
+	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionPending", "Credential projection is waiting for the delivered runtime namespace.")
 }
 
 func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context, instance *platformv1alpha1.ServiceInstance, renderResult adapters.RenderResult, targetClient client.Client) error {

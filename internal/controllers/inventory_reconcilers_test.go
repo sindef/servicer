@@ -436,7 +436,7 @@ func TestNormalizeManifestObjectUpgradesPodDisruptionBudgetAPI(t *testing.T) {
 
 func TestServiceClassReconcilerPublishesImplementedPostgreSQLClass(t *testing.T) {
 	scheme := inventoryTestScheme(t)
-	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
+	registry, err := adapters.NewRegistry(adapters.NewValkeyAdapter())
 	if err != nil {
 		t.Fatalf("NewRegistry returned error: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestProjectReconcilerWaitsForClusterTargetReadiness(t *testing.T) {
 			DisplayName:           "Acme Corp",
 			Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
 			QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "standard-tenant"},
-			AllowedServiceClasses: []string{"postgresql"},
+			AllowedServiceClasses: []string{"valkey"},
 			Lifecycle:             platformv1alpha1.TenantLifecycleSpec{Phase: platformv1alpha1.TenantLifecyclePhaseActive},
 		},
 	}
@@ -1998,6 +1998,21 @@ func TestServiceInstanceReconcilerMaterializesValkeyArtifacts(t *testing.T) {
 	}
 	if len(secret.Data["password"]) == 0 {
 		t.Fatalf("expected generated Valkey credential Secret to include password data")
+	}
+}
+
+func TestMarkCredentialProjectionPendingSetsProvisioningPhase(t *testing.T) {
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db", Generation: 3},
+	}
+
+	markCredentialProjectionPending(instance)
+
+	if instance.Status.Phase != "Provisioning" {
+		t.Fatalf("expected phase Provisioning, got %q", instance.Status.Phase)
+	}
+	if !conditionMessagesContain(instance.Status.Conditions, "Credential projection is waiting for the delivered runtime namespace.") {
+		t.Fatalf("expected credential projection pending message, got %#v", instance.Status.Conditions)
 	}
 }
 
