@@ -65,6 +65,10 @@ fi
 
 echo "Syncing generated delivery packages from ${DELIVERY_ROOT} every ${INTERVAL_SECONDS}s."
 while true; do
+  if [[ -n "${KUBECONFIG:-}" && ! -f "${KUBECONFIG}" ]]; then
+    sleep "${INTERVAL_SECONDS}"
+    continue
+  fi
   apply_once || true
   sleep "${INTERVAL_SECONDS}"
 done

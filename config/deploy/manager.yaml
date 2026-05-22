@@ -41,7 +41,7 @@ spec:
           imagePullPolicy: Never
           env:
             - name: KUBECONFIG
-              value: /kube/config
+              value: /kube/kubeconfig
             - name: DELIVERY_ROOT
               value: /delivery
             - name: INTERVAL_SECONDS
@@ -51,8 +51,7 @@ spec:
               mountPath: /delivery
               readOnly: true
             - name: target-kubeconfig
-              mountPath: /kube/config
-              subPath: kubeconfig
+              mountPath: /kube
               readOnly: true
 
       volumes:
@@ -61,6 +60,8 @@ spec:
         - name: target-kubeconfig
           secret:
             secretName: local-dev-kubeconfig
+            optional: true
         - name: webhook-certs
           secret:
             secretName: servicer-webhook-server-cert
+            optional: true
