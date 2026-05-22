@@ -530,7 +530,7 @@ func TestNormalizeManifestObjectUpgradesPodDisruptionBudgetAPI(t *testing.T) {
 
 func TestServiceClassReconcilerPublishesImplementedPostgreSQLClass(t *testing.T) {
 	scheme := inventoryTestScheme(t)
-	registry, err := adapters.NewRegistry(adapters.NewValkeyAdapter())
+	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
 	if err != nil {
 		t.Fatalf("NewRegistry returned error: %v", err)
 	}
