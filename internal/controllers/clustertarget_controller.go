@@ -116,6 +116,11 @@ func (r *ClusterTargetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if packageNamesContain(effectivePackages, "yugabyte") {
+		if err := ensureClusterTopologyLabels(ctx, targetClient, &target); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	// Probe and reconcile required operator packages.
 	if len(effectivePackages) > 0 {
@@ -663,6 +668,64 @@ func buildTargetClient(kubeconfigBytes []byte, scheme *runtime.Scheme) (client.C
 	return c, restCfg.Host, nil
 }
 
+func ensureClusterTopologyLabels(ctx context.Context, targetClient client.Client, target *platformv1alpha1.ClusterTarget) error {
+	var nodes corev1.NodeList
+	if err := targetClient.List(ctx, &nodes); err != nil {
+		return fmt.Errorf("listing target cluster nodes for topology labels: %w", err)
+	}
+
+	region := firstNonEmptyTrimmed(
+		target.Spec.Capabilities["topology.kubernetes.io/region"],
+		target.Spec.Capabilities["failure-domain.beta.kubernetes.io/region"],
+		target.Spec.Region,
+		target.Name,
+	)
+	zone := firstNonEmptyTrimmed(
+		target.Spec.Capabilities["topology.kubernetes.io/zone"],
+		target.Spec.Capabilities["failure-domain.beta.kubernetes.io/zone"],
+		target.Spec.Capabilities["zone"],
+	)
+	if zone == "" {
+		zone = region + "-a"
+	}
+
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		updated := false
+		labels := node.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+
+		if labels["topology.kubernetes.io/region"] == "" {
+			labels["topology.kubernetes.io/region"] = region
+			updated = true
+		}
+		if labels["failure-domain.beta.kubernetes.io/region"] == "" {
+			labels["failure-domain.beta.kubernetes.io/region"] = labels["topology.kubernetes.io/region"]
+			updated = true
+		}
+		if labels["topology.kubernetes.io/zone"] == "" {
+			labels["topology.kubernetes.io/zone"] = zone
+			updated = true
+		}
+		if labels["failure-domain.beta.kubernetes.io/zone"] == "" {
+			labels["failure-domain.beta.kubernetes.io/zone"] = labels["topology.kubernetes.io/zone"]
+			updated = true
+		}
+		if !updated {
+			continue
+		}
+
+		node.SetLabels(labels)
+		if err := targetClient.Update(ctx, node); err != nil {
+			return fmt.Errorf("updating topology labels on node %q: %w", node.Name, err)
+		}
+	}
+
+	return nil
+}
+
 func operatorInventoryFromCapabilities(capabilities map[string]string) []string {
 	inventory := make([]string, 0)
 	for key, value := range capabilities {
@@ -685,6 +748,15 @@ func clusterCapabilityValue(capabilities map[string]string, keys ...string) stri
 		}
 	}
 	return ""
+}
+
+func packageNamesContain(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func hasClusterConnectionData(secret *corev1.Secret) bool {

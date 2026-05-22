@@ -220,6 +220,92 @@ func TestEffectiveRequiredPackagesForClusterTargetIncludesPublishedServiceClasse
 	}
 }
 
+func TestEnsureClusterTopologyLabelsSeedsMissingNodeTopology(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	target := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			Region: "au-syd-1",
+		},
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "worker-1",
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(node).
+		Build()
+
+	if err := ensureClusterTopologyLabels(context.Background(), targetClient, target); err != nil {
+		t.Fatalf("ensureClusterTopologyLabels returned error: %v", err)
+	}
+
+	var updated corev1.Node
+	if err := targetClient.Get(context.Background(), client.ObjectKey{Name: "worker-1"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Labels["topology.kubernetes.io/region"] != "au-syd-1" {
+		t.Fatalf("expected region label to be seeded, got %#v", updated.Labels)
+	}
+	if updated.Labels["topology.kubernetes.io/zone"] != "au-syd-1-a" {
+		t.Fatalf("expected zone label to be seeded, got %#v", updated.Labels)
+	}
+	if updated.Labels["failure-domain.beta.kubernetes.io/region"] != "au-syd-1" {
+		t.Fatalf("expected beta region label to be seeded, got %#v", updated.Labels)
+	}
+	if updated.Labels["failure-domain.beta.kubernetes.io/zone"] != "au-syd-1-a" {
+		t.Fatalf("expected beta zone label to be seeded, got %#v", updated.Labels)
+	}
+}
+
+func TestEnsureClusterTopologyLabelsPreservesExistingNodeTopology(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	target := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			Region: "au-syd-1",
+		},
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "worker-1",
+			Labels: map[string]string{
+				"topology.kubernetes.io/region": "us-east-1",
+				"topology.kubernetes.io/zone":   "us-east-1b",
+			},
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(node).
+		Build()
+
+	if err := ensureClusterTopologyLabels(context.Background(), targetClient, target); err != nil {
+		t.Fatalf("ensureClusterTopologyLabels returned error: %v", err)
+	}
+
+	var updated corev1.Node
+	if err := targetClient.Get(context.Background(), client.ObjectKey{Name: "worker-1"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Labels["topology.kubernetes.io/region"] != "us-east-1" {
+		t.Fatalf("expected existing region label to be preserved, got %#v", updated.Labels)
+	}
+	if updated.Labels["topology.kubernetes.io/zone"] != "us-east-1b" {
+		t.Fatalf("expected existing zone label to be preserved, got %#v", updated.Labels)
+	}
+	if updated.Labels["failure-domain.beta.kubernetes.io/region"] != "us-east-1" {
+		t.Fatalf("expected beta region label to mirror existing region, got %#v", updated.Labels)
+	}
+	if updated.Labels["failure-domain.beta.kubernetes.io/zone"] != "us-east-1b" {
+		t.Fatalf("expected beta zone label to mirror existing zone, got %#v", updated.Labels)
+	}
+}
+
 func TestServiceClassReconcilerPublishesImplementedPostgreSQLClass(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
