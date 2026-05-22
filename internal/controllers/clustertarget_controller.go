@@ -324,6 +324,7 @@ func applyManifestBytes(ctx context.Context, targetClient client.Client, body []
 		if obj.GetKind() == "" || obj.GetAPIVersion() == "" {
 			continue
 		}
+		normalizeManifestObject(obj)
 		if shouldDefaultObjectNamespace(obj) && defaultNamespace != "" {
 			obj.SetNamespace(defaultNamespace)
 		}
@@ -416,6 +417,15 @@ func shouldDefaultObjectNamespace(obj *unstructured.Unstructured) bool {
 		}
 	}
 	return true
+}
+
+func normalizeManifestObject(obj *unstructured.Unstructured) {
+	if obj == nil {
+		return
+	}
+	if obj.GetKind() == "PodDisruptionBudget" && obj.GetAPIVersion() == "policy/v1beta1" {
+		obj.SetAPIVersion("policy/v1")
+	}
 }
 
 func extractTarGz(destDir string, data []byte) error {

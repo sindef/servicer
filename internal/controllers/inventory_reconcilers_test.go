@@ -420,6 +420,20 @@ func TestShouldDefaultObjectNamespace(t *testing.T) {
 	}
 }
 
+func TestNormalizeManifestObjectUpgradesPodDisruptionBudgetAPI(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "policy/v1beta1",
+		"kind":       "PodDisruptionBudget",
+		"metadata":   map[string]any{"name": "demo"},
+	}}
+
+	normalizeManifestObject(obj)
+
+	if obj.GetAPIVersion() != "policy/v1" {
+		t.Fatalf("expected PodDisruptionBudget apiVersion to upgrade to policy/v1, got %q", obj.GetAPIVersion())
+	}
+}
+
 func TestServiceClassReconcilerPublishesImplementedPostgreSQLClass(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())
