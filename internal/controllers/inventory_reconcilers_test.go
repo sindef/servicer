@@ -12,6 +12,7 @@ import (
 	"github.com/sindef/servicer/internal/adapters"
 	"github.com/sindef/servicer/internal/materializer"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -366,6 +367,99 @@ func TestProbePackageRequiresOperatorWorkloadsToBeReady(t *testing.T) {
 	}
 	if installed {
 		t.Fatal("expected package probe to stay false until workloads are ready")
+	}
+}
+
+func TestProbePackageRequiresBootstrapJobsToSucceed(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	replicas := int32(1)
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-system"}},
+			&apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: "ybuniverses.operator.yugabyte.io"}},
+			&appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-k8s-operator", Namespace: "yugabyte-system"},
+				Spec:       appsv1.StatefulSetSpec{Replicas: &replicas},
+				Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+			},
+			&batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-customer-create-job", Namespace: "yugabyte-system"},
+				Spec:       batchv1.JobSpec{Completions: &replicas},
+				Status:     batchv1.JobStatus{Succeeded: 0},
+			},
+		).
+		Build()
+	reconciler := &ClusterTargetReconciler{Scheme: scheme}
+	pkg := &platformv1alpha1.OperatorPackage{
+		Spec: platformv1alpha1.OperatorPackageSpec{
+			TargetNamespace: "yugabyte-system",
+			Probes:          []platformv1alpha1.OperatorProbe{{CRD: "ybuniverses.operator.yugabyte.io"}},
+		},
+	}
+
+	installed, err := reconciler.probePackage(context.Background(), targetClient, pkg)
+	if err != nil {
+		t.Fatalf("probePackage returned error: %v", err)
+	}
+	if installed {
+		t.Fatal("expected package probe to stay false until bootstrap jobs succeed")
+	}
+}
+
+func TestProbePackageAllowsCompletedBootstrapJobs(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	replicas := int32(1)
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-system"}},
+			&apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: "ybuniverses.operator.yugabyte.io"}},
+			&appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-k8s-operator", Namespace: "yugabyte-system"},
+				Spec:       appsv1.StatefulSetSpec{Replicas: &replicas},
+				Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+			},
+			&batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-customer-create-job", Namespace: "yugabyte-system"},
+				Spec:       batchv1.JobSpec{Completions: &replicas},
+				Status: statusWithCompleteJobCondition(
+					1,
+					corev1.ConditionTrue,
+				),
+			},
+		).
+		Build()
+	reconciler := &ClusterTargetReconciler{Scheme: scheme}
+	pkg := &platformv1alpha1.OperatorPackage{
+		Spec: platformv1alpha1.OperatorPackageSpec{
+			TargetNamespace: "yugabyte-system",
+			Probes:          []platformv1alpha1.OperatorProbe{{CRD: "ybuniverses.operator.yugabyte.io"}},
+		},
+	}
+
+	installed, err := reconciler.probePackage(context.Background(), targetClient, pkg)
+	if err != nil {
+		t.Fatalf("probePackage returned error: %v", err)
+	}
+	if !installed {
+		t.Fatal("expected package probe to succeed once bootstrap jobs complete")
+	}
+}
+
+func statusWithCompleteJobCondition(succeeded int32, status corev1.ConditionStatus) batchv1.JobStatus {
+	return batchv1.JobStatus{
+		Succeeded: succeeded,
+		Conditions: []batchv1.JobCondition{{
+			Type:   batchv1.JobComplete,
+			Status: status,
+		}},
 	}
 }
 

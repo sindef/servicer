@@ -19,6 +19,7 @@ import (
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -381,7 +382,6 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 		"template", releaseName, chartPath,
 		"--namespace", targetNamespace,
 		"--include-crds",
-		"--no-hooks",
 	}
 	keys := make([]string, 0, len(pkg.Spec.Source.HelmValues))
 	for key := range pkg.Spec.Source.HelmValues {
@@ -553,6 +553,10 @@ func operatorWorkloadsReady(ctx context.Context, targetClient client.Client, nam
 	if err := targetClient.List(ctx, &daemonSets, client.InNamespace(namespace)); err != nil {
 		return false, fmt.Errorf("listing daemonsets in namespace %q: %w", namespace, err)
 	}
+	var jobs batchv1.JobList
+	if err := targetClient.List(ctx, &jobs, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("listing jobs in namespace %q: %w", namespace, err)
+	}
 
 	workloadCount := len(deployments.Items) + len(statefulSets.Items) + len(daemonSets.Items)
 	if workloadCount == 0 {
@@ -573,7 +577,27 @@ func operatorWorkloadsReady(ctx context.Context, targetClient client.Client, nam
 			return false, nil
 		}
 	}
+	for _, job := range jobs.Items {
+		if !jobFinishedSuccessfully(job) {
+			return false, nil
+		}
+	}
 	return true, nil
+}
+
+func jobFinishedSuccessfully(job batchv1.Job) bool {
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			return false
+		}
+	}
+	if job.Spec.Completions != nil {
+		return job.Status.Succeeded >= *job.Spec.Completions
+	}
+	return job.Status.Succeeded > 0
 }
 
 func replicasOrDefault(replicas *int32) int32 {
