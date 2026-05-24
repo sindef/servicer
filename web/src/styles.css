@@ -979,6 +979,39 @@ h3 {
   cursor: pointer;
 }
 
+.auth-role-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.auth-role-summary article {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.auth-role-summary strong,
+.auth-role-summary small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.auth-role-summary strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.auth-role-summary small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .repo-admin {
   display: grid;
   gap: 16px;

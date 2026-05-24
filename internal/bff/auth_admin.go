@@ -753,13 +753,13 @@ func authRolesFromClient(ctx context.Context, c client.Client) ([]RoleSummary, e
 
 func builtInRoles() []RoleSummary {
 	return []RoleSummary{
-		{Name: rolePlatformAdmin, DisplayName: "Platform Admin", Scope: "platform", BuiltIn: true, Description: "Full control over Servicer.", Permissions: []string{rolePlatformAdmin}},
-		{Name: roleCatalogAdmin, DisplayName: "Catalog Admin", Scope: "platform", BuiltIn: true, Description: "Manage service catalog registration, publication, and defaults.", Permissions: []string{roleCatalogAdmin}},
-		{Name: roleClusterAdmin, DisplayName: "Cluster Admin", Scope: "platform", BuiltIn: true, Description: "Manage cluster targets.", Permissions: []string{roleClusterAdmin}},
-		{Name: roleAuditor, DisplayName: "Auditor", Scope: "platform", BuiltIn: true, Description: "Read audit events.", Permissions: []string{roleAuditor}},
-		{Name: roleTenantAdmin, DisplayName: "Tenant Admin", Scope: "tenant", BuiltIn: true, Description: "Manage assigned tenant resources and access.", Permissions: []string{roleTenantAdmin}},
-		{Name: roleTenantOperator, DisplayName: "Tenant Operator", Scope: "tenant", BuiltIn: true, Description: "Operate assigned tenant products and repositories.", Permissions: []string{roleTenantOperator}},
-		{Name: roleServiceConsumer, DisplayName: "Service Consumer", Scope: "tenant", BuiltIn: true, Description: "View and request assigned tenant products.", Permissions: []string{roleServiceConsumer}},
+		{Name: rolePlatformAdmin, DisplayName: "Platform Admin", Scope: "platform", BuiltIn: true, Description: "Full platform control, including auth administration, tenancy, catalog, clusters, repositories, products, and audit access.", Permissions: []string{rolePlatformAdmin}},
+		{Name: roleCatalogAdmin, DisplayName: "Catalog Admin", Scope: "platform", BuiltIn: true, Description: "Manage service catalog definitions, product publication settings, and platform-wide catalog defaults.", Permissions: []string{roleCatalogAdmin}},
+		{Name: roleClusterAdmin, DisplayName: "Cluster Admin", Scope: "platform", BuiltIn: true, Description: "Manage cluster targets, cluster metadata, deployment destinations, and platform cluster availability.", Permissions: []string{roleClusterAdmin}},
+		{Name: roleAuditor, DisplayName: "Auditor", Scope: "platform", BuiltIn: true, Description: "Read audit events and compliance history across visible platform and tenant resources without write access.", Permissions: []string{roleAuditor}},
+		{Name: roleTenantAdmin, DisplayName: "Tenant Admin", Scope: "tenant", BuiltIn: true, Description: "Manage assigned tenant access, tenant repositories, tenant products, and tenant operational settings.", Permissions: []string{roleTenantAdmin}},
+		{Name: roleTenantOperator, DisplayName: "Tenant Operator", Scope: "tenant", BuiltIn: true, Description: "Operate assigned tenant products and repositories, including product lifecycle actions within that tenant.", Permissions: []string{roleTenantOperator}},
+		{Name: roleServiceConsumer, DisplayName: "Service Consumer", Scope: "tenant", BuiltIn: true, Description: "View assigned tenant catalog entries and request or inspect products available to that tenant.", Permissions: []string{roleServiceConsumer}},
 	}
 }
 

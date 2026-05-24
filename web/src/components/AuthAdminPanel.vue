@@ -157,6 +157,32 @@ const selectedRole = computed(() => roleRows.value.find((item) => item.name === 
 const selectedBinding = computed(() => bindingRows.value.find((item) => item.name === selectedBindingName.value) ?? null)
 const activeSelectedCount = computed(() => selectionFor(activeSection.value).length)
 
+function roleByName(name: string) {
+  return roleRows.value.find((role) => role.name === name)
+}
+
+function roleLabel(roleOrName: RoleSummary | string) {
+  const role = typeof roleOrName === 'string' ? roleByName(roleOrName) : roleOrName
+  return role?.displayName || role?.name || (typeof roleOrName === 'string' ? roleOrName : 'Unknown role')
+}
+
+function roleMeta(role: RoleSummary) {
+  return `${role.scope} ${role.builtIn ? 'built-in permission' : 'custom role'}`
+}
+
+function roleDescription(roleOrName: RoleSummary | string) {
+  const role = typeof roleOrName === 'string' ? roleByName(roleOrName) : roleOrName
+  return role?.description || 'No description set.'
+}
+
+function roleGrantSummary(roleOrName: RoleSummary | string) {
+  const role = typeof roleOrName === 'string' ? roleByName(roleOrName) : roleOrName
+  if (!role?.permissions?.length) return 'No permissions assigned.'
+  if (role.builtIn) return `Base permission: ${role.name}.`
+  const grants = role.permissions.map((permission) => roleLabel(permission))
+  return `Grants ${grants.join(', ')}.`
+}
+
 function checkboxValue(event: Event) {
   return (event.target as HTMLInputElement).checked
 }
@@ -590,7 +616,7 @@ const rolePermissionOptions = computed(() => {
   return builtInRoleRows.value.filter((role) => {
     if (role.scope !== roleForm.scope || roleForm.permissions.includes(role.name)) return false
     if (!term) return true
-    return [role.name, role.displayName, role.description].some((value) => (value ?? '').toLowerCase().includes(term))
+    return [role.name, role.displayName, role.description, roleMeta(role), roleGrantSummary(role)].some((value) => (value ?? '').toLowerCase().includes(term))
   })
 })
 
@@ -692,7 +718,7 @@ const filteredBindingRoleOptions = computed(() => {
   return bindingRoleOptions.value.filter((role) => {
     if (bindingForm.roles.includes(role.name)) return false
     if (!term) return true
-    return [role.name, role.description].some((value) => (value ?? '').toLowerCase().includes(term))
+    return [role.name, role.displayName, role.description, roleMeta(role), roleGrantSummary(role), ...role.permissions].some((value) => (value ?? '').toLowerCase().includes(term))
   })
 })
 
@@ -1691,8 +1717,10 @@ resetBindingForm()
               <div v-if="rolePermissionSearch" class="auth-result-list">
                 <button v-for="permission in rolePermissionOptions.slice(0, 6)" :key="permission.name" type="button" @click="addStringValue(roleForm.permissions, permission.name); rolePermissionSearch = ''">
                   <span>
-                    <strong>{{ permission.displayName || permission.name }}</strong>
-                    <small>{{ permission.name }} · {{ permission.description }}</small>
+                    <strong>{{ roleLabel(permission) }}</strong>
+                    <small>{{ permission.name }} · {{ roleMeta(permission) }}</small>
+                    <small>{{ roleDescription(permission) }}</small>
+                    <small>{{ roleGrantSummary(permission) }}</small>
                   </span>
                 </button>
                 <p v-if="rolePermissionOptions.length === 0" class="muted">No matching permissions.</p>
@@ -1706,8 +1734,14 @@ resetBindingForm()
                   :disabled="selectedRole?.builtIn"
                   @click="toggleStringValue(roleForm.permissions, permission, false)"
                 >
-                  {{ permission }} <span v-if="!selectedRole?.builtIn">×</span>
+                  {{ roleLabel(permission) }} <span v-if="!selectedRole?.builtIn">×</span>
                 </button>
+              </div>
+              <div v-if="roleForm.permissions.length" class="auth-role-summary">
+                <article v-for="permission in roleForm.permissions" :key="permission">
+                  <strong>{{ roleLabel(permission) }}</strong>
+                  <small>{{ roleDescription(permission) }}</small>
+                </article>
               </div>
             </section>
           </div>
@@ -1786,7 +1820,7 @@ resetBindingForm()
             <section class="auth-modal-section">
               <div class="auth-section-heading">
                 <h3>Roles</h3>
-                <p>Roles are built in. Search and press Enter to add permissions to this binding.</p>
+                <p>Search built-in or custom roles and press Enter to grant them to this binding.</p>
               </div>
               <input
                 v-model="bindingRoleSearch"
@@ -1798,8 +1832,10 @@ resetBindingForm()
               <div v-if="bindingRoleSearch" class="auth-result-list">
                 <button v-for="role in filteredBindingRoleOptions.slice(0, 6)" :key="role.name" type="button" @click="addStringValue(bindingForm.roles, role.name); bindingRoleSearch = ''">
                   <span>
-                    <strong>{{ role.name }}</strong>
-                    <small>{{ role.description }}</small>
+                    <strong>{{ roleLabel(role) }}</strong>
+                    <small>{{ role.name }} · {{ roleMeta(role) }}</small>
+                    <small>{{ roleDescription(role) }}</small>
+                    <small>{{ roleGrantSummary(role) }}</small>
                   </span>
                 </button>
                 <p v-if="filteredBindingRoleOptions.length === 0" class="muted">No matching roles.</p>
@@ -1812,8 +1848,15 @@ resetBindingForm()
                   type="button"
                   @click="toggleStringValue(bindingForm.roles, role, false)"
                 >
-                  {{ role }} ×
+                  {{ roleLabel(role) }} ×
                 </button>
+              </div>
+              <div v-if="bindingForm.roles.length" class="auth-role-summary">
+                <article v-for="role in bindingForm.roles" :key="role">
+                  <strong>{{ roleLabel(role) }}</strong>
+                  <small>{{ roleDescription(role) }}</small>
+                  <small>{{ roleGrantSummary(role) }}</small>
+                </article>
               </div>
             </section>
           </div>
