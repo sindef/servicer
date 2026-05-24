@@ -34,8 +34,8 @@ type AuthSessionResponse struct {
 	Email         string              `json:"email,omitempty"`
 	UserName      string              `json:"userName,omitempty"`
 	Provider      string              `json:"provider,omitempty"`
-	Roles         []string            `json:"roles,omitempty"`
-	Groups        []string            `json:"groups,omitempty"`
+	Roles         []string            `json:"roles"`
+	Groups        []string            `json:"groups"`
 	Tenants       []TenantRoleSummary `json:"tenants,omitempty"`
 	Authenticated bool                `json:"authenticated"`
 }

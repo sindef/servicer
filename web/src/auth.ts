@@ -27,8 +27,8 @@ export interface AuthSession {
   email?: string
   userName?: string
   provider?: string
-  roles: string[]
-  groups: string[]
+  roles?: string[]
+  groups?: string[]
   tenants?: TenantRoleSummary[]
   authenticated: boolean
 }
@@ -45,9 +45,9 @@ export async function initializeAuth() {
   authError.value = null
   authConfig.value = await fetchJSON<AuthConfig>('/api/auth/config')
   try {
-    authSession.value = await fetchJSON<AuthSession>('/api/auth/session', {
+    authSession.value = normalizeAuthSession(await fetchJSON<AuthSession>('/api/auth/session', {
       headers: authHeaders()
-    })
+    }))
   } catch (err) {
     authError.value = err instanceof Error ? err.message : 'Failed to initialize authentication'
     authSession.value = null
@@ -85,9 +85,9 @@ export async function completePasswordLogin(provider: string, username: string, 
     headers: authHeaders(),
     body: JSON.stringify({ provider, username, password })
   })
-  authSession.value = await fetchJSON<AuthSession>('/api/auth/session', {
+  authSession.value = normalizeAuthSession(await fetchJSON<AuthSession>('/api/auth/session', {
     headers: authHeaders()
-  })
+  }))
 }
 
 export function logout(returnTo?: string | Event) {
@@ -115,4 +115,13 @@ function csrfToken(): string {
     ?.split('=')
     .slice(1)
     .join('=') || ''
+}
+
+function normalizeAuthSession(session: AuthSession): AuthSession {
+  return {
+    ...session,
+    roles: session.roles ?? [],
+    groups: session.groups ?? [],
+    tenants: session.tenants ?? []
+  }
 }

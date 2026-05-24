@@ -126,6 +126,23 @@ func TestAuthSessionEndpointReturnsActorContext(t *testing.T) {
 	}
 }
 
+func TestAuthSessionResponseIncludesEmptyRoleArrays(t *testing.T) {
+	payload, err := json.Marshal(authSessionResponse(actor{
+		Name:          "test",
+		Authenticated: true,
+		Roles:         map[string]struct{}{},
+		Groups:        map[string]struct{}{},
+		TenantRoles:   map[string]map[string]struct{}{},
+	}))
+	if err != nil {
+		t.Fatalf("marshal auth session: %v", err)
+	}
+	body := string(payload)
+	if !strings.Contains(body, `"roles":[]`) || !strings.Contains(body, `"groups":[]`) {
+		t.Fatalf("expected empty roles/groups arrays, got %s", body)
+	}
+}
+
 func TestInstanceDetailAggregatesProductStatus(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()

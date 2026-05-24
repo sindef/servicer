@@ -47,7 +47,7 @@ const usePublicLayout = computed(() => route.meta.publicLayout === true)
       <div class="auth-panel">
         <template v-if="authReady && authSession?.authenticated">
           <strong>{{ authSession.name }}</strong>
-          <small>{{ authSession.provider || 'authenticated' }} · {{ authSession.roles.join(', ') || 'no platform roles' }}</small>
+          <small>{{ authSession.provider || 'authenticated' }} · {{ (authSession.roles ?? []).join(', ') || 'no platform roles' }}</small>
           <button class="button secondary compact-button" @click="logout">Sign out</button>
         </template>
         <template v-else>

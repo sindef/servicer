@@ -225,8 +225,8 @@ func authSessionResponse(current actor) AuthSessionResponse {
 		Email:         current.Email,
 		UserName:      current.UserName,
 		Provider:      current.Provider,
-		Roles:         sortedKeys(current.Roles),
-		Groups:        sortedKeys(current.Groups),
+		Roles:         nonNilStringSlice(sortedKeys(current.Roles)),
+		Groups:        nonNilStringSlice(sortedKeys(current.Groups)),
 		Authenticated: current.Authenticated,
 	}
 	tenantNames := make([]string, 0, len(current.TenantRoles))
@@ -241,6 +241,13 @@ func authSessionResponse(current actor) AuthSessionResponse {
 		})
 	}
 	return response
+}
+
+func nonNilStringSlice(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func (a *authRuntime) StartLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, providerName, redirectURI string) error {
