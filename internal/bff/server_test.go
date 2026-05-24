@@ -14,6 +14,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -184,6 +185,45 @@ func TestCreateProductRequestRejectsInvalidRuntimeName(t *testing.T) {
 	}
 }
 
+func TestCreateUserCreatesLocalAuthSecret(t *testing.T) {
+	server := testServer(t)
+	body := []byte(`{
+		"name":"alice",
+		"displayName":"Alice Johnson",
+		"email":"alice@example.com",
+		"localAuthEnabled":true,
+		"password":"super-secret"
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/auth/users", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var user platformv1alpha1.User
+	if err := server.client.Get(request.Context(), types.NamespacedName{Name: "alice"}, &user); err != nil {
+		t.Fatalf("expected user to be created: %v", err)
+	}
+	if user.Spec.LocalAuth == nil || user.Spec.LocalAuth.PasswordHashSecretRef.Name == "" {
+		t.Fatalf("expected local auth secret ref, got %#v", user.Spec.LocalAuth)
+	}
+
+	var secret corev1.Secret
+	key := types.NamespacedName{Name: localUserSecretName("alice"), Namespace: authSecretNamespace}
+	if err := server.client.Get(request.Context(), key, &secret); err != nil {
+		t.Fatalf("expected secret to be created: %v", err)
+	}
+	if len(secret.Data["passwordHash"]) == 0 {
+		t.Fatalf("expected password hash in secret, got %#v", secret.Data)
+	}
+}
+
 func TestUpdateProductRequestChangesPlan(t *testing.T) {
 	server := testServer(t)
 	body := []byte(`{"name":"session-cache","projectName":"acme-prod","serviceClass":"valkey","servicePlan":"valkey-replicated","version":"8.0"}`)
@@ -238,6 +278,9 @@ func TestProjectRepositoryLifecycle(t *testing.T) {
 	if repos[0].Name != "storefront-app" || repos[0].URL != "https://github.com/acme/storefront.git" || repos[0].AuthType != "http" {
 		t.Fatalf("unexpected repository summary %#v", repos[0])
 	}
+	if repos[0].Scope != "project" || repos[0].ProjectName != "acme-prod" || repos[0].TenantName != "" {
+		t.Fatalf("unexpected repository scope %#v", repos[0])
+	}
 
 	var argoSecret corev1.Secret
 	if err := server.client.Get(createRequest.Context(), client.ObjectKey{Name: "argocd-repo-github-com-acme-storefront-git", Namespace: "argocd"}, &argoSecret); err != nil {
@@ -251,6 +294,54 @@ func TestProjectRepositoryLifecycle(t *testing.T) {
 	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/projects/acme-prod/repositories/storefront-app", nil)
 	deleteRequest.Header.Set("X-Servicer-User", "alice@example.com")
 	deleteRequest.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+}
+
+func TestTenantRepositoryLifecycle(t *testing.T) {
+	server := testServer(t)
+	body := []byte(`{
+		"name":"tenant-platform",
+		"displayName":"Tenant Platform",
+		"url":"https://github.com/acme/platform.git",
+		"authType":"none"
+	}`)
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/tenants/acme/repositories", bytes.NewReader(body))
+	createRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	createRequest.Header.Set("X-Servicer-Roles", "tenant-admin")
+	server.Handler().ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	listResponse := httptest.NewRecorder()
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/tenants/acme/repositories", nil)
+	listRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	listRequest.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", listResponse.Code, listResponse.Body.String())
+	}
+
+	var repos []RepositorySummary
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &repos); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected one repository, got %#v", repos)
+	}
+	if repos[0].Name != "tenant-platform" || repos[0].TenantName != "acme" || repos[0].Scope != "tenant" || repos[0].ProjectName != "" {
+		t.Fatalf("unexpected repository summary %#v", repos[0])
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/tenants/acme/repositories/tenant-platform", nil)
+	deleteRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	deleteRequest.Header.Set("X-Servicer-Roles", "tenant-admin")
 	server.Handler().ServeHTTP(deleteResponse, deleteRequest)
 	if deleteResponse.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", deleteResponse.Code, deleteResponse.Body.String())
@@ -274,6 +365,32 @@ func TestProjectRepositoryEndpointsRejectUnauthorizedProject(t *testing.T) {
 		"name":"rogue-app",
 		"displayName":"Rogue App",
 		"url":"https://github.com/rogue/app.git"
+	}`))
+	createRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	createRequest.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+}
+
+func TestTenantRepositoryEndpointsRejectUnauthorizedTenant(t *testing.T) {
+	server := testServer(t)
+
+	listResponse := httptest.NewRecorder()
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/tenants/rogue/repositories", nil)
+	listRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	listRequest.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", listResponse.Code, listResponse.Body.String())
+	}
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/tenants/rogue/repositories", strings.NewReader(`{
+		"name":"rogue-platform",
+		"displayName":"Rogue Platform",
+		"url":"https://github.com/rogue/platform.git"
 	}`))
 	createRequest.Header.Set("X-Servicer-User", "alice@example.com")
 	createRequest.Header.Set("X-Servicer-Roles", "tenant-operator")

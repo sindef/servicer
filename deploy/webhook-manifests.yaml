@@ -1,0 +1,459 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: servicer-platform-mutating-webhooks
+webhooks:
+  - name: mactionrequest.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-actionrequest
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["actionrequests"]
+  - name: mclustertarget.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-clustertarget
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["clustertargets"]
+  - name: moperatorpackage.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-operatorpackage
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["operatorpackages"]
+  - name: mpolicy.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-policy
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["policies"]
+  - name: mproject.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-project
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["projects"]
+  - name: mauthprovider.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-authprovider
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["authproviders"]
+  - name: muser.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-user
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["users"]
+  - name: mgroup.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-group
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["groups"]
+  - name: mrolebinding.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-rolebinding
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["rolebindings"]
+  - name: mserviceinstance.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-serviceinstance
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["serviceinstances"]
+  - name: mnamespaceclaim.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-namespaceclaim
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["namespaceclaims"]
+  - name: mservicebinding.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-servicebinding
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["servicebindings"]
+  - name: mvirtualmachineclaim.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-virtualmachineclaim
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["virtualmachineclaims"]
+  - name: mserviceclass.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-serviceclass
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["serviceclasses"]
+  - name: mserviceplan.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-serviceplan
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["serviceplans"]
+  - name: mtenant.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /mutate-platform-servicer-io-v1alpha1-tenant
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["tenants"]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: servicer-platform-validating-webhooks
+webhooks:
+  - name: vactionrequest.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-actionrequest
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["actionrequests"]
+  - name: vclustertarget.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-clustertarget
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["clustertargets"]
+  - name: voperatorpackage.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-operatorpackage
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["operatorpackages"]
+  - name: vpolicy.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-policy
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["policies"]
+  - name: vproject.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-project
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["projects"]
+  - name: vauthprovider.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-authprovider
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["authproviders"]
+  - name: vuser.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-user
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["users"]
+  - name: vgroup.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-group
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["groups"]
+  - name: vrolebinding.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-rolebinding
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["rolebindings"]
+  - name: vserviceinstance.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-serviceinstance
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["serviceinstances"]
+  - name: vnamespaceclaim.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-namespaceclaim
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["namespaceclaims"]
+  - name: vservicebinding.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-servicebinding
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["servicebindings"]
+  - name: vvirtualmachineclaim.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-virtualmachineclaim
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["virtualmachineclaims"]
+  - name: vserviceclass.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-serviceclass
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["serviceclasses"]
+  - name: vserviceplan.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-serviceplan
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["serviceplans"]
+  - name: vtenant.platform.servicer.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: servicer-webhook-service
+        namespace: servicer-system
+        path: /validate-platform-servicer-io-v1alpha1-tenant
+    rules:
+      - apiGroups: ["platform.servicer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["tenants"]

@@ -122,6 +122,9 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /api/projects/{project}/repositories", server.handleListProjectRepositories)
 	mux.HandleFunc("POST /api/projects/{project}/repositories", server.handleCreateProjectRepository)
 	mux.HandleFunc("DELETE /api/projects/{project}/repositories/{repo}", server.handleDeleteProjectRepository)
+	mux.HandleFunc("GET /api/tenants/{tenant}/repositories", server.handleListTenantRepositories)
+	mux.HandleFunc("POST /api/tenants/{tenant}/repositories", server.handleCreateTenantRepository)
+	mux.HandleFunc("DELETE /api/tenants/{tenant}/repositories/{repo}", server.handleDeleteTenantRepository)
 	server.handler = withJSON(server.withMetrics(server.withAuthentication(mux)))
 	return server
 }

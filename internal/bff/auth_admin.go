@@ -1,6 +1,7 @@
 package bff
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,9 +10,9 @@ import (
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"golang.org/x/crypto/bcrypt"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const authSecretNamespace = "servicer-system"
@@ -84,7 +85,7 @@ func (s *Server) handleCreateAuthProvider(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for _, secret := range secrets {
-		if err := s.client.Patch(r.Context(), secret, client.Apply, client.FieldOwner("servicer-auth-admin"), client.ForceOwnership); err != nil {
+		if err := s.upsertSecret(r.Context(), secret); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -113,7 +114,7 @@ func (s *Server) handleUpdateAuthProvider(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for _, secret := range secrets {
-		if err := s.client.Patch(r.Context(), secret, client.Apply, client.FieldOwner("servicer-auth-admin"), client.ForceOwnership); err != nil {
+		if err := s.upsertSecret(r.Context(), secret); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -268,7 +269,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if secret != nil {
-		if err := s.client.Patch(r.Context(), secret, client.Apply, client.FieldOwner("servicer-auth-admin"), client.ForceOwnership); err != nil {
+		if err := s.upsertSecret(r.Context(), secret); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -297,7 +298,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if secret != nil {
-		if err := s.client.Patch(r.Context(), secret, client.Apply, client.FieldOwner("servicer-auth-admin"), client.ForceOwnership); err != nil {
+		if err := s.upsertSecret(r.Context(), secret); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -606,4 +607,32 @@ func roleBindingFromRequest(req RoleBindingRequest) (*platformv1alpha1.RoleBindi
 		}
 	}
 	return binding, nil
+}
+
+func (s *Server) upsertSecret(ctx context.Context, desired *corev1.Secret) error {
+	desired = desired.DeepCopy()
+	if len(desired.StringData) > 0 {
+		if desired.Data == nil {
+			desired.Data = map[string][]byte{}
+		}
+		for key, value := range desired.StringData {
+			desired.Data[key] = []byte(value)
+		}
+	}
+
+	var existing corev1.Secret
+	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
+	if err := s.client.Get(ctx, key, &existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return s.client.Create(ctx, desired)
+		}
+		return err
+	}
+	existing.StringData = desired.StringData
+	existing.Data = desired.Data
+	existing.Type = desired.Type
+	existing.Immutable = desired.Immutable
+	existing.Labels = desired.Labels
+	existing.Annotations = desired.Annotations
+	return s.client.Update(ctx, &existing)
 }

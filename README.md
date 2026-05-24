@@ -23,7 +23,8 @@ User -> Vue UI -> BFF -> Servicer CRDs -> Controllers/Adapters -> Target cluster
 | `internal/adapters/` | Product adapters and runtime contracts |
 | `internal/deliveryrepo/` | Git publication for delivery artifacts |
 | `config/crd/` | Generated CRDs |
-| `config/deploy/` | Platform install manifests |
+| `config/deploy/` | Demo/local-validation manifests for Kind |
+| `deploy/` | Production install manifests |
 | `config/samples/` | Demo catalog, packages, tenancy, and targets |
 | `web/` | Vue 3 + TypeScript frontend |
 | `hack/` | Demo bootstrap and operator/dev scripts |
@@ -83,6 +84,73 @@ API group: `platform.servicer.io/v1alpha1`
 | Virtual Machine (KubeVirt) | Partial |
 
 See [docs/feature-gaps.md](docs/feature-gaps.md) for the remaining partial areas.
+
+## Deploying to Kubernetes
+
+Tagged builds publish four images to GitHub Container Registry:
+
+- `ghcr.io/sindef/servicer-manager:<version>`
+- `ghcr.io/sindef/servicer-syncer:<version>`
+- `ghcr.io/sindef/servicer-bff:<version>`
+- `ghcr.io/sindef/servicer-web:<version>`
+
+Each Git tag matching `v*` also publishes a rendered install manifest as a GitHub release asset:
+
+```text
+servicer-install-<version>.yaml
+```
+
+### Quick install from a tagged release
+
+```bash
+kubectl apply -f https://github.com/sindef/servicer/releases/download/<version>/servicer-install-<version>.yaml
+```
+
+Example:
+
+```bash
+kubectl apply -f https://github.com/sindef/servicer/releases/download/v0.1.0/servicer-install-v0.1.0.yaml
+```
+
+### Install from this repo for a specific version
+
+```bash
+./hack/render-deploy-manifest.sh v0.1.0 > servicer-install.yaml
+kubectl apply -f servicer-install.yaml
+```
+
+Or:
+
+```bash
+./hack/deploy.sh v0.1.0
+```
+
+Optional environment overrides:
+
+- `IMAGE_PREFIX=ghcr.io/<owner>/servicer` for a fork or mirrored registry
+- `NAMESPACE=<namespace>` to render into a different namespace
+
+### Base install behavior
+
+`deploy/` is the real-cluster install path. It deploys:
+
+- `manager`
+- `syncer`
+- `bff`
+- `web`
+- webhook bootstrap/service manifests and RBAC
+
+The web service is a `ClusterIP`. Expose it with port-forward or your own ingress:
+
+```bash
+kubectl -n servicer-system port-forward svc/web 8080:80
+```
+
+Then open:
+
+```text
+http://localhost:8080
+```
 
 ## Demo environment
 
@@ -150,10 +218,26 @@ npm ci
 npm run build
 ```
 
+### Frontend dependency audit
+
+Run from the repo root:
+
+```bash
+./hack/npm-audit-web.sh
+```
+
+Or directly inside `web/`:
+
+```bash
+cd web
+npm audit --omit=dev --audit-level=high
+```
+
 ### Manifest validation
 
 ```bash
 kubectl kustomize config/deploy > /dev/null
+kubectl kustomize deploy > /dev/null
 kubectl kustomize config/samples > /dev/null
 ```
 
@@ -164,6 +248,12 @@ docker build -f Containerfile.manager -t servicer/manager:dev .
 docker build -f Containerfile.syncer -t servicer/syncer:dev .
 docker build -f Containerfile.bff -t servicer/bff:dev .
 docker build -f Containerfile.web -t servicer/web:dev .
+```
+
+### Render versioned install manifests
+
+```bash
+./hack/render-deploy-manifest.sh v0.1.0 > /dev/null
 ```
 
 ## Delivery model

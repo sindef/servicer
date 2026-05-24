@@ -13,7 +13,8 @@ import {
 } from '../api'
 import { useApi } from '../composables/useApi'
 
-type AuthSection = 'providers' | 'users' | 'groups' | 'bindings'
+type AuthSection = 'users' | 'groups' | 'bindings' | 'providers'
+const authSections = ['users', 'groups', 'bindings', 'providers'] as const
 
 const providers = useApi(api.admin.authProviders)
 const users = useApi(api.admin.users)
@@ -27,7 +28,9 @@ const groupRows = computed(() => (groups.data.value ?? []).slice().sort((a, b) =
 const bindingRows = computed(() => (bindings.data.value ?? []).slice().sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)))
 const tenantRows = computed(() => tenants.data.value ?? [])
 
-const activeSection = ref<AuthSection>('providers')
+const activeSection = ref<AuthSection>('users')
+const modalSection = ref<AuthSection | null>(null)
+const modalMode = ref<'create' | 'edit'>('create')
 const search = ref('')
 const error = ref<string | null>(null)
 const success = ref<string | null>(null)
@@ -52,12 +55,43 @@ async function runWrite(fn: () => Promise<{ name: string; message: string }>, re
   }
 }
 
-const metrics = computed(() => [
-  { label: 'Providers', value: providerRows.value.length, note: `${providerRows.value.filter((item) => item.enabled).length} enabled` },
-  { label: 'Users', value: userRows.value.length, note: `${userRows.value.filter((item) => item.localAuthEnabled).length} local accounts` },
-  { label: 'Groups', value: groupRows.value.length, note: `${groupRows.value.filter((item) => (item.externalGroups?.length ?? 0) > 0).length} mapped externally` },
-  { label: 'Bindings', value: bindingRows.value.length, note: `${bindingRows.value.filter((item) => item.scope === 'tenant').length} tenant scoped` }
-])
+function sectionCount(section: AuthSection) {
+  switch (section) {
+    case 'providers':
+      return providerRows.value.length
+    case 'users':
+      return userRows.value.length
+    case 'groups':
+      return groupRows.value.length
+    case 'bindings':
+      return bindingRows.value.length
+  }
+}
+
+function modalTitle(section: AuthSection) {
+  const noun =
+    section === 'providers'
+      ? 'provider'
+      : section === 'users'
+        ? 'user'
+        : section === 'groups'
+          ? 'group'
+          : 'role binding'
+  return `${modalMode.value === 'create' ? 'New' : 'Edit'} ${noun}`
+}
+
+const sectionSearchPlaceholder = computed(() => {
+  switch (activeSection.value) {
+    case 'providers':
+      return 'Search providers'
+    case 'users':
+      return 'Search users'
+    case 'groups':
+      return 'Search groups'
+    case 'bindings':
+      return 'Search bindings'
+  }
+})
 
 function matchesSearch(haystack: Array<string | undefined>) {
   const term = search.value.trim().toLowerCase()
@@ -90,11 +124,92 @@ const selectedProviderName = ref<string | null>(null)
 const selectedUserName = ref<string | null>(null)
 const selectedGroupName = ref<string | null>(null)
 const selectedBindingName = ref<string | null>(null)
+const selectedProviderNames = ref<string[]>([])
+const selectedUserNames = ref<string[]>([])
+const selectedGroupNames = ref<string[]>([])
+const selectedBindingNames = ref<string[]>([])
 
 const selectedProvider = computed(() => providerRows.value.find((item) => item.name === selectedProviderName.value) ?? null)
 const selectedUser = computed(() => userRows.value.find((item) => item.name === selectedUserName.value) ?? null)
 const selectedGroup = computed(() => groupRows.value.find((item) => item.name === selectedGroupName.value) ?? null)
 const selectedBinding = computed(() => bindingRows.value.find((item) => item.name === selectedBindingName.value) ?? null)
+const activeSelectedCount = computed(() => selectionFor(activeSection.value).length)
+
+function checkboxValue(event: Event) {
+  return (event.target as HTMLInputElement).checked
+}
+
+function selectionFor(section: AuthSection) {
+  switch (section) {
+    case 'providers':
+      return selectedProviderNames.value
+    case 'users':
+      return selectedUserNames.value
+    case 'groups':
+      return selectedGroupNames.value
+    case 'bindings':
+      return selectedBindingNames.value
+  }
+}
+
+function setSelection(section: AuthSection, names: string[]) {
+  const uniqueNames = [...new Set(names)]
+  switch (section) {
+    case 'providers':
+      selectedProviderNames.value = uniqueNames
+      break
+    case 'users':
+      selectedUserNames.value = uniqueNames
+      break
+    case 'groups':
+      selectedGroupNames.value = uniqueNames
+      break
+    case 'bindings':
+      selectedBindingNames.value = uniqueNames
+      break
+  }
+}
+
+function visibleNamesFor(section: AuthSection) {
+  switch (section) {
+    case 'providers':
+      return filteredProviders.value.map((item) => item.name)
+    case 'users':
+      return filteredUsers.value.map((item) => item.name)
+    case 'groups':
+      return filteredGroups.value.map((item) => item.name)
+    case 'bindings':
+      return filteredBindings.value.map((item) => item.name)
+  }
+}
+
+function isSelected(section: AuthSection, name: string) {
+  return selectionFor(section).includes(name)
+}
+
+function toggleSelected(section: AuthSection, name: string, checked: boolean) {
+  const current = selectionFor(section)
+  setSelection(section, checked ? [...current, name] : current.filter((item) => item !== name))
+}
+
+function toggleVisibleSelection(section: AuthSection, checked: boolean) {
+  const visibleNames = visibleNamesFor(section)
+  if (!checked) {
+    setSelection(section, selectionFor(section).filter((name) => !visibleNames.includes(name)))
+    return
+  }
+  setSelection(section, [...selectionFor(section), ...visibleNames])
+}
+
+function allVisibleSelected(section: AuthSection) {
+  const visibleNames = visibleNamesFor(section)
+  const selectedNames = selectionFor(section)
+  return visibleNames.length > 0 && visibleNames.every((name) => selectedNames.includes(name))
+}
+
+function clearSelected(section: AuthSection) {
+  setSelection(section, [])
+}
 
 const editingProvider = ref<string | null>(null)
 const providerForm = reactive({
@@ -195,6 +310,13 @@ function editProvider(provider: AuthProviderSummary) {
   })
 }
 
+function openEditProvider(provider: AuthProviderSummary) {
+  clearStatus()
+  editProvider(provider)
+  modalMode.value = 'edit'
+  modalSection.value = 'providers'
+}
+
 function providerRequest(): AuthProviderRequest {
   return {
     name: providerForm.name,
@@ -285,6 +407,13 @@ function editUser(user: UserSummary) {
   })
 }
 
+function openEditUser(user: UserSummary) {
+  clearStatus()
+  editUser(user)
+  modalMode.value = 'edit'
+  modalSection.value = 'users'
+}
+
 function parseExternalIdentityLines(raw: string) {
   return raw
     .split('\n')
@@ -355,6 +484,13 @@ function editGroup(group: GroupSummary) {
     membersRaw: (group.members ?? []).join('\n'),
     externalGroupsRaw: (group.externalGroups ?? []).map((external) => `${external.provider}:${external.name}`).join('\n')
   })
+}
+
+function openEditGroup(group: GroupSummary) {
+  clearStatus()
+  editGroup(group)
+  modalMode.value = 'edit'
+  modalSection.value = 'groups'
 }
 
 function parseExternalGroups(raw: string) {
@@ -437,6 +573,13 @@ function editBinding(binding: RoleBindingSummary) {
   })
 }
 
+function openEditBinding(binding: RoleBindingSummary) {
+  clearStatus()
+  editBinding(binding)
+  modalMode.value = 'edit'
+  modalSection.value = 'bindings'
+}
+
 function parseBindingSubjects(raw: string) {
   return raw
     .split('\n')
@@ -485,30 +628,98 @@ async function deleteBinding(name: string) {
   }
 }
 
+async function deleteSelected(section: AuthSection) {
+  const names = [...selectionFor(section)]
+  if (!names.length) return
+  const label = sectionItemLabel(section, names.length)
+  if (!window.confirm(`Remove ${names.length} ${label}?`)) return
+
+  busy.value = true
+  clearStatus()
+  try {
+    for (const name of names) {
+      if (section === 'providers') {
+        await api.admin.deleteAuthProvider(name)
+      } else if (section === 'users') {
+        await api.admin.deleteUser(name)
+      } else if (section === 'groups') {
+        await api.admin.deleteGroup(name)
+      } else {
+        await api.admin.deleteRoleBinding(name)
+      }
+    }
+    clearSelected(section)
+    if (section === 'providers') {
+      if (selectedProviderName.value && names.includes(selectedProviderName.value)) {
+        selectedProviderName.value = null
+        resetProviderForm()
+      }
+      await providers.reload()
+    } else if (section === 'users') {
+      if (selectedUserName.value && names.includes(selectedUserName.value)) {
+        selectedUserName.value = null
+        resetUserForm()
+      }
+      await users.reload()
+    } else if (section === 'groups') {
+      if (selectedGroupName.value && names.includes(selectedGroupName.value)) {
+        selectedGroupName.value = null
+        resetGroupForm()
+      }
+      await groups.reload()
+    } else {
+      if (selectedBindingName.value && names.includes(selectedBindingName.value)) {
+        selectedBindingName.value = null
+        resetBindingForm()
+      }
+      await bindings.reload()
+    }
+    success.value = `Removed ${names.length} ${label}.`
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Bulk remove failed'
+  } finally {
+    busy.value = false
+  }
+}
+
+function sectionItemLabel(section: AuthSection, count: number) {
+  const plural = count !== 1
+  switch (section) {
+    case 'providers':
+      return plural ? 'auth providers' : 'auth provider'
+    case 'users':
+      return plural ? 'users' : 'user'
+    case 'groups':
+      return plural ? 'groups' : 'group'
+    case 'bindings':
+      return plural ? 'role bindings' : 'role binding'
+  }
+}
+
 function sectionMeta(section: AuthSection) {
   switch (section) {
     case 'providers':
       return {
         title: 'Auth providers',
-        description: 'Manage local, OIDC, and LDAP identity sources exposed at sign-in.',
+        description: 'Local, OIDC, and LDAP sign-in methods.',
         action: 'New provider'
       }
     case 'users':
       return {
         title: 'Users',
-        description: 'Create local operators and map enterprise identities to Servicer users.',
+        description: 'People who can sign in.',
         action: 'New user'
       }
     case 'groups':
       return {
         title: 'Groups',
-        description: 'Aggregate local users and upstream directory groups for reusable access grants.',
+        description: 'Reusable collections of users.',
         action: 'New group'
       }
     case 'bindings':
       return {
         title: 'Role bindings',
-        description: 'Grant platform-wide or tenant-scoped access to users and groups.',
+        description: 'Roles assigned to users and groups.',
         action: 'New binding'
       }
   }
@@ -525,35 +736,86 @@ function openNewCurrentSection() {
   } else {
     resetBindingForm()
   }
+  modalMode.value = 'create'
+  modalSection.value = activeSection.value
+}
+
+function closeModal() {
+  modalSection.value = null
+}
+
+async function submitCreateProvider() {
+  await submitProvider()
+  if (!error.value) closeModal()
+}
+
+async function submitCreateUser() {
+  await submitUser()
+  if (!error.value) closeModal()
+}
+
+async function submitCreateGroup() {
+  await submitGroup()
+  if (!error.value) closeModal()
+}
+
+async function submitCreateBinding() {
+  await submitBinding()
+  if (!error.value) closeModal()
+}
+
+async function submitEditProvider() {
+  await submitProvider()
+  if (!error.value) closeModal()
+}
+
+async function submitEditUser() {
+  await submitUser()
+  if (!error.value) closeModal()
+}
+
+async function submitEditGroup() {
+  await submitGroup()
+  if (!error.value) closeModal()
+}
+
+async function submitEditBinding() {
+  await submitBinding()
+  if (!error.value) closeModal()
 }
 
 watch(activeSection, () => {
   clearStatus()
   search.value = ''
+  closeModal()
 })
 
 watch(providerRows, (rows) => {
   if (selectedProviderName.value && !rows.some((item) => item.name === selectedProviderName.value)) {
     selectedProviderName.value = null
   }
+  selectedProviderNames.value = selectedProviderNames.value.filter((name) => rows.some((item) => item.name === name))
 })
 
 watch(userRows, (rows) => {
   if (selectedUserName.value && !rows.some((item) => item.name === selectedUserName.value)) {
     selectedUserName.value = null
   }
+  selectedUserNames.value = selectedUserNames.value.filter((name) => rows.some((item) => item.name === name))
 })
 
 watch(groupRows, (rows) => {
   if (selectedGroupName.value && !rows.some((item) => item.name === selectedGroupName.value)) {
     selectedGroupName.value = null
   }
+  selectedGroupNames.value = selectedGroupNames.value.filter((name) => rows.some((item) => item.name === name))
 })
 
 watch(bindingRows, (rows) => {
   if (selectedBindingName.value && !rows.some((item) => item.name === selectedBindingName.value)) {
     selectedBindingName.value = null
   }
+  selectedBindingNames.value = selectedBindingNames.value.filter((name) => rows.some((item) => item.name === name))
 })
 
 resetProviderForm()
@@ -564,62 +826,68 @@ resetBindingForm()
 
 <template>
   <div class="stack-gap">
-    <section class="content-band auth-admin-hero">
-      <div>
-        <p class="eyebrow">Identity & access</p>
-        <h2>Enterprise authentication workspace</h2>
-        <p class="muted">
-          Configure providers, manage internal identities, and grant least-privilege access across tenants.
-        </p>
-      </div>
-      <div class="auth-metric-grid">
-        <div v-for="metric in metrics" :key="metric.label" class="auth-metric-card">
-          <span>{{ metric.label }}</span>
-          <strong>{{ metric.value }}</strong>
-          <small>{{ metric.note }}</small>
-        </div>
-      </div>
+    <section class="auth-admin-header">
+      <p class="eyebrow">Auth</p>
+      <h2>Authentication</h2>
     </section>
 
     <section class="content-band">
       <div class="auth-toolbar">
         <div class="tab-strip auth-subtabs">
           <button
-            v-for="section in (['providers', 'users', 'groups', 'bindings'] as const)"
+            v-for="section in authSections"
             :key="section"
             class="tab-btn"
             :class="{ active: activeSection === section }"
             @click="activeSection = section"
           >
-            {{ sectionMeta(section).title }}
+            <span>{{ sectionMeta(section).title }}</span>
+            <span class="tab-count">{{ sectionCount(section) }}</span>
           </button>
         </div>
-        <input
-          v-model="search"
-          class="auth-search"
-          type="search"
-          :placeholder="`Search ${sectionMeta(activeSection).title.toLowerCase()}...`"
-        />
       </div>
 
       <p v-if="error" class="error-text" style="margin-bottom: 12px">{{ error }}</p>
       <p v-if="success" class="success-text" style="margin-bottom: 12px">{{ success }}</p>
 
-      <div class="auth-workspace">
-        <div class="auth-list-pane">
-          <div class="auth-pane-header">
-            <div>
-              <h3>{{ sectionMeta(activeSection).title }}</h3>
-              <p class="muted">{{ sectionMeta(activeSection).description }}</p>
-            </div>
+      <div class="auth-list-pane">
+        <div class="auth-pane-header">
+          <div>
+            <h3>{{ sectionMeta(activeSection).title }}</h3>
+          </div>
+          <div class="auth-pane-controls">
+            <input
+              v-model="search"
+              class="auth-search"
+              type="search"
+              :placeholder="sectionSearchPlaceholder"
+            />
             <button class="button primary" :disabled="busy" @click="openNewCurrentSection">
               {{ sectionMeta(activeSection).action }}
             </button>
           </div>
+        </div>
 
-          <table v-if="activeSection === 'providers'" class="data-table auth-table">
+        <div v-if="activeSelectedCount" class="auth-bulk-bar">
+          <strong>{{ activeSelectedCount }} selected</strong>
+          <button class="button secondary compact-button" :disabled="busy" @click="clearSelected(activeSection)">Clear</button>
+          <button class="button secondary compact-button auth-remove-action" :disabled="busy" @click="deleteSelected(activeSection)">
+            Remove selected
+          </button>
+        </div>
+
+        <table v-if="activeSection === 'providers'" class="data-table auth-table">
             <thead>
               <tr>
+                <th class="auth-select-col">
+                  <input
+                    aria-label="Select all visible providers"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="allVisibleSelected('providers')"
+                    @change="toggleVisibleSelection('providers', checkboxValue($event))"
+                  />
+                </th>
                 <th>Name</th>
                 <th>Type</th>
                 <th>State</th>
@@ -630,10 +898,17 @@ resetBindingForm()
               <tr
                 v-for="provider in filteredProviders"
                 :key="provider.name"
-                class="clickable-row"
-                :class="{ selected: selectedProviderName === provider.name }"
-                @click="editProvider(provider)"
               >
+                <td class="auth-select-col">
+                  <input
+                    :aria-label="`Select provider ${provider.displayName || provider.name}`"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="isSelected('providers', provider.name)"
+                    @click.stop
+                    @change.stop="toggleSelected('providers', provider.name, checkboxValue($event))"
+                  />
+                </td>
                 <td><strong>{{ provider.displayName }}</strong><small>{{ provider.name }}</small></td>
                 <td>{{ provider.type }}</td>
                 <td>
@@ -641,16 +916,26 @@ resetBindingForm()
                     {{ provider.enabled ? 'Enabled' : 'Disabled' }}
                   </span>
                 </td>
-                <td class="table-actions">
-                  <button class="button text danger" @click.stop="deleteProvider(provider.name)">Remove</button>
+                <td class="table-actions auth-table-actions">
+                  <button class="button secondary compact-button" @click="openEditProvider(provider)">Edit</button>
+                  <button class="button secondary compact-button auth-remove-action" @click="deleteProvider(provider.name)">Remove</button>
                 </td>
               </tr>
             </tbody>
-          </table>
+        </table>
 
-          <table v-else-if="activeSection === 'users'" class="data-table auth-table">
+        <table v-else-if="activeSection === 'users'" class="data-table auth-table">
             <thead>
               <tr>
+                <th class="auth-select-col">
+                  <input
+                    aria-label="Select all visible users"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="allVisibleSelected('users')"
+                    @change="toggleVisibleSelection('users', checkboxValue($event))"
+                  />
+                </th>
                 <th>User</th>
                 <th>Local</th>
                 <th>External</th>
@@ -661,23 +946,40 @@ resetBindingForm()
               <tr
                 v-for="user in filteredUsers"
                 :key="user.name"
-                class="clickable-row"
-                :class="{ selected: selectedUserName === user.name }"
-                @click="editUser(user)"
               >
+                <td class="auth-select-col">
+                  <input
+                    :aria-label="`Select user ${user.displayName || user.name}`"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="isSelected('users', user.name)"
+                    @click.stop
+                    @change.stop="toggleSelected('users', user.name, checkboxValue($event))"
+                  />
+                </td>
                 <td><strong>{{ user.displayName || user.name }}</strong><small>{{ user.email || user.name }}</small></td>
                 <td>{{ user.localAuthEnabled ? 'Yes' : 'No' }}</td>
                 <td>{{ user.externalIdentities?.length || 0 }}</td>
-                <td class="table-actions">
-                  <button class="button text danger" @click.stop="deleteUser(user.name)">Remove</button>
+                <td class="table-actions auth-table-actions">
+                  <button class="button secondary compact-button" @click="openEditUser(user)">Edit</button>
+                  <button class="button secondary compact-button auth-remove-action" @click="deleteUser(user.name)">Remove</button>
                 </td>
               </tr>
             </tbody>
-          </table>
+        </table>
 
-          <table v-else-if="activeSection === 'groups'" class="data-table auth-table">
+        <table v-else-if="activeSection === 'groups'" class="data-table auth-table">
             <thead>
               <tr>
+                <th class="auth-select-col">
+                  <input
+                    aria-label="Select all visible groups"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="allVisibleSelected('groups')"
+                    @change="toggleVisibleSelection('groups', checkboxValue($event))"
+                  />
+                </th>
                 <th>Group</th>
                 <th>Members</th>
                 <th>Mapped</th>
@@ -688,23 +990,40 @@ resetBindingForm()
               <tr
                 v-for="group in filteredGroups"
                 :key="group.name"
-                class="clickable-row"
-                :class="{ selected: selectedGroupName === group.name }"
-                @click="editGroup(group)"
               >
+                <td class="auth-select-col">
+                  <input
+                    :aria-label="`Select group ${group.displayName || group.name}`"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="isSelected('groups', group.name)"
+                    @click.stop
+                    @change.stop="toggleSelected('groups', group.name, checkboxValue($event))"
+                  />
+                </td>
                 <td><strong>{{ group.displayName || group.name }}</strong><small>{{ group.name }}</small></td>
                 <td>{{ group.members?.length || 0 }}</td>
                 <td>{{ group.externalGroups?.length || 0 }}</td>
-                <td class="table-actions">
-                  <button class="button text danger" @click.stop="deleteGroup(group.name)">Remove</button>
+                <td class="table-actions auth-table-actions">
+                  <button class="button secondary compact-button" @click="openEditGroup(group)">Edit</button>
+                  <button class="button secondary compact-button auth-remove-action" @click="deleteGroup(group.name)">Remove</button>
                 </td>
               </tr>
             </tbody>
-          </table>
+        </table>
 
-          <table v-else class="data-table auth-table">
+        <table v-else class="data-table auth-table">
             <thead>
               <tr>
+                <th class="auth-select-col">
+                  <input
+                    aria-label="Select all visible role bindings"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="allVisibleSelected('bindings')"
+                    @change="toggleVisibleSelection('bindings', checkboxValue($event))"
+                  />
+                </th>
                 <th>Binding</th>
                 <th>Scope</th>
                 <th>Roles</th>
@@ -715,90 +1034,141 @@ resetBindingForm()
               <tr
                 v-for="binding in filteredBindings"
                 :key="binding.name"
-                class="clickable-row"
-                :class="{ selected: selectedBindingName === binding.name }"
-                @click="editBinding(binding)"
               >
+                <td class="auth-select-col">
+                  <input
+                    :aria-label="`Select role binding ${binding.displayName || binding.name}`"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="isSelected('bindings', binding.name)"
+                    @click.stop
+                    @change.stop="toggleSelected('bindings', binding.name, checkboxValue($event))"
+                  />
+                </td>
                 <td><strong>{{ binding.displayName || binding.name }}</strong><small>{{ binding.name }}</small></td>
                 <td>{{ binding.scope }}<span v-if="binding.tenantName"> · {{ binding.tenantName }}</span></td>
                 <td>{{ binding.roles.join(', ') }}</td>
-                <td class="table-actions">
-                  <button class="button text danger" @click.stop="deleteBinding(binding.name)">Remove</button>
+                <td class="table-actions auth-table-actions">
+                  <button class="button secondary compact-button" @click="openEditBinding(binding)">Edit</button>
+                  <button class="button secondary compact-button auth-remove-action" @click="deleteBinding(binding.name)">Remove</button>
                 </td>
               </tr>
             </tbody>
-          </table>
+        </table>
 
-          <div
-            v-if="
-              (activeSection === 'providers' && filteredProviders.length === 0) ||
-              (activeSection === 'users' && filteredUsers.length === 0) ||
-              (activeSection === 'groups' && filteredGroups.length === 0) ||
-              (activeSection === 'bindings' && filteredBindings.length === 0)
-            "
-            class="empty-state auth-empty"
-          >
-            <p>No matching {{ sectionMeta(activeSection).title.toLowerCase() }}.</p>
+        <div
+          v-if="
+            (activeSection === 'providers' && filteredProviders.length === 0) ||
+            (activeSection === 'users' && filteredUsers.length === 0) ||
+            (activeSection === 'groups' && filteredGroups.length === 0) ||
+            (activeSection === 'bindings' && filteredBindings.length === 0)
+          "
+          class="empty-state auth-empty"
+        >
+          <p>No matching {{ sectionMeta(activeSection).title.toLowerCase() }}.</p>
+        </div>
+      </div>
+    </section>
+
+    <div v-if="modalSection" class="modal-backdrop">
+      <div class="modal-panel auth-modal-panel">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">{{ modalMode === 'create' ? 'Create' : 'Edit' }}</p>
+            <h2>{{ modalTitle(modalSection) }}</h2>
+            <p class="muted">{{ sectionMeta(modalSection).description }}</p>
           </div>
+          <button class="button secondary" :disabled="busy" @click="closeModal">Close</button>
         </div>
 
-        <div class="content-band auth-detail-pane">
-          <template v-if="activeSection === 'providers'">
-            <div class="auth-pane-header">
-              <div>
-                <h3>{{ editingProvider ? 'Edit provider' : 'New provider' }}</h3>
-                <p class="muted">
-                  {{ selectedProvider?.type === 'oidc' ? 'Identity redirect provider' : selectedProvider?.type === 'ldap' ? 'Directory-backed provider' : 'Platform-managed credential provider' }}
-                </p>
+        <template v-if="modalSection === 'providers'">
+          <div class="auth-modal-body">
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Sign-in method</h3>
+                <p>Choose how users authenticate with this provider.</p>
               </div>
-              <button class="button secondary" @click="resetProviderForm">Reset</button>
-            </div>
-
-            <div class="form-grid modal-form-grid">
-              <label>
-                Provider name
-                <input v-model="providerForm.name" :disabled="!!editingProvider" placeholder="corp-sso" />
-              </label>
-              <label>
-                Display name
-                <input v-model="providerForm.displayName" placeholder="Corporate SSO" />
-              </label>
-              <label>
-                Type
-                <select v-model="providerForm.type" :disabled="!!editingProvider">
-                  <option value="local">local</option>
-                  <option value="oidc">oidc</option>
-                  <option value="ldap">ldap</option>
-                </select>
-              </label>
-              <div class="auth-checkbox-stack">
-                <label><input v-model="providerForm.enabled" type="checkbox" /> Enabled</label>
-                <label><input v-model="providerForm.default" type="checkbox" /> Default provider</label>
+              <div class="auth-method-picker">
+                <button
+                  v-for="type in (['local', 'oidc', 'ldap'] as const)"
+                  :key="type"
+                  class="auth-method-option"
+                  :class="{ active: providerForm.type === type }"
+                  :disabled="modalMode === 'edit'"
+                  type="button"
+                  @click="providerForm.type = type"
+                >
+                  <strong>{{ type.toUpperCase() }}</strong>
+                  <span v-if="type === 'local'">Servicer password users</span>
+                  <span v-else-if="type === 'oidc'">Browser SSO redirect</span>
+                  <span v-else>Directory bind</span>
+                </button>
               </div>
-            </div>
+            </section>
 
-            <div v-if="providerForm.type === 'oidc'" class="auth-config-card">
-              <h4>OIDC settings</h4>
-              <div class="form-grid modal-form-grid">
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Provider details</h3>
+              </div>
+              <div class="auth-modal-grid">
+                <label>
+                  <span>Provider name</span>
+                  <input v-model="providerForm.name" :disabled="modalMode === 'edit'" placeholder="corp-sso" />
+                </label>
+                <label>
+                  <span>Display name</span>
+                  <input v-model="providerForm.displayName" placeholder="Corporate SSO" />
+                </label>
+              </div>
+
+              <div class="auth-switch-grid">
+                <label class="auth-switch">
+                  <input v-model="providerForm.enabled" type="checkbox" />
+                  <span class="auth-switch-control"></span>
+                  <span>
+                    <strong>Enabled</strong>
+                    <small>Show on login.</small>
+                  </span>
+                </label>
+                <label class="auth-switch">
+                  <input v-model="providerForm.default" type="checkbox" />
+                  <span class="auth-switch-control"></span>
+                  <span>
+                    <strong>Default provider</strong>
+                    <small>Preselect on login.</small>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section v-if="providerForm.type === 'oidc'" class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>OIDC settings</h3>
+                <p>Client secret is stored in Kubernetes when saved.</p>
+              </div>
+              <div class="auth-modal-grid">
                 <label><span>Issuer URL</span><input v-model="providerForm.oidcIssuerUrl" placeholder="https://issuer.example.com" /></label>
                 <label><span>Client ID</span><input v-model="providerForm.oidcClientId" placeholder="servicer-web" /></label>
-                <label style="grid-column: 1 / -1"><span>Client secret</span><input v-model="providerForm.oidcClientSecret" type="password" placeholder="Stored in Kubernetes Secret on save" /></label>
+                <label class="auth-full-width"><span>Client secret</span><input v-model="providerForm.oidcClientSecret" type="password" placeholder="Stored in Kubernetes Secret on save" /></label>
                 <label><span>Scopes</span><input v-model="providerForm.oidcScopes" placeholder="openid profile email offline_access" /></label>
                 <label><span>Redirect path</span><input v-model="providerForm.oidcRedirectPath" placeholder="/api/auth/callback" /></label>
                 <label><span>Username claim</span><input v-model="providerForm.oidcUsernameClaim" placeholder="preferred_username" /></label>
                 <label><span>Email claim</span><input v-model="providerForm.oidcEmailClaim" placeholder="email" /></label>
                 <label><span>Roles claim</span><input v-model="providerForm.oidcRolesClaim" placeholder="roles" /></label>
                 <label><span>Groups claim</span><input v-model="providerForm.oidcGroupsClaim" placeholder="groups" /></label>
-                <label style="grid-column: 1 / -1"><span>End-session URL</span><input v-model="providerForm.oidcEndSessionUrl" placeholder="Optional provider logout endpoint" /></label>
+                <label class="auth-full-width"><span>End-session URL</span><input v-model="providerForm.oidcEndSessionUrl" placeholder="Optional provider logout endpoint" /></label>
               </div>
-            </div>
+            </section>
 
-            <div v-if="providerForm.type === 'ldap'" class="auth-config-card">
-              <h4>LDAP settings</h4>
-              <div class="form-grid modal-form-grid">
+            <section v-if="providerForm.type === 'ldap'" class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>LDAP settings</h3>
+                <p>Bind password is stored in Kubernetes when saved.</p>
+              </div>
+              <div class="auth-modal-grid">
                 <label><span>LDAP URL</span><input v-model="providerForm.ldapUrl" placeholder="ldaps://ldap.example.com:636" /></label>
                 <label><span>Bind DN</span><input v-model="providerForm.ldapBindUsername" placeholder="cn=svc,dc=example,dc=com" /></label>
-                <label style="grid-column: 1 / -1"><span>Bind password</span><input v-model="providerForm.ldapBindPassword" type="password" placeholder="Stored in Kubernetes Secret on save" /></label>
+                <label class="auth-full-width"><span>Bind password</span><input v-model="providerForm.ldapBindPassword" type="password" placeholder="Stored in Kubernetes Secret on save" /></label>
                 <label><span>User base DN</span><input v-model="providerForm.ldapUserBaseDn" placeholder="ou=people,dc=example,dc=com" /></label>
                 <label><span>User filter</span><input v-model="providerForm.ldapUserFilter" placeholder="(uid=%s)" /></label>
                 <label><span>Username attribute</span><input v-model="providerForm.ldapUsernameAttribute" placeholder="uid" /></label>
@@ -806,127 +1176,157 @@ resetBindingForm()
                 <label><span>Group base DN</span><input v-model="providerForm.ldapGroupBaseDn" placeholder="ou=groups,dc=example,dc=com" /></label>
                 <label><span>Group filter</span><input v-model="providerForm.ldapGroupFilter" placeholder="(member=%s)" /></label>
                 <label><span>Group name attribute</span><input v-model="providerForm.ldapGroupNameAttribute" placeholder="cn" /></label>
-                <div class="auth-checkbox-stack">
-                  <label><input v-model="providerForm.ldapStartTls" type="checkbox" /> StartTLS</label>
-                  <label><input v-model="providerForm.insecureSkipVerify" type="checkbox" /> Insecure TLS</label>
-                </div>
               </div>
-            </div>
-
-            <div class="form-actions">
-              <button class="button primary" :disabled="busy" @click="submitProvider">
-                {{ editingProvider ? 'Save provider' : 'Create provider' }}
-              </button>
-            </div>
-          </template>
-
-          <template v-else-if="activeSection === 'users'">
-            <div class="auth-pane-header">
-              <div>
-                <h3>{{ editingUser ? 'Edit user' : 'New user' }}</h3>
-                <p class="muted">Link enterprise identities to a Servicer user and optionally keep a local break-glass password.</p>
+              <div class="auth-switch-grid">
+                <label class="auth-switch">
+                  <input v-model="providerForm.ldapStartTls" type="checkbox" />
+                  <span class="auth-switch-control"></span>
+                  <span>
+                    <strong>StartTLS</strong>
+                    <small>Upgrade before bind.</small>
+                  </span>
+                </label>
+                <label class="auth-switch">
+                  <input v-model="providerForm.insecureSkipVerify" type="checkbox" />
+                  <span class="auth-switch-control"></span>
+                  <span>
+                    <strong>Insecure TLS</strong>
+                    <small>Skip certificate verification.</small>
+                  </span>
+                </label>
               </div>
-              <button class="button secondary" @click="resetUserForm">Reset</button>
-            </div>
+            </section>
+          </div>
 
-            <div class="form-grid modal-form-grid">
-              <label><span>Username</span><input v-model="userForm.name" :disabled="!!editingUser" placeholder="alice" /></label>
-              <label><span>Display name</span><input v-model="userForm.displayName" placeholder="Alice Johnson" /></label>
-              <label><span>Email</span><input v-model="userForm.email" placeholder="alice@example.com" /></label>
-              <div class="auth-checkbox-stack">
-                <label><input v-model="userForm.localAuthEnabled" type="checkbox" /> Local password enabled</label>
+          <div class="auth-modal-actions">
+            <button class="button reset" :disabled="busy" @click="resetProviderForm">Reset</button>
+            <div class="auth-action-spacer"></div>
+            <button class="button secondary" :disabled="busy" @click="closeModal">Cancel</button>
+            <button class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateProvider() : submitEditProvider()">
+              {{ modalMode === 'create' ? 'Create provider' : 'Save provider' }}
+            </button>
+          </div>
+        </template>
+
+        <template v-else-if="modalSection === 'users'">
+          <div class="auth-modal-body">
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>User details</h3>
+                <p>Name is the stable login identity in Servicer.</p>
               </div>
-              <label v-if="userForm.localAuthEnabled" style="grid-column: 1 / -1">
-                <span>{{ editingUser ? 'Rotate password' : 'Initial password' }}</span>
-                <input v-model="userForm.password" type="password" :placeholder="editingUser ? 'Enter a new password to rotate credentials' : 'Password'" />
+              <div class="auth-modal-grid">
+                <label><span>Username</span><input v-model="userForm.name" :disabled="modalMode === 'edit'" placeholder="alice" /></label>
+                <label><span>Display name</span><input v-model="userForm.displayName" placeholder="Alice Johnson" /></label>
+                <label class="auth-full-width"><span>Email</span><input v-model="userForm.email" placeholder="alice@example.com" /></label>
+              </div>
+            </section>
+
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Local sign-in</h3>
+              </div>
+              <label class="auth-switch">
+                <input v-model="userForm.localAuthEnabled" type="checkbox" />
+                <span class="auth-switch-control"></span>
+                <span>
+                  <strong>Local password</strong>
+                  <small>Allow username/password login for this user.</small>
+                </span>
               </label>
-              <label style="grid-column: 1 / -1">
-                <span>External identities</span>
+              <label v-if="userForm.localAuthEnabled" class="auth-stacked-field">
+                <span>{{ modalMode === 'edit' ? 'Rotate password' : 'Initial password' }}</span>
+                <input v-model="userForm.password" type="password" :placeholder="modalMode === 'edit' ? 'Enter a new password to rotate credentials' : 'Password'" />
+              </label>
+            </section>
+
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>External identities</h3>
+                <p>Use one line per upstream identity: <code>provider:subject</code>.</p>
+              </div>
+              <label class="auth-stacked-field">
+                <span>Mappings</span>
                 <textarea v-model="userForm.externalIdentitiesRaw" class="defaults-textarea" placeholder="oidc:00u1234567&#10;ldap:uid=alice,ou=people,dc=example,dc=com" />
               </label>
-            </div>
-
-            <div class="form-actions">
-              <button class="button primary" :disabled="busy" @click="submitUser">
-                {{ editingUser ? 'Save user' : 'Create user' }}
-              </button>
-            </div>
-          </template>
-
-          <template v-else-if="activeSection === 'groups'">
-            <div class="auth-pane-header">
-              <div>
-                <h3>{{ editingGroup ? 'Edit group' : 'New group' }}</h3>
-                <p class="muted">Use groups to aggregate operators and map upstream directory membership into Servicer access control.</p>
+              <div class="auth-example-box">
+                Provider must match an AuthProvider name. Subject is the value returned by that provider.
               </div>
-              <button class="button secondary" @click="resetGroupForm">Reset</button>
-            </div>
+            </section>
+          </div>
 
-            <div class="form-grid modal-form-grid">
-              <label><span>Group name</span><input v-model="groupForm.name" :disabled="!!editingGroup" placeholder="platform-operators" /></label>
-              <label><span>Display name</span><input v-model="groupForm.displayName" placeholder="Platform Operators" /></label>
-              <label style="grid-column: 1 / -1">
-                <span>Members</span>
-                <textarea v-model="groupForm.membersRaw" class="defaults-textarea" placeholder="alice&#10;bob" />
-              </label>
-              <label style="grid-column: 1 / -1">
-                <span>External group mappings</span>
-                <textarea v-model="groupForm.externalGroupsRaw" class="defaults-textarea" placeholder="oidc:platform-admins&#10;ldap:cn=platform-admins,ou=groups,dc=example,dc=com" />
-              </label>
-            </div>
+          <div class="auth-modal-actions">
+            <button class="button reset" :disabled="busy" @click="resetUserForm">Reset</button>
+            <div class="auth-action-spacer"></div>
+            <button class="button secondary" :disabled="busy" @click="closeModal">Cancel</button>
+            <button class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateUser() : submitEditUser()">
+              {{ modalMode === 'create' ? 'Create user' : 'Save user' }}
+            </button>
+          </div>
+        </template>
 
-            <div class="form-actions">
-              <button class="button primary" :disabled="busy" @click="submitGroup">
-                {{ editingGroup ? 'Save group' : 'Create group' }}
-              </button>
-            </div>
-          </template>
+        <template v-else-if="modalSection === 'groups'">
+          <div class="form-grid modal-form-grid">
+            <label><span>Group name</span><input v-model="groupForm.name" :disabled="modalMode === 'edit'" placeholder="platform-operators" /></label>
+            <label><span>Display name</span><input v-model="groupForm.displayName" placeholder="Platform Operators" /></label>
+            <label style="grid-column: 1 / -1">
+              <span>Members</span>
+              <textarea v-model="groupForm.membersRaw" class="defaults-textarea" placeholder="alice&#10;bob" />
+              <small class="field-help">One Servicer username per line.</small>
+            </label>
+            <label style="grid-column: 1 / -1">
+              <span>External group mappings</span>
+              <textarea v-model="groupForm.externalGroupsRaw" class="defaults-textarea" placeholder="oidc:platform-admins&#10;ldap:cn=platform-admins,ou=groups,dc=example,dc=com" />
+              <small class="field-help">One mapping per line. Format: provider:group. Provider must match an AuthProvider name.</small>
+            </label>
+          </div>
 
-          <template v-else>
-            <div class="auth-pane-header">
-              <div>
-                <h3>{{ editingBinding ? 'Edit role binding' : 'New role binding' }}</h3>
-                <p class="muted">Grant platform-level or tenant-level access to users and groups with explicit role assignment.</p>
-              </div>
-              <button class="button secondary" @click="resetBindingForm">Reset</button>
-            </div>
+          <div class="form-actions">
+            <button class="button reset" :disabled="busy" @click="resetGroupForm">Reset</button>
+            <button class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateGroup() : submitEditGroup()">
+              {{ modalMode === 'create' ? 'Create group' : 'Save group' }}
+            </button>
+          </div>
+        </template>
 
-            <div class="form-grid modal-form-grid">
-              <label><span>Binding name</span><input v-model="bindingForm.name" :disabled="!!editingBinding" placeholder="demo-tenant-operators" /></label>
-              <label><span>Display name</span><input v-model="bindingForm.displayName" placeholder="Demo tenant operators" /></label>
-              <label>
-                <span>Scope</span>
-                <select v-model="bindingForm.scope">
-                  <option value="platform">platform</option>
-                  <option value="tenant">tenant</option>
-                </select>
-              </label>
-              <label v-if="bindingForm.scope === 'tenant'">
-                <span>Tenant</span>
-                <select v-model="bindingForm.tenantName">
-                  <option v-for="tenant in tenantRows" :key="tenant.name" :value="tenant.name">
-                    {{ tenant.displayName }}
-                  </option>
-                </select>
-              </label>
-              <label style="grid-column: 1 / -1">
-                <span>Subjects</span>
-                <textarea v-model="bindingForm.subjectsRaw" class="defaults-textarea" placeholder="User:alice&#10;Group:platform-operators" />
-              </label>
-              <label style="grid-column: 1 / -1">
-                <span>Roles</span>
-                <input v-model="bindingForm.rolesRaw" placeholder="tenant-admin, tenant-operator" />
-              </label>
-            </div>
+        <template v-else>
+          <div class="form-grid modal-form-grid">
+            <label><span>Binding name</span><input v-model="bindingForm.name" :disabled="modalMode === 'edit'" placeholder="demo-tenant-operators" /></label>
+            <label><span>Display name</span><input v-model="bindingForm.displayName" placeholder="Demo tenant operators" /></label>
+            <label>
+              <span>Scope</span>
+              <select v-model="bindingForm.scope">
+                <option value="platform">platform</option>
+                <option value="tenant">tenant</option>
+              </select>
+            </label>
+            <label v-if="bindingForm.scope === 'tenant'">
+              <span>Tenant</span>
+              <select v-model="bindingForm.tenantName">
+                <option v-for="tenant in tenantRows" :key="tenant.name" :value="tenant.name">
+                  {{ tenant.displayName }}
+                </option>
+              </select>
+            </label>
+            <label style="grid-column: 1 / -1">
+              <span>Subjects</span>
+              <textarea v-model="bindingForm.subjectsRaw" class="defaults-textarea" placeholder="User:alice&#10;Group:platform-operators" />
+              <small class="field-help">One subject per line. Format: User:name or Group:name.</small>
+            </label>
+            <label style="grid-column: 1 / -1">
+              <span>Roles</span>
+              <input v-model="bindingForm.rolesRaw" placeholder="tenant-admin, tenant-operator" />
+            </label>
+          </div>
 
-            <div class="form-actions">
-              <button class="button primary" :disabled="busy" @click="submitBinding">
-                {{ editingBinding ? 'Save binding' : 'Create binding' }}
-              </button>
-            </div>
-          </template>
-        </div>
+          <div class="form-actions">
+            <button class="button reset" :disabled="busy" @click="resetBindingForm">Reset</button>
+            <button class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateBinding() : submitEditBinding()">
+              {{ modalMode === 'create' ? 'Create binding' : 'Save binding' }}
+            </button>
+          </div>
+        </template>
       </div>
-    </section>
+    </div>
   </div>
 </template>

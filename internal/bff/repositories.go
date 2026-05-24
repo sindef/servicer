@@ -19,13 +19,15 @@ const (
 	repoSecretNamespace  = "servicer-system"
 	repoSecretTypeLabel  = "servicer.io/type"
 	repoSecretTypeValue  = "repository"
+	repoSecretScopeKey   = "servicer.io/scope"
+	repoSecretTenantKey  = "servicer.io/tenant"
 	repoSecretProjectKey = "servicer.io/project"
 	argocdNamespace      = "argocd"
 )
 
 // handleListProjectRepositories returns all repositories stored under a project.
 func (s *Server) handleListProjectRepositories(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantAdmin, roleTenantOperator, roleServiceConsumer)
 	if !ok {
 		return
 	}
@@ -54,10 +56,42 @@ func (s *Server) handleListProjectRepositories(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, result)
 }
 
+// handleListTenantRepositories returns repositories shared across a tenant.
+func (s *Server) handleListTenantRepositories(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantAdmin, roleTenantOperator, roleServiceConsumer)
+	if !ok {
+		return
+	}
+	tenantName := strings.TrimSpace(r.PathValue("tenant"))
+	if _, err := s.authorizedRepositoryTenant(r, actor, tenantName); err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+
+	var secretList corev1.SecretList
+	if err := s.client.List(r.Context(), &secretList,
+		client.InNamespace(repoSecretNamespace),
+		client.MatchingLabels{
+			repoSecretTypeLabel: repoSecretTypeValue,
+			repoSecretScopeKey:  "tenant",
+			repoSecretTenantKey: tenantName,
+		},
+	); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	result := make([]RepositorySummary, 0, len(secretList.Items))
+	for _, sec := range secretList.Items {
+		result = append(result, repoSecretToSummary(sec))
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 // handleCreateProjectRepository stores a new repository credential under the project.
 // It also creates or updates an Argo CD repository secret so the repo is immediately usable.
 func (s *Server) handleCreateProjectRepository(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator)
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantAdmin, roleTenantOperator)
 	if !ok {
 		return
 	}
@@ -76,40 +110,22 @@ func (s *Server) handleCreateProjectRepository(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "projectName must match request path"})
 		return
 	}
+	if req.TenantName != "" || strings.TrimSpace(req.Scope) == "tenant" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant repositories must use the tenant repository endpoint"})
+		return
+	}
+	req.Scope = "project"
 	req.ProjectName = projectName
 	if err := validateRepositoryRequest(req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	secretName := "repo-" + req.Name
-	data := map[string][]byte{
-		"displayName": []byte(req.DisplayName),
-		"url":         []byte(req.URL),
-		"authType":    []byte(req.AuthType),
-	}
-	if req.AuthType == "http" {
-		data["username"] = []byte(req.Username)
-		data["password"] = []byte(req.Password)
-	} else if req.AuthType == "ssh" {
-		data["sshPrivateKey"] = []byte(req.SSHKey)
-	}
-
-	sec := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: repoSecretNamespace,
-			Labels: map[string]string{
-				repoSecretTypeLabel:  repoSecretTypeValue,
-				repoSecretProjectKey: projectName,
-			},
-			Annotations: map[string]string{
-				"servicer.io/created-by": actor.Name,
-				"servicer.io/created-at": time.Now().UTC().Format(time.RFC3339),
-			},
-		},
-		Data: data,
-	}
+	sec := repositorySecret(req, actor, projectRepoSecretName(req.Name), map[string]string{
+		repoSecretTypeLabel:  repoSecretTypeValue,
+		repoSecretScopeKey:   "project",
+		repoSecretProjectKey: projectName,
+	})
 	if err := s.client.Create(r.Context(), sec); err != nil {
 		writeError(w, err)
 		return
@@ -125,9 +141,58 @@ func (s *Server) handleCreateProjectRepository(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusCreated, WriteResponse{Name: req.Name, Message: "Repository registered."})
 }
 
+// handleCreateTenantRepository stores a repository credential available to a tenant.
+func (s *Server) handleCreateTenantRepository(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantAdmin, roleTenantOperator)
+	if !ok {
+		return
+	}
+	tenantName := strings.TrimSpace(r.PathValue("tenant"))
+	if _, err := s.authorizedRepositoryTenant(r, actor, tenantName); err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+
+	var req CreateRepositoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.TenantName != "" && strings.TrimSpace(req.TenantName) != tenantName {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantName must match request path"})
+		return
+	}
+	if req.ProjectName != "" || strings.TrimSpace(req.Scope) == "project" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project repositories must use the project repository endpoint"})
+		return
+	}
+	req.Scope = "tenant"
+	req.TenantName = tenantName
+	if err := validateRepositoryRequest(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	sec := repositorySecret(req, actor, tenantRepoSecretName(tenantName, req.Name), map[string]string{
+		repoSecretTypeLabel: repoSecretTypeValue,
+		repoSecretScopeKey:  "tenant",
+		repoSecretTenantKey: tenantName,
+	})
+	if err := s.client.Create(r.Context(), sec); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	if err := s.ensureArgoCDRepoSecretImpl(r, req); err != nil {
+		_ = err
+	}
+
+	writeJSON(w, http.StatusCreated, WriteResponse{Name: req.Name, Message: "Repository registered."})
+}
+
 // handleDeleteProjectRepository removes a repository from the project.
 func (s *Server) handleDeleteProjectRepository(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator)
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantAdmin, roleTenantOperator)
 	if !ok {
 		return
 	}
@@ -137,7 +202,7 @@ func (s *Server) handleDeleteProjectRepository(w http.ResponseWriter, r *http.Re
 		return
 	}
 	repoName := strings.TrimSpace(r.PathValue("repo"))
-	secretName := "repo-" + repoName
+	secretName := projectRepoSecretName(repoName)
 
 	var sec corev1.Secret
 	if err := s.client.Get(r.Context(), types.NamespacedName{Name: secretName, Namespace: repoSecretNamespace}, &sec); err != nil {
@@ -153,12 +218,40 @@ func (s *Server) handleDeleteProjectRepository(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Best-effort cleanup of the mirrored Argo CD repo secret.
-	var argoSec corev1.Secret
-	argoSecName := argoRepoSecretName(string(sec.Data["url"]))
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: argoSecName, Namespace: argocdNamespace}, &argoSec); err == nil {
-		_ = s.client.Delete(r.Context(), &argoSec)
+	s.cleanupArgoCDRepoSecretIfUnused(r, sec)
+
+	writeJSON(w, http.StatusOK, WriteResponse{Name: repoName, Message: "Repository removed."})
+}
+
+// handleDeleteTenantRepository removes a repository from the tenant.
+func (s *Server) handleDeleteTenantRepository(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantAdmin, roleTenantOperator)
+	if !ok {
+		return
 	}
+	tenantName := strings.TrimSpace(r.PathValue("tenant"))
+	if _, err := s.authorizedRepositoryTenant(r, actor, tenantName); err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	repoName := strings.TrimSpace(r.PathValue("repo"))
+	secretName := tenantRepoSecretName(tenantName, repoName)
+
+	var sec corev1.Secret
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: secretName, Namespace: repoSecretNamespace}, &sec); err != nil {
+		writeError(w, err)
+		return
+	}
+	if sec.Labels[repoSecretTenantKey] != tenantName {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "repository does not belong to this tenant"})
+		return
+	}
+	if err := s.client.Delete(r.Context(), &sec); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	s.cleanupArgoCDRepoSecretIfUnused(r, sec)
 
 	writeJSON(w, http.StatusOK, WriteResponse{Name: repoName, Message: "Repository removed."})
 }
@@ -177,18 +270,84 @@ func (s *Server) authorizedRepositoryProject(r *http.Request, actor actor, proje
 	return &project, nil
 }
 
+func (s *Server) authorizedRepositoryTenant(r *http.Request, actor actor, tenantName string) (*platformv1alpha1.Tenant, error) {
+	if tenantName == "" {
+		return nil, &validationError{msg: "tenant is required"}
+	}
+	var tenant platformv1alpha1.Tenant
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: tenantName}, &tenant); err != nil {
+		return nil, err
+	}
+	if !tenantVisibleToActor(actor, tenant) {
+		return nil, apierrors.NewForbidden(platformv1alpha1.GroupVersion.WithResource("tenants").GroupResource(), tenantName, nil)
+	}
+	return &tenant, nil
+}
+
 func writeRepositoryError(w http.ResponseWriter, err error) {
 	switch {
 	case err == nil:
 		return
 	case apierrors.IsForbidden(err):
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "project is outside your authorized tenancy"})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "repository scope is outside your authorized tenancy"})
 	case apierrors.IsNotFound(err):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 	case isValidationError(err):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	default:
 		writeError(w, err)
+	}
+}
+
+func repositorySecret(req CreateRepositoryRequest, actor actor, secretName string, labels map[string]string) *corev1.Secret {
+	data := map[string][]byte{
+		"displayName": []byte(req.DisplayName),
+		"url":         []byte(req.URL),
+		"authType":    []byte(req.AuthType),
+	}
+	if req.AuthType == "http" {
+		data["username"] = []byte(req.Username)
+		data["password"] = []byte(req.Password)
+	} else if req.AuthType == "ssh" {
+		data["sshPrivateKey"] = []byte(req.SSHKey)
+	}
+
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: repoSecretNamespace,
+			Labels:    labels,
+			Annotations: map[string]string{
+				"servicer.io/created-by": actor.Name,
+				"servicer.io/created-at": time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+		Data: data,
+	}
+}
+
+func (s *Server) cleanupArgoCDRepoSecretIfUnused(r *http.Request, removed corev1.Secret) {
+	url := string(removed.Data["url"])
+	if url == "" {
+		return
+	}
+	var secretList corev1.SecretList
+	if err := s.client.List(r.Context(), &secretList,
+		client.InNamespace(repoSecretNamespace),
+		client.MatchingLabels{repoSecretTypeLabel: repoSecretTypeValue},
+	); err != nil {
+		return
+	}
+	for _, sec := range secretList.Items {
+		if sec.Name != removed.Name && string(sec.Data["url"]) == url {
+			return
+		}
+	}
+
+	var argoSec corev1.Secret
+	argoSecName := argoRepoSecretName(url)
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: argoSecName, Namespace: argocdNamespace}, &argoSec); err == nil {
+		_ = s.client.Delete(r.Context(), &argoSec)
 	}
 }
 
@@ -229,14 +388,36 @@ func (s *Server) ensureArgoCDRepoSecretImpl(r *http.Request, req CreateRepositor
 // repoSecretToSummary converts a K8s Secret to a RepositorySummary.
 // Credentials are never included in the summary.
 func repoSecretToSummary(sec corev1.Secret) RepositorySummary {
+	scope := sec.Labels[repoSecretScopeKey]
+	tenantName := sec.Labels[repoSecretTenantKey]
+	projectName := sec.Labels[repoSecretProjectKey]
+	if scope == "" {
+		scope = "project"
+		if tenantName != "" {
+			scope = "tenant"
+		}
+	}
 	name := strings.TrimPrefix(sec.Name, "repo-")
+	if scope == "tenant" && tenantName != "" {
+		name = strings.TrimPrefix(sec.Name, "repo-tenant-"+tenantName+"-")
+	}
 	return RepositorySummary{
 		Name:        name,
 		DisplayName: string(sec.Data["displayName"]),
-		ProjectName: sec.Labels[repoSecretProjectKey],
+		Scope:       scope,
+		TenantName:  tenantName,
+		ProjectName: projectName,
 		URL:         string(sec.Data["url"]),
 		AuthType:    string(sec.Data["authType"]),
 	}
+}
+
+func projectRepoSecretName(repoName string) string {
+	return "repo-" + repoName
+}
+
+func tenantRepoSecretName(tenantName, repoName string) string {
+	return "repo-tenant-" + tenantName + "-" + repoName
 }
 
 // argoRepoSecretName derives a stable Argo CD Secret name from a repository URL.
@@ -264,8 +445,30 @@ func validateRepositoryRequest(req CreateRepositoryRequest) error {
 	if req.DisplayName == "" {
 		return &validationError{"displayName is required"}
 	}
-	if req.ProjectName == "" {
-		return &validationError{"projectName is required"}
+	scope := req.Scope
+	if scope == "" {
+		scope = "project"
+		if req.TenantName != "" {
+			scope = "tenant"
+		}
+	}
+	switch scope {
+	case "project":
+		if req.ProjectName == "" {
+			return &validationError{"projectName is required"}
+		}
+		if req.TenantName != "" {
+			return &validationError{"tenantName is only valid for tenant repositories"}
+		}
+	case "tenant":
+		if req.TenantName == "" {
+			return &validationError{"tenantName is required"}
+		}
+		if req.ProjectName != "" {
+			return &validationError{"projectName is only valid for project repositories"}
+		}
+	default:
+		return &validationError{"scope must be tenant or project"}
 	}
 	if req.URL == "" {
 		return &validationError{"url is required"}

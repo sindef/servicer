@@ -626,7 +626,7 @@ async function submitRequest() {
   </section>
 
   <Teleport to="body">
-    <div v-if="requestOpen" class="modal-backdrop" @click.self="closeRequest">
+    <div v-if="requestOpen" class="modal-backdrop">
       <form class="modal-panel" @submit.prevent="submitRequest">
         <div class="modal-head">
           <div>

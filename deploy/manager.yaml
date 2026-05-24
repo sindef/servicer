@@ -1,0 +1,67 @@
+# Manager reconciles ServiceInstance CRDs and materialises delivery artifacts
+# to /delivery. Syncer watches /delivery and kubectl-applies to the target
+# cluster every 3 seconds. Both containers share the delivery EmptyDir.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manager
+  namespace: servicer-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: manager
+    spec:
+      serviceAccountName: servicer
+      containers:
+        - name: manager
+          image: ghcr.io/sindef/servicer-manager:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --delivery-root=/delivery
+            - --metrics-bind-address=:0
+            - --health-probe-bind-address=:8081
+            - --enable-webhooks=true
+          ports:
+            - containerPort: 9443
+              name: webhook-server
+          volumeMounts:
+            - name: delivery
+              mountPath: /delivery
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+
+        - name: syncer
+          image: ghcr.io/sindef/servicer-syncer:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KUBECONFIG
+              value: /kube/kubeconfig
+            - name: DELIVERY_ROOT
+              value: /delivery
+            - name: INTERVAL_SECONDS
+              value: "3"
+          volumeMounts:
+            - name: delivery
+              mountPath: /delivery
+              readOnly: true
+            - name: target-kubeconfig
+              mountPath: /kube
+              readOnly: true
+
+      volumes:
+        - name: delivery
+          emptyDir: {}
+        - name: target-kubeconfig
+          secret:
+            secretName: local-dev-kubeconfig
+            optional: true
+        - name: webhook-certs
+          secret:
+            secretName: servicer-webhook-server-cert
+            optional: true

@@ -1071,7 +1071,7 @@ async function revealCredential(name: string, url?: string) {
   </template>
 
   <Teleport to="body">
-    <div v-if="credentialsOpen && credentialDetail" class="modal-backdrop" @click.self="credentialsOpen = false">
+    <div v-if="credentialsOpen && credentialDetail" class="modal-backdrop">
       <div class="modal-panel">
         <div class="modal-head">
           <div>
@@ -1092,7 +1092,7 @@ async function revealCredential(name: string, url?: string) {
   </Teleport>
 
   <Teleport to="body">
-    <div v-if="editOpen && data" class="modal-backdrop" @click.self="editOpen = false">
+    <div v-if="editOpen && data" class="modal-backdrop">
       <form class="modal-panel" @submit.prevent="submitUpdate">
         <div class="modal-head">
           <div>
@@ -1281,7 +1281,7 @@ async function revealCredential(name: string, url?: string) {
   </Teleport>
 
   <Teleport to="body">
-    <div v-if="deleteOpen && data" class="modal-backdrop" @click.self="deleteOpen = false">
+    <div v-if="deleteOpen && data" class="modal-backdrop">
       <form class="modal-panel delete-modal" @submit.prevent="deleteInstance">
         <div class="modal-head">
           <div>
@@ -1309,7 +1309,7 @@ async function revealCredential(name: string, url?: string) {
   </Teleport>
 
   <Teleport to="body">
-    <div v-if="yamlOpen" class="modal-backdrop" @click.self="yamlOpen = false">
+    <div v-if="yamlOpen" class="modal-backdrop">
       <div class="modal-panel" style="width: min(920px, 100%)">
         <div class="modal-head">
           <h2>Edit YAML</h2>
@@ -1328,7 +1328,7 @@ async function revealCredential(name: string, url?: string) {
   </Teleport>
 
   <Teleport to="body">
-    <div v-if="backupConfigOpen && data" class="modal-backdrop" @click.self="backupConfigOpen = false">
+    <div v-if="backupConfigOpen && data" class="modal-backdrop">
       <form class="modal-panel" style="width: min(700px, 100%)" @submit.prevent="saveBackupConfig">
         <div class="modal-head">
           <h2>Configure Backups</h2>

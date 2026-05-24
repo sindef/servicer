@@ -346,6 +346,10 @@ async function saveServiceClassDefaults() {
 
 // ── Repositories ─────────────────────────────────────────────────────────────
 
+type RepoScope = 'tenant' | 'project'
+
+const repoScope = ref<RepoScope>('tenant')
+const repoTenantFilter = ref('')
 const repoProjectFilter = ref('')
 const repoRows = ref<RepositorySummary[]>([])
 const repoLoading = ref(false)
@@ -361,24 +365,39 @@ const repoForm = reactive({
   sshKey: ''
 })
 
-async function loadRepositories(project: string) {
-  if (!project) {
-    repoRows.value = []
-    return
-  }
-  repoLoading.value = true
-  try {
-    repoRows.value = await api.repositories.list(project)
-  } catch {
-    repoRows.value = []
-  } finally {
-    repoLoading.value = false
-  }
-}
+const repoScopeTarget = computed(() =>
+  repoScope.value === 'tenant' ? repoTenantFilter.value : repoProjectFilter.value
+)
 
-watch(repoProjectFilter, loadRepositories)
+const selectedRepoTenant = computed(() =>
+  tenantRows.value.find((tenant) => tenant.name === repoTenantFilter.value)
+)
 
-function openNewRepo() {
+const selectedRepoProject = computed(() =>
+  projectRows.value.find((project) => project.name === repoProjectFilter.value)
+)
+
+const repoTargetLabel = computed(() => {
+  if (repoScope.value === 'tenant') {
+    return selectedRepoTenant.value?.displayName || repoTenantFilter.value
+  }
+  return selectedRepoProject.value?.displayName || repoProjectFilter.value
+})
+
+const repoTargetDetail = computed(() => {
+  if (repoScope.value === 'tenant') {
+    return repoTenantFilter.value ? `Tenant-wide repositories for ${repoTargetLabel.value}.` : 'Choose a tenant to manage shared repositories.'
+  }
+  return repoProjectFilter.value ? `Project-only repositories for ${repoTargetLabel.value}.` : 'Choose a project to manage project repositories.'
+})
+
+const repoAuthMethods = [
+  { value: 'none', label: 'Public', description: 'No credentials required.' },
+  { value: 'http', label: 'HTTP token', description: 'Username with password or token.' },
+  { value: 'ssh', label: 'SSH key', description: 'Private deploy key.' }
+] as const
+
+function resetRepoForm() {
   repoForm.name = ''
   repoForm.displayName = ''
   repoForm.url = ''
@@ -386,34 +405,107 @@ function openNewRepo() {
   repoForm.username = ''
   repoForm.password = ''
   repoForm.sshKey = ''
+}
+
+function setRepoScope(scope: RepoScope) {
+  repoScope.value = scope
+  clearOp()
+}
+
+async function loadRepositories() {
+  const target = repoScopeTarget.value
+  if (!target) {
+    repoRows.value = []
+    return
+  }
+  repoLoading.value = true
+  try {
+    repoRows.value =
+      repoScope.value === 'tenant'
+        ? await api.repositories.listTenant(target)
+        : await api.repositories.listProject(target)
+  } catch (err) {
+    repoRows.value = []
+    opError.value = err instanceof Error ? err.message : 'Failed to load repositories'
+  } finally {
+    repoLoading.value = false
+  }
+}
+
+watch(tenantRows, (rows) => {
+  if (!repoTenantFilter.value && rows.length) {
+    repoTenantFilter.value = rows[0].name
+  }
+}, { immediate: true })
+
+watch(projectRows, (rows) => {
+  if (!repoProjectFilter.value && rows.length) {
+    repoProjectFilter.value = rows[0].name
+  }
+}, { immediate: true })
+
+watch([repoScope, repoTenantFilter, repoProjectFilter], () => {
+  if (activeTab.value === 'repositories') {
+    clearOp()
+    void loadRepositories()
+  }
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'repositories') {
+    void loadRepositories()
+  }
+})
+
+function openNewRepo() {
+  if (!repoScopeTarget.value) return
+  resetRepoForm()
   clearOp()
   repoModal.value = true
 }
 
 async function submitRepo() {
+  const target = repoScopeTarget.value
+  if (!target) return
+
+  const body = {
+    name: repoForm.name,
+    displayName: repoForm.displayName,
+    scope: repoScope.value,
+    tenantName: repoScope.value === 'tenant' ? target : undefined,
+    projectName: repoScope.value === 'project' ? target : undefined,
+    url: repoForm.url,
+    authType: repoForm.authType,
+    username: repoForm.authType === 'http' ? repoForm.username : undefined,
+    password: repoForm.authType === 'http' ? repoForm.password : undefined,
+    sshKey: repoForm.authType === 'ssh' ? repoForm.sshKey : undefined
+  }
+
   await runOp(() =>
-    api.repositories.create(repoProjectFilter.value, {
-      name: repoForm.name,
-      displayName: repoForm.displayName,
-      projectName: repoProjectFilter.value,
-      url: repoForm.url,
-      authType: repoForm.authType,
-      username: repoForm.authType === 'http' ? repoForm.username : undefined,
-      password: repoForm.authType === 'http' ? repoForm.password : undefined,
-      sshKey: repoForm.authType === 'ssh' ? repoForm.sshKey : undefined
-    })
+    repoScope.value === 'tenant'
+      ? api.repositories.createTenant(target, body)
+      : api.repositories.createProject(target, body)
   )
   if (!opError.value) {
     repoModal.value = false
-    await loadRepositories(repoProjectFilter.value)
+    await loadRepositories()
   }
 }
 
 async function deleteRepo(repo: RepositorySummary) {
   if (!confirm(`Remove repository "${repo.displayName || repo.name}"?`)) return
+  const scope = repo.scope || repoScope.value
+  const target = scope === 'tenant'
+    ? (repo.tenantName || repoTenantFilter.value)
+    : (repo.projectName || repoProjectFilter.value)
+  if (!target) return
   clearOp()
-  await runOp(() => api.repositories.delete(repoProjectFilter.value, repo.name))
-  if (!opError.value) await loadRepositories(repoProjectFilter.value)
+  await runOp(() =>
+    scope === 'tenant'
+      ? api.repositories.deleteTenant(target, repo.name)
+      : api.repositories.deleteProject(target, repo.name)
+  )
+  if (!opError.value) await loadRepositories()
 }
 
 // ── Delete confirm ────────────────────────────────────────────────────────────
@@ -695,32 +787,53 @@ async function executeDelete() {
 
   <!-- ── REPOSITORIES ────────────────────────────────────────────────────── -->
   <template v-if="activeTab === 'repositories'">
-    <section class="admin-section">
-      <div class="section-head">
-        <div style="display: flex; align-items: center; gap: 12px">
+    <section class="content-band repo-admin">
+      <div class="repo-admin-head">
+        <div>
           <h2>Repositories</h2>
-          <select v-model="repoProjectFilter" style="min-width: 180px">
-            <option value="">Select a project...</option>
-            <option v-for="p in projectRows" :key="p.name" :value="p.name">
-              {{ p.displayName || p.name }}
+          <p class="muted">Register Git sources at tenant or project scope.</p>
+        </div>
+        <button class="button primary" :disabled="!repoScopeTarget" @click="openNewRepo">New repository</button>
+      </div>
+
+      <div class="repo-toolbar">
+        <div class="repo-scope-toggle" aria-label="Repository scope">
+          <button :class="{ active: repoScope === 'tenant' }" @click="setRepoScope('tenant')">Tenant</button>
+          <button :class="{ active: repoScope === 'project' }" @click="setRepoScope('project')">Project</button>
+        </div>
+
+        <label class="repo-target-picker">
+          <span>{{ repoScope === 'tenant' ? 'Tenant' : 'Project' }}</span>
+          <select v-if="repoScope === 'tenant'" v-model="repoTenantFilter">
+            <option value="">Select a tenant...</option>
+            <option v-for="tenant in tenantRows" :key="tenant.name" :value="tenant.name">
+              {{ tenant.displayName || tenant.name }}
             </option>
           </select>
-        </div>
-        <button class="button primary" :disabled="!repoProjectFilter" @click="openNewRepo">+ Add repository</button>
+          <select v-else v-model="repoProjectFilter">
+            <option value="">Select a project...</option>
+            <option v-for="project in projectRows" :key="project.name" :value="project.name">
+              {{ project.displayName || project.name }}
+            </option>
+          </select>
+        </label>
       </div>
-      <p v-if="opError" class="error-text">{{ opError }}</p>
-      <p v-if="opSuccess" class="success-text">{{ opSuccess }}</p>
-      <div v-if="!repoProjectFilter" class="empty-state">
-        <p>Select a project to manage its repositories.</p>
+
+      <p class="repo-context">{{ repoTargetDetail }}</p>
+
+      <div v-if="!repoScopeTarget" class="empty-state">
+        <p>Select a {{ repoScope }} to manage repositories.</p>
       </div>
-      <div v-else-if="repoLoading" class="empty-state"><p>Loading...</p></div>
-      <div v-else-if="repoRows.length === 0" class="empty-state">
-        <p>No repositories registered for this project.</p>
+      <div v-else-if="repoLoading" class="empty-state"><p>Loading repositories...</p></div>
+      <div v-else-if="repoRows.length === 0" class="empty-state repo-empty">
+        <p>No repositories registered for {{ repoTargetLabel }}.</p>
+        <button class="button secondary" @click="openNewRepo">Add the first repository</button>
       </div>
-      <table v-else class="admin-table">
+      <table v-else class="data-table repo-table">
         <thead>
           <tr>
-            <th>Name</th>
+            <th>Repository</th>
+            <th>Scope</th>
             <th>URL</th>
             <th>Auth</th>
             <th></th>
@@ -728,11 +841,18 @@ async function executeDelete() {
         </thead>
         <tbody>
           <tr v-for="repo in repoRows" :key="repo.name">
-            <td>{{ repo.displayName || repo.name }}</td>
-            <td style="font-family: var(--mono); font-size: 12px">{{ repo.url }}</td>
-            <td>{{ repo.authType }}</td>
             <td>
-              <button class="button text danger" @click="deleteRepo(repo)">Remove</button>
+              <strong>{{ repo.displayName || repo.name }}</strong>
+              <small>{{ repo.name }}</small>
+            </td>
+            <td>
+              <span class="repo-scope-badge">{{ repo.scope || repoScope }}</span>
+              <small>{{ repo.tenantName || repo.projectName || repoTargetLabel }}</small>
+            </td>
+            <td class="repo-url-cell">{{ repo.url }}</td>
+            <td>{{ repo.authType || 'none' }}</td>
+            <td class="table-actions">
+              <button class="button danger compact-button" @click="deleteRepo(repo)">Remove</button>
             </td>
           </tr>
         </tbody>
@@ -745,67 +865,93 @@ async function executeDelete() {
   </template>
 
   <!-- ── REPOSITORY MODAL ────────────────────────────────────────────────── -->
-  <div v-if="repoModal" class="modal-backdrop" @click.self="repoModal = false">
-    <div class="modal-panel">
+  <div v-if="repoModal" class="modal-backdrop">
+    <div class="modal-panel auth-modal-panel">
       <div class="modal-head">
-        <h2>Add repository</h2>
-        <button class="button text" @click="repoModal = false">✕</button>
-      </div>
-      <div class="modal-section">
-        <div class="form-grid modal-form-grid">
-          <label>
-            Name (slug)
-            <input v-model="repoForm.name" placeholder="my-app-repo" />
-          </label>
-          <label>
-            Display name
-            <input v-model="repoForm.displayName" placeholder="My App Repo" />
-          </label>
-          <label style="grid-column: span 2">
-            Repository URL
-            <input v-model="repoForm.url" placeholder="https://github.com/org/repo.git" />
-          </label>
-          <label style="grid-column: span 2">
-            Auth type
-            <select v-model="repoForm.authType">
-              <option value="none">None (public)</option>
-              <option value="http">HTTP (username/password or token)</option>
-              <option value="ssh">SSH key</option>
-            </select>
-          </label>
-          <template v-if="repoForm.authType === 'http'">
-            <label>
-              Username
-              <input v-model="repoForm.username" autocomplete="new-password" />
-            </label>
-            <label>
-              Password / token
-              <input v-model="repoForm.password" type="password" autocomplete="new-password" />
-            </label>
-          </template>
-          <template v-if="repoForm.authType === 'ssh'">
-            <label style="grid-column: span 2">
-              SSH private key
-              <textarea
-                v-model="repoForm.sshKey"
-                rows="6"
-                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                style="font-family: var(--mono); font-size: 12px; resize: vertical"
-              />
-            </label>
-          </template>
+        <div>
+          <p class="eyebrow">Create</p>
+          <h2>New repository</h2>
+          <p class="muted">{{ repoScope === 'tenant' ? 'Tenant-wide Git source' : 'Project-only Git source' }} for {{ repoTargetLabel }}.</p>
         </div>
+        <button class="button secondary" @click="repoModal = false">Close</button>
       </div>
-      <div class="form-actions">
+
+      <div class="auth-modal-body">
+        <section class="auth-modal-section">
+          <div class="auth-section-heading">
+            <h3>Repository</h3>
+            <p>Use a stable slug; deployments reference repositories by this name.</p>
+          </div>
+          <div class="auth-modal-grid">
+            <label>
+              <span>Name</span>
+              <input v-model="repoForm.name" placeholder="storefront-app" autocomplete="off" />
+            </label>
+            <label>
+              <span>Display name</span>
+              <input v-model="repoForm.displayName" placeholder="Storefront App" autocomplete="off" />
+            </label>
+            <label class="auth-full-width">
+              <span>Repository URL</span>
+              <input v-model="repoForm.url" placeholder="https://github.com/acme/storefront.git" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <section class="auth-modal-section">
+          <div class="auth-section-heading">
+            <h3>Authentication</h3>
+            <p>Choose how Servicer and Argo CD should authenticate to this Git remote.</p>
+          </div>
+          <div class="auth-method-picker">
+            <button
+              v-for="method in repoAuthMethods"
+              :key="method.value"
+              type="button"
+              class="auth-method-option"
+              :class="{ active: repoForm.authType === method.value }"
+              @click="repoForm.authType = method.value"
+            >
+              <strong>{{ method.label }}</strong>
+              <span>{{ method.description }}</span>
+            </button>
+          </div>
+
+          <div v-if="repoForm.authType === 'http'" class="auth-modal-grid">
+            <label>
+              <span>Username</span>
+              <input v-model="repoForm.username" autocomplete="new-password" placeholder="git" />
+            </label>
+            <label>
+              <span>Password or token</span>
+              <input v-model="repoForm.password" type="password" autocomplete="new-password" placeholder="ghp_..." />
+            </label>
+          </div>
+
+          <label v-if="repoForm.authType === 'ssh'" class="auth-stacked-field">
+            <span>SSH private key</span>
+            <textarea
+              v-model="repoForm.sshKey"
+              rows="7"
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+            />
+            <small class="field-help">Paste a deploy key with read access to this repository. Public host key trust is handled by the cluster Git tooling.</small>
+          </label>
+        </section>
+      </div>
+
+      <div class="auth-modal-actions">
+        <button class="button reset" type="button" @click="resetRepoForm">Reset</button>
+        <span class="auth-action-spacer"></span>
+        <button class="button secondary" type="button" @click="repoModal = false">Cancel</button>
         <button class="button primary" :disabled="opLoading" @click="submitRepo">
-          {{ opLoading ? 'Saving...' : 'Add repository' }}
+          {{ opLoading ? 'Saving...' : 'Create repository' }}
         </button>
-        <button class="button secondary" @click="repoModal = false">Cancel</button>
-        <span v-if="opError" class="error-text">{{ opError }}</span>
       </div>
+      <p v-if="opError" class="error-text" style="padding: 0 22px 20px">{{ opError }}</p>
     </div>
   </div>
-  <div v-if="tenantModal" class="modal-backdrop" @click.self="tenantModal = false">
+  <div v-if="tenantModal" class="modal-backdrop">
     <div class="modal-panel">
       <div class="modal-head">
         <h2>{{ editTenant ? 'Edit tenant' : 'New tenant' }}</h2>
@@ -860,7 +1006,7 @@ async function executeDelete() {
   </div>
 
   <!-- ── PROJECT MODAL ───────────────────────────────────────────────────── -->
-  <div v-if="projectModal" class="modal-backdrop" @click.self="projectModal = false">
+  <div v-if="projectModal" class="modal-backdrop">
     <div class="modal-panel">
       <div class="modal-head">
         <h2>{{ editProject ? 'Edit project' : 'New project' }}</h2>
@@ -929,7 +1075,7 @@ async function executeDelete() {
   </div>
 
   <!-- ── CLUSTER MODAL ───────────────────────────────────────────────────── -->
-  <div v-if="clusterModal" class="modal-backdrop" @click.self="clusterModal = false">
+  <div v-if="clusterModal" class="modal-backdrop">
     <div class="modal-panel">
       <div class="modal-head">
         <h2>{{ editCluster ? 'Edit cluster' : 'Add cluster' }}</h2>
@@ -991,7 +1137,7 @@ async function executeDelete() {
   </div>
 
   <!-- ── DELETE CONFIRM MODAL ────────────────────────────────────────────── -->
-  <div v-if="deleteConfirm" class="modal-backdrop" @click.self="deleteConfirm = null">
+  <div v-if="deleteConfirm" class="modal-backdrop">
     <div class="modal-panel" style="max-width: 420px">
       <div class="modal-head">
         <h2>Confirm deletion</h2>

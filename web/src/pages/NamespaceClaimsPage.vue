@@ -137,7 +137,7 @@ async function submit() {
     </tbody>
   </table>
 
-  <div v-if="requestOpen" class="modal-backdrop" @click.self="requestOpen = false">
+  <div v-if="requestOpen" class="modal-backdrop">
     <div class="modal-panel">
       <div class="modal-head">
         <div>

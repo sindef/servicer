@@ -206,7 +206,7 @@ async function removeRepo(projectName: string, repo: RepositorySummary) {
   </div>
 
   <!-- Add repository modal -->
-  <div v-if="repoModal" class="modal-backdrop" @click.self="repoModal = null">
+  <div v-if="repoModal" class="modal-backdrop">
     <div class="modal-panel">
       <div class="modal-head">
         <h2>Add repository — {{ repoModal }}</h2>

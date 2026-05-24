@@ -235,7 +235,9 @@ export interface ServiceClassAdminSummary {
 export interface RepositorySummary {
   name: string
   displayName: string
-  projectName: string
+  scope: 'tenant' | 'project'
+  tenantName?: string
+  projectName?: string
   url: string
   authType: 'none' | 'http' | 'ssh'
 }
@@ -243,7 +245,9 @@ export interface RepositorySummary {
 export interface CreateRepositoryRequest {
   name: string
   displayName: string
-  projectName: string
+  scope?: 'tenant' | 'project'
+  tenantName?: string
+  projectName?: string
   url: string
   authType: 'none' | 'http' | 'ssh'
   username?: string
@@ -621,13 +625,35 @@ export const api = {
   repositories: {
     list: (project: string) =>
       request<RepositorySummary[]>(`/api/projects/${encodeURIComponent(project)}/repositories`),
+    listProject: (project: string) =>
+      request<RepositorySummary[]>(`/api/projects/${encodeURIComponent(project)}/repositories`),
+    listTenant: (tenant: string) =>
+      request<RepositorySummary[]>(`/api/tenants/${encodeURIComponent(tenant)}/repositories`),
     create: (project: string, body: CreateRepositoryRequest) =>
       request<{ name: string; message: string }>(`/api/projects/${encodeURIComponent(project)}/repositories`, {
         method: 'POST',
         body: JSON.stringify(body)
       }),
+    createProject: (project: string, body: CreateRepositoryRequest) =>
+      request<{ name: string; message: string }>(`/api/projects/${encodeURIComponent(project)}/repositories`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    createTenant: (tenant: string, body: CreateRepositoryRequest) =>
+      request<{ name: string; message: string }>(`/api/tenants/${encodeURIComponent(tenant)}/repositories`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
     delete: (project: string, repo: string) =>
       request<{ name: string; message: string }>(`/api/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(repo)}`, {
+        method: 'DELETE'
+      }),
+    deleteProject: (project: string, repo: string) =>
+      request<{ name: string; message: string }>(`/api/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(repo)}`, {
+        method: 'DELETE'
+      }),
+    deleteTenant: (tenant: string, repo: string) =>
+      request<{ name: string; message: string }>(`/api/tenants/${encodeURIComponent(tenant)}/repositories/${encodeURIComponent(repo)}`, {
         method: 'DELETE'
       })
   }

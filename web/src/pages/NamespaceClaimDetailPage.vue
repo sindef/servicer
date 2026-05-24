@@ -219,7 +219,7 @@ async function remove() {
     <p v-if="formError" class="error-text">{{ formError }}</p>
   </div>
 
-  <div v-if="editOpen" class="modal-backdrop" @click.self="editOpen = false">
+  <div v-if="editOpen" class="modal-backdrop">
     <div class="modal-panel">
       <div class="modal-head">
         <div>
@@ -270,7 +270,7 @@ async function remove() {
     </div>
   </div>
 
-  <div v-if="deleteOpen" class="modal-backdrop" @click.self="deleteOpen = false">
+  <div v-if="deleteOpen" class="modal-backdrop">
     <div class="modal-panel delete-modal">
       <div class="modal-head">
         <div>
