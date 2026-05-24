@@ -58,6 +58,9 @@ jobs:
       - name: Validate production manifests
         run: kubectl kustomize deploy > /dev/null
 
+      - name: Validate production manifest policy
+        run: ./hack/manifest-policy.sh deploy
+
       - name: Validate sample manifests
         run: kubectl kustomize config/samples > /dev/null
 

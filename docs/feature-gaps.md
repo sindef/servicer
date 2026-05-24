@@ -22,39 +22,6 @@ Priority meanings:
 
 ## P0 Production Blockers
 
-### Production install is not hardened enough
-
-The `deploy/` directory is the right place for production manifests, but the
-current rendered install is still too close to a first-pass control-plane
-deployment.
-
-Evidence in repo:
-
-- `deploy/manager.yaml`, `deploy/bff.yaml`, and `deploy/web.yaml` run one
-  replica each.
-- `deploy/manager.yaml` disables manager metrics with
-  `--metrics-bind-address=:0`.
-- The manager has a `--leader-elect` flag in code, but the production manifest
-  does not enable it.
-- Workloads lack consistent resource requests/limits, liveness probes,
-  readiness probes, pod security contexts, pod disruption budgets, topology
-  spread, and network policies.
-- Services are `ClusterIP` only. There is no production ingress, TLS, hostname,
-  or external access contract.
-
-Required before production:
-
-- Add a production overlay or Helm chart with HA defaults for manager, BFF, and
-  web where safe.
-- Enable manager leader election when manager replicas are greater than one.
-- Add health probes, resource requests/limits, non-root security contexts,
-  seccomp, read-only filesystems where practical, and pod disruption budgets.
-- Add network policies that only allow required traffic between web, BFF,
-  Kubernetes API, Argo CD, and observability components.
-- Publish an ingress/TLS pattern for common cluster setups.
-- Stop using mutable `latest` in production examples; document versioned tags
-  and preferably digest pinning.
-
 ### Auth/session defaults are not production-safe
 
 Authentication exists and is CRD-backed, but production-safe defaults and
@@ -140,30 +107,6 @@ Required before production:
   create services, back up, restore into a fresh cluster, and verify status.
 - Document what is and is not covered compared with an etcd-level cluster
   backup.
-
-### RBAC is too broad for production
-
-The platform currently asks for broad cluster authority. That is acceptable for
-early iteration, but it needs to be reduced before production.
-
-Evidence in repo:
-
-- `deploy/rbac.yaml` grants `resources: ["*"]` and `verbs: ["*"]` for the
-  platform API group.
-- The same role includes broad access to Secrets, namespaces, ConfigMaps,
-  service accounts, workloads, Argo CD Applications, External Secrets
-  resources, roles, and role bindings.
-- Manager, BFF, webhook bootstrap, and syncer responsibilities are not split
-  into separate least-privilege roles.
-
-Required before production:
-
-- Split service accounts and roles by component: manager, BFF, webhook
-  bootstrap, backup, and syncer.
-- Replace wildcard platform API permissions with explicit resources and verbs.
-- Minimize Secret access by namespace and purpose.
-- Add RBAC tests that fail when wildcard permissions are introduced.
-- Document the exact cluster permissions Servicer needs and why.
 
 ### Product catalog and operator lifecycle are incomplete
 

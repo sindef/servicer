@@ -13,12 +13,15 @@ import (
 )
 
 type Publisher struct {
-	Worktree   string
-	Root       string
-	AutoCommit bool
-	AutoPush   bool
-	Remote     string
-	Branch     string
+	Worktree    string
+	Root        string
+	AutoCommit  bool
+	AutoPush    bool
+	URL         string
+	Remote      string
+	Branch      string
+	AuthorName  string
+	AuthorEmail string
 }
 
 type Request struct {
@@ -38,13 +41,20 @@ type Result struct {
 }
 
 func New(worktree, root string, autoCommit, autoPush bool, remote, branch string) *Publisher {
+	return NewWithRepoURL(worktree, root, autoCommit, autoPush, "", remote, branch, "", "")
+}
+
+func NewWithRepoURL(worktree, root string, autoCommit, autoPush bool, url, remote, branch, authorName, authorEmail string) *Publisher {
 	return &Publisher{
-		Worktree:   filepath.Clean(strings.TrimSpace(worktree)),
-		Root:       filepath.Clean(strings.TrimSpace(root)),
-		AutoCommit: autoCommit,
-		AutoPush:   autoPush,
-		Remote:     firstNonEmptyTrimmed(remote, "origin"),
-		Branch:     strings.TrimSpace(branch),
+		Worktree:    filepath.Clean(strings.TrimSpace(worktree)),
+		Root:        filepath.Clean(strings.TrimSpace(root)),
+		AutoCommit:  autoCommit,
+		AutoPush:    autoPush,
+		URL:         strings.TrimSpace(url),
+		Remote:      firstNonEmptyTrimmed(remote, "origin"),
+		Branch:      strings.TrimSpace(branch),
+		AuthorName:  firstNonEmptyTrimmed(authorName, "Servicer"),
+		AuthorEmail: firstNonEmptyTrimmed(authorEmail, "servicer@example.com"),
 	}
 }
 
@@ -58,6 +68,9 @@ func (p *Publisher) Publish(ctx context.Context, request Request) (Result, error
 	}
 	if len(request.Artifacts) == 0 {
 		return Result{}, fmt.Errorf("at least one artifact is required")
+	}
+	if err := p.ensureWorktree(ctx); err != nil {
+		return Result{}, err
 	}
 
 	root := strings.Trim(filepath.ToSlash(strings.TrimSpace(p.Root)), "/")
@@ -118,6 +131,52 @@ func (p *Publisher) Publish(ctx context.Context, request Request) (Result, error
 	}
 	result.Commit = commit
 	return p.pushIfEnabled(ctx, result)
+}
+
+func (p *Publisher) ensureWorktree(ctx context.Context) error {
+	if strings.TrimSpace(p.Worktree) == "" {
+		return fmt.Errorf("delivery repo worktree is required")
+	}
+	if _, err := os.Stat(filepath.Join(p.Worktree, ".git")); err == nil {
+		return p.configureIdentity(ctx)
+	}
+	entries, err := os.ReadDir(p.Worktree)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect delivery repo worktree: %w", err)
+		}
+		if err := os.MkdirAll(p.Worktree, 0o755); err != nil {
+			return fmt.Errorf("create delivery repo worktree: %w", err)
+		}
+	} else if len(entries) > 0 {
+		return fmt.Errorf("delivery repo worktree %q is not a git repository and is not empty", p.Worktree)
+	}
+	if strings.TrimSpace(p.URL) == "" {
+		return fmt.Errorf("delivery repo URL is required to initialise an empty worktree")
+	}
+	args := []string{"clone"}
+	if strings.TrimSpace(p.Branch) != "" {
+		args = append(args, "--branch", p.Branch)
+	}
+	args = append(args, p.URL, p.Worktree)
+	if err := gitInDir(ctx, "", args...); err != nil {
+		return err
+	}
+	return p.configureIdentity(ctx)
+}
+
+func (p *Publisher) configureIdentity(ctx context.Context) error {
+	if strings.TrimSpace(p.AuthorEmail) != "" {
+		if err := p.git(ctx, "config", "user.email", p.AuthorEmail); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(p.AuthorName) != "" {
+		if err := p.git(ctx, "config", "user.name", p.AuthorName); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Publisher) hasChanges(ctx context.Context) (bool, error) {
@@ -189,8 +248,17 @@ func (p *Publisher) git(ctx context.Context, args ...string) error {
 }
 
 func (p *Publisher) gitOutput(ctx context.Context, args ...string) (string, error) {
+	return gitOutputInDir(ctx, p.Worktree, args...)
+}
+
+func gitInDir(ctx context.Context, dir string, args ...string) error {
+	_, err := gitOutputInDir(ctx, dir, args...)
+	return err
+}
+
+func gitOutputInDir(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = p.Worktree
+	cmd.Dir = dir
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout

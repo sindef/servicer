@@ -8,13 +8,29 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: servicer
+      serviceAccountName: servicer-webhook-bootstrap
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: webhook-bootstrap
-          image: ghcr.io/sindef/servicer-manager:latest
+          image: ghcr.io/sindef/servicer-manager:v0.1.0
           imagePullPolicy: IfNotPresent
           args:
             - --webhook-bootstrap-only=true
             - --system-namespace=servicer-system
             - --webhook-service-name=servicer-webhook-service
             - --webhook-cert-secret-name=servicer-webhook-server-cert
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true

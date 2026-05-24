@@ -269,6 +269,8 @@ Relevant manager flags include:
 - `--argocd-namespace`
 - `--argocd-project`
 
+Production installs use GitOps repository delivery by default. See [Production install](docs/production-install.md) for required Secrets, ingress/TLS, network policy, and RBAC details.
+
 ## Authentication
 
 The BFF supports:
@@ -294,4 +296,5 @@ This repo does not intentionally store live production credentials. It does incl
 ## Additional docs
 
 - [Feature gap analysis](docs/feature-gaps.md)
+- [Production install](docs/production-install.md)
 - [Product standards](docs/product-standards.md)

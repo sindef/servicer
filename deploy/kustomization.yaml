@@ -4,6 +4,7 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - rbac.yaml
+  - delivery-repo.yaml
   - operator-packages.yaml
   - webhook-service.yaml
   - webhook-manifests.yaml
@@ -11,3 +12,5 @@ resources:
   - manager.yaml
   - bff.yaml
   - web.yaml
+  - network-policies.yaml
+  - ingress.yaml

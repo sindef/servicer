@@ -15,11 +15,16 @@ RUN apk add --no-cache curl tar && \
     mv /tmp/linux-amd64/helm /helm
 
 # ---- runtime ----
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates git openssh-client && \
+    addgroup -S servicer && \
+    adduser -S -G servicer -u 65532 servicer
 
 COPY --from=builder /manager /manager
 COPY --from=builder /helm /helm
 
 EXPOSE 8080 8081
 
+USER 65532:65532
 ENTRYPOINT ["/manager"]

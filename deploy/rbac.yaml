@@ -1,54 +1,76 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: servicer
+  name: servicer-manager
 rules:
-  # All Servicer platform CRDs
   - apiGroups: ["platform.servicer.io"]
-    resources: ["*"]
-    verbs: ["*"]
-  # Secrets (repository credentials, cluster kubeconfig refs)
-  # Namespaces, ConfigMaps, ServiceAccounts (NamespaceClaim reconciliation)
-  - apiGroups: [""]
-    resources: ["secrets", "namespaces", "configmaps", "serviceaccounts"]
+    resources:
+      - actionrequests
+      - authproviders
+      - clustertargets
+      - groups
+      - namespaceclaims
+      - operatorpackages
+      - policies
+      - projects
+      - rolebindings
+      - servicebindings
+      - serviceclasses
+      - serviceinstances
+      - serviceplans
+      - tenants
+      - users
+      - virtualmachineclaims
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Events
+  - apiGroups: ["platform.servicer.io"]
+    resources:
+      - actionrequests/status
+      - authproviders/status
+      - clustertargets/status
+      - groups/status
+      - namespaceclaims/status
+      - operatorpackages/status
+      - policies/status
+      - projects/status
+      - rolebindings/status
+      - servicebindings/status
+      - serviceclasses/status
+      - serviceinstances/status
+      - serviceplans/status
+      - tenants/status
+      - users/status
+      - virtualmachineclaims/status
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["namespaces", "configmaps", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch", "create", "patch"]
-  # Pods (observeRuntime pod health checks)
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  # Apps workloads (observeRuntime StatefulSet/Deployment observation)
   - apiGroups: ["apps"]
     resources: ["statefulsets", "deployments", "replicasets", "daemonsets"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  # Batch workloads (ServiceBinding target integration)
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  # RBAC support objects for External Secrets Kubernetes provider
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # External Secrets projection resources
   - apiGroups: ["external-secrets.io"]
     resources: ["secretstores", "externalsecrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # CRDs (operator detection: ArgoCD, YugabyteDB, etc.)
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
-  # ArgoCD Applications (operator package delivery)
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Admission webhook bootstrap and patching
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -56,12 +78,87 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: servicer
+  name: servicer-manager
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: servicer
+  name: servicer-manager
 subjects:
   - kind: ServiceAccount
-    name: servicer
+    name: servicer-manager
+    namespace: servicer-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: servicer-bff
+rules:
+  - apiGroups: ["platform.servicer.io"]
+    resources:
+      - actionrequests
+      - authproviders
+      - clustertargets
+      - groups
+      - namespaceclaims
+      - operatorpackages
+      - policies
+      - projects
+      - rolebindings
+      - servicebindings
+      - serviceclasses
+      - serviceinstances
+      - serviceplans
+      - tenants
+      - users
+      - virtualmachineclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps", "events", "namespaces", "pods", "secrets", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: servicer-bff
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: servicer-bff
+subjects:
+  - kind: ServiceAccount
+    name: servicer-bff
+    namespace: servicer-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: servicer-webhook-bootstrap
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: servicer-webhook-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: servicer-webhook-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: servicer-webhook-bootstrap
     namespace: servicer-system

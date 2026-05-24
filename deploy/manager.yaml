@@ -1,13 +1,10 @@
-# Manager reconciles ServiceInstance CRDs and materialises delivery artifacts
-# to /delivery. Syncer watches /delivery and kubectl-applies to the target
-# cluster every 3 seconds. Both containers share the delivery EmptyDir.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: manager
   namespace: servicer-system
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: manager
@@ -16,52 +13,153 @@ spec:
       labels:
         app.kubernetes.io/name: manager
     spec:
-      serviceAccountName: servicer
+      serviceAccountName: servicer-manager
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: manager
       containers:
         - name: manager
-          image: ghcr.io/sindef/servicer-manager:latest
+          image: ghcr.io/sindef/servicer-manager:v0.1.0
           imagePullPolicy: IfNotPresent
           args:
             - --delivery-root=/delivery
-            - --metrics-bind-address=:0
+            - --delivery-repo-url=$(SERVICER_DELIVERY_REPO_URL)
+            - --delivery-repo-ref=$(SERVICER_DELIVERY_REPO_REF)
+            - --delivery-repo-path=$(SERVICER_DELIVERY_REPO_PATH)
+            - --delivery-repo-worktree=/delivery-repo
+            - --delivery-repo-auto-commit=true
+            - --delivery-repo-auto-push=true
+            - --delivery-repo-branch=$(SERVICER_DELIVERY_REPO_BRANCH)
+            - --delivery-repo-commit-name=$(SERVICER_DELIVERY_COMMIT_NAME)
+            - --delivery-repo-commit-email=$(SERVICER_DELIVERY_COMMIT_EMAIL)
+            - --metrics-bind-address=:8080
             - --health-probe-bind-address=:8081
+            - --leader-elect=true
             - --enable-webhooks=true
+          env:
+            - name: SERVICER_DELIVERY_REPO_URL
+              valueFrom:
+                secretKeyRef:
+                  name: servicer-delivery-repo
+                  key: url
+            - name: SERVICER_DELIVERY_REPO_REF
+              valueFrom:
+                configMapKeyRef:
+                  name: servicer-delivery-repo
+                  key: ref
+            - name: SERVICER_DELIVERY_REPO_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: servicer-delivery-repo
+                  key: path
+            - name: SERVICER_DELIVERY_REPO_BRANCH
+              valueFrom:
+                configMapKeyRef:
+                  name: servicer-delivery-repo
+                  key: branch
+            - name: SERVICER_DELIVERY_COMMIT_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: servicer-delivery-repo
+                  key: commitName
+            - name: SERVICER_DELIVERY_COMMIT_EMAIL
+              valueFrom:
+                configMapKeyRef:
+                  name: servicer-delivery-repo
+                  key: commitEmail
+            - name: GIT_SSH_COMMAND
+              value: ssh -i /home/nonroot/.ssh/ssh-privatekey -o UserKnownHostsFile=/home/nonroot/.ssh/known_hosts -o IdentitiesOnly=yes
           ports:
             - containerPort: 9443
               name: webhook-server
+            - containerPort: 8080
+              name: metrics
+            - containerPort: 8081
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: delivery
               mountPath: /delivery
+            - name: delivery-repo
+              mountPath: /delivery-repo
+            - name: git-ssh
+              mountPath: /home/nonroot/.ssh
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
-
-        - name: syncer
-          image: ghcr.io/sindef/servicer-syncer:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: KUBECONFIG
-              value: /kube/kubeconfig
-            - name: DELIVERY_ROOT
-              value: /delivery
-            - name: INTERVAL_SECONDS
-              value: "3"
-          volumeMounts:
-            - name: delivery
-              mountPath: /delivery
-              readOnly: true
-            - name: target-kubeconfig
-              mountPath: /kube
-              readOnly: true
-
       volumes:
         - name: delivery
           emptyDir: {}
-        - name: target-kubeconfig
+        - name: delivery-repo
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: git-ssh
           secret:
-            secretName: local-dev-kubeconfig
-            optional: true
+            secretName: servicer-delivery-repo
+            optional: false
+            defaultMode: 0400
         - name: webhook-certs
           secret:
             secretName: servicer-webhook-server-cert
             optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manager-metrics
+  namespace: servicer-system
+  labels:
+    app.kubernetes.io/name: manager
+spec:
+  selector:
+    app.kubernetes.io/name: manager
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: manager
+  namespace: servicer-system
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: manager

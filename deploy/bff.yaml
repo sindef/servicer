@@ -4,7 +4,7 @@ metadata:
   name: bff
   namespace: servicer-system
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: bff
@@ -13,14 +13,60 @@ spec:
       labels:
         app.kubernetes.io/name: bff
     spec:
-      serviceAccountName: servicer
+      serviceAccountName: servicer-bff
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: bff
       containers:
         - name: bff
-          image: ghcr.io/sindef/servicer-bff:latest
+          image: ghcr.io/sindef/servicer-bff:v0.1.0
           imagePullPolicy: IfNotPresent
           args:
             - --listen=:8090
             - --tls-listen=
+          env:
+            - name: SERVICER_PRODUCTION
+              value: "true"
+            - name: SERVICER_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: servicer-bff-session
+                  key: session-secret
+          ports:
+            - containerPort: 8090
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
@@ -31,5 +77,17 @@ spec:
   selector:
     app.kubernetes.io/name: bff
   ports:
-    - port: 8090
-      targetPort: 8090
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: bff
+  namespace: servicer-system
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bff

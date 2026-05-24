@@ -93,6 +93,41 @@ func TestPublisherPushesCommittedChangesToRemote(t *testing.T) {
 	}
 }
 
+func TestPublisherClonesEmptyWorktreeWhenRepoURLConfigured(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "delivery-remote.git")
+	runGit(t, "", "init", "--bare", remote)
+	seed := initGitRepo(t)
+	configureGitIdentity(t, seed)
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	runGit(t, seed, "add", "README.md")
+	runGit(t, seed, "commit", "-m", "seed")
+	runGit(t, seed, "branch", "-M", "main")
+	runGit(t, seed, "remote", "add", "origin", remote)
+	runGit(t, seed, "push", "origin", "main")
+
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	publisher := NewWithRepoURL(worktree, "published", true, true, remote, "origin", "main", "Servicer Bot", "servicer@example.com")
+	result, err := publisher.Publish(context.Background(), Request{
+		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
+		Artifacts: []adapters.RenderedArtifact{{
+			Path:    "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db/service.yaml",
+			Content: []byte("kind: Service\n"),
+		}},
+		Revision: "sha256:test",
+	})
+	if err != nil {
+		t.Fatalf("Publish returned error: %v", err)
+	}
+	if !result.Pushed {
+		t.Fatalf("expected cloned worktree push, got %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".git")); err != nil {
+		t.Fatalf("expected cloned git worktree: %v", err)
+	}
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
