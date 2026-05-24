@@ -62,7 +62,7 @@ jobs:
         run: kubectl kustomize config/samples > /dev/null
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: go-coverage
           path: coverage.out
@@ -270,7 +270,7 @@ jobs:
           ./hack/render-deploy-manifest.sh "${GITHUB_REF_NAME}" > "servicer-install-${GITHUB_REF_NAME}.yaml"
 
       - name: Upload install manifest artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: servicer-install-${{ github.ref_name }}
           path: servicer-install-${{ github.ref_name }}.yaml
