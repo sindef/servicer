@@ -917,46 +917,45 @@ h3 {
   margin-bottom: 12px;
 }
 
-.auth-choice-grid {
+.auth-result-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-  max-height: 260px;
+  gap: 6px;
+  max-height: 230px;
   overflow: auto;
+  margin-bottom: 12px;
   padding: 2px;
 }
 
-.auth-choice {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  min-height: 58px;
+.auth-result-list button {
+  display: flex;
+  width: 100%;
+  align-items: center;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
 }
 
-.auth-choice input {
-  width: 16px;
-  height: 16px;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
+.auth-result-list button:hover {
+  border-color: rgba(46, 196, 182, 0.45);
+  background: rgba(46, 196, 182, 0.08);
 }
 
-.auth-choice strong,
-.auth-choice small {
+.auth-result-list strong,
+.auth-result-list small {
   display: block;
   min-width: 0;
 }
 
-.auth-choice strong {
+.auth-result-list strong {
   overflow-wrap: anywhere;
   font-size: 13px;
 }
 
-.auth-choice small {
+.auth-result-list small {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;

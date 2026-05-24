@@ -486,6 +486,7 @@ const groupMemberSearch = ref('')
 const filteredGroupMemberOptions = computed(() => {
   const term = groupMemberSearch.value.trim().toLowerCase()
   return userRows.value.filter((user) => {
+    if (groupForm.members.includes(user.name)) return false
     if (!term) return true
     return [user.name, user.displayName, user.email].some((value) => (value ?? '').toLowerCase().includes(term))
   })
@@ -570,6 +571,7 @@ const bindingForm = reactive({
   roles: ['tenant-operator'] as string[]
 })
 const bindingSubjectSearch = ref('')
+const bindingRoleSearch = ref('')
 const bindingSubjectOptions = computed(() => {
   const users = userRows.value.map((user) => ({
     kind: 'User' as const,
@@ -585,14 +587,24 @@ const bindingSubjectOptions = computed(() => {
   }))
   const term = bindingSubjectSearch.value.trim().toLowerCase()
   return [...users, ...groupOptions].filter((subject) => {
+    if (bindingSubjectSelected(subject)) return false
     if (!term) return true
     return [subject.kind, subject.name, subject.label, subject.detail].some((value) => value.toLowerCase().includes(term))
+  })
+})
+const filteredBindingRoleOptions = computed(() => {
+  const term = bindingRoleSearch.value.trim().toLowerCase()
+  return bindingRoleOptions.value.filter((role) => {
+    if (bindingForm.roles.includes(role.name)) return false
+    if (!term) return true
+    return [role.name, role.description].some((value) => value.toLowerCase().includes(term))
   })
 })
 
 function resetBindingForm() {
   editingBinding.value = null
   bindingSubjectSearch.value = ''
+  bindingRoleSearch.value = ''
   Object.assign(bindingForm, {
     name: '',
     displayName: '',
@@ -661,6 +673,17 @@ function toggleStringValue(values: string[], value: string, checked: boolean) {
   values.splice(0, values.length, ...Array.from(current))
 }
 
+function addStringValue(values: string[], value: string) {
+  toggleStringValue(values, value, true)
+}
+
+function addFirstGroupMember() {
+  const match = filteredGroupMemberOptions.value[0]
+  if (!match) return
+  addStringValue(groupForm.members, match.name)
+  groupMemberSearch.value = ''
+}
+
 function subjectKey(subject: RoleBindingRequest['subjects'][number]) {
   return `${subject.kind}:${subject.name}`
 }
@@ -679,6 +702,17 @@ function toggleBindingSubject(subject: RoleBindingRequest['subjects'][number], c
   }
 }
 
+function addBindingSubject(subject: RoleBindingRequest['subjects'][number]) {
+  toggleBindingSubject(subject, true)
+  bindingSubjectSearch.value = ''
+}
+
+function addFirstBindingSubject() {
+  const match = bindingSubjectOptions.value[0]
+  if (!match) return
+  addBindingSubject(match)
+}
+
 function bindingSubjectSelected(subject: RoleBindingRequest['subjects'][number]) {
   const key = subjectKey(subject)
   return bindingForm.subjects.some((item) => subjectKey(item) === key)
@@ -690,7 +724,26 @@ watch(() => bindingForm.scope, (scope) => {
   if (!bindingForm.roles.length) {
     bindingForm.roles = [scope === 'platform' ? 'platform-admin' : 'tenant-operator']
   }
+  bindingRoleSearch.value = ''
 })
+
+function addFirstBindingRole() {
+  const match = filteredBindingRoleOptions.value[0]
+  if (!match) return
+  addStringValue(bindingForm.roles, match.name)
+  bindingRoleSearch.value = ''
+}
+
+function openNewBindingForUser(user: UserSummary) {
+  clearStatus()
+  resetBindingForm()
+  bindingForm.name = `${user.name}-access`
+  bindingForm.displayName = `${user.displayName || user.name} access`
+  bindingForm.subjects = [{ kind: 'User', name: user.name }]
+  activeSection.value = 'bindings'
+  modalMode.value = 'create'
+  modalSection.value = 'bindings'
+}
 
 async function deleteBinding(name: string) {
   if (!window.confirm(`Delete role binding ${name}?`)) return
@@ -1034,6 +1087,7 @@ resetBindingForm()
                 <td>{{ user.localAuthEnabled ? 'Yes' : 'No' }}</td>
                 <td>{{ user.externalIdentities?.length || 0 }}</td>
                 <td class="table-actions auth-table-actions">
+                  <button class="button secondary compact-button" @click="openNewBindingForUser(user)">Access</button>
                   <button class="button secondary compact-button" @click="openEditUser(user)">Edit</button>
                   <button class="button secondary compact-button auth-remove-action" @click="deleteUser(user.name)">Remove</button>
                 </td>
@@ -1353,21 +1407,23 @@ resetBindingForm()
             <section class="auth-modal-section">
               <div class="auth-section-heading">
                 <h3>Members</h3>
-                <p>Select existing Servicer users.</p>
+                <p>Search existing users and press Enter to add them.</p>
               </div>
-              <input v-model="groupMemberSearch" class="auth-search auth-picker-search" type="search" placeholder="Search users" />
-              <div class="auth-choice-grid">
-                <label v-for="user in filteredGroupMemberOptions" :key="user.name" class="auth-choice">
-                  <input
-                    type="checkbox"
-                    :checked="groupForm.members.includes(user.name)"
-                    @change="toggleStringValue(groupForm.members, user.name, checkboxValue($event))"
-                  />
+              <input
+                v-model="groupMemberSearch"
+                class="auth-search auth-picker-search"
+                type="search"
+                placeholder="Search users, Enter to add"
+                @keydown.enter.prevent="addFirstGroupMember"
+              />
+              <div v-if="groupMemberSearch" class="auth-result-list">
+                <button v-for="user in filteredGroupMemberOptions.slice(0, 6)" :key="user.name" type="button" @click="addStringValue(groupForm.members, user.name); groupMemberSearch = ''">
                   <span>
                     <strong>{{ user.displayName || user.name }}</strong>
                     <small>{{ user.email || user.name }}</small>
                   </span>
-                </label>
+                </button>
+                <p v-if="filteredGroupMemberOptions.length === 0" class="muted">No matching users.</p>
               </div>
               <div v-if="groupForm.members.length" class="auth-chip-row">
                 <button
@@ -1434,21 +1490,23 @@ resetBindingForm()
             <section class="auth-modal-section">
               <div class="auth-section-heading">
                 <h3>Subjects</h3>
-                <p>Select existing users or groups.</p>
+                <p>Search existing users or groups and press Enter to add them.</p>
               </div>
-              <input v-model="bindingSubjectSearch" class="auth-search auth-picker-search" type="search" placeholder="Search users and groups" />
-              <div class="auth-choice-grid">
-                <label v-for="subject in bindingSubjectOptions" :key="subject.kind + ':' + subject.name" class="auth-choice">
-                  <input
-                    type="checkbox"
-                    :checked="bindingSubjectSelected(subject)"
-                    @change="toggleBindingSubject(subject, checkboxValue($event))"
-                  />
+              <input
+                v-model="bindingSubjectSearch"
+                class="auth-search auth-picker-search"
+                type="search"
+                placeholder="Search users/groups, Enter to add"
+                @keydown.enter.prevent="addFirstBindingSubject"
+              />
+              <div v-if="bindingSubjectSearch" class="auth-result-list">
+                <button v-for="subject in bindingSubjectOptions.slice(0, 6)" :key="subject.kind + ':' + subject.name" type="button" @click="addBindingSubject(subject)">
                   <span>
                     <strong>{{ subject.label }}</strong>
                     <small>{{ subject.kind }} · {{ subject.detail }}</small>
                   </span>
-                </label>
+                </button>
+                <p v-if="bindingSubjectOptions.length === 0" class="muted">No matching subjects.</p>
               </div>
               <div v-if="bindingForm.subjects.length" class="auth-chip-row">
                 <button
@@ -1466,20 +1524,34 @@ resetBindingForm()
             <section class="auth-modal-section">
               <div class="auth-section-heading">
                 <h3>Roles</h3>
-                <p>Roles are built in; assign them with role bindings.</p>
+                <p>Roles are built in. Search and press Enter to add permissions to this binding.</p>
               </div>
-              <div class="auth-choice-grid">
-                <label v-for="role in bindingRoleOptions" :key="role.name" class="auth-choice">
-                  <input
-                    type="checkbox"
-                    :checked="bindingForm.roles.includes(role.name)"
-                    @change="toggleStringValue(bindingForm.roles, role.name, checkboxValue($event))"
-                  />
+              <input
+                v-model="bindingRoleSearch"
+                class="auth-search auth-picker-search"
+                type="search"
+                placeholder="Search roles, Enter to add"
+                @keydown.enter.prevent="addFirstBindingRole"
+              />
+              <div v-if="bindingRoleSearch" class="auth-result-list">
+                <button v-for="role in filteredBindingRoleOptions.slice(0, 6)" :key="role.name" type="button" @click="addStringValue(bindingForm.roles, role.name); bindingRoleSearch = ''">
                   <span>
                     <strong>{{ role.name }}</strong>
                     <small>{{ role.description }}</small>
                   </span>
-                </label>
+                </button>
+                <p v-if="filteredBindingRoleOptions.length === 0" class="muted">No matching roles.</p>
+              </div>
+              <div v-if="bindingForm.roles.length" class="auth-chip-row">
+                <button
+                  v-for="role in bindingForm.roles"
+                  :key="role"
+                  class="auth-chip"
+                  type="button"
+                  @click="toggleStringValue(bindingForm.roles, role, false)"
+                >
+                  {{ role }} ×
+                </button>
               </div>
             </section>
           </div>
