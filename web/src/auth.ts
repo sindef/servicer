@@ -56,10 +56,15 @@ export async function initializeAuth() {
 }
 
 export function authHeaders(): HeadersInit {
-  return {
+  const headers: Record<string, string> = {
     Accept: 'application/json',
     'Content-Type': 'application/json'
   }
+  const token = csrfToken()
+  if (token) {
+    headers['X-CSRF-Token'] = token
+  }
+  return headers
 }
 
 export function beginOIDCLogin(provider?: string, returnTo?: string | Event) {
@@ -100,4 +105,14 @@ async function fetchJSON<T>(path: string, init: RequestInit = {}) {
     throw new Error(message || `Request failed: ${response.status}`)
   }
   return (await response.json()) as T
+}
+
+function csrfToken(): string {
+  return document.cookie
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('servicer_csrf='))
+    ?.split('=')
+    .slice(1)
+    .join('=') || ''
 }

@@ -35,8 +35,10 @@ func init() {
 func main() {
 	var listenAddr string
 	var tlsListenAddr string
+	var metricsListenAddr string
 	flag.StringVar(&listenAddr, "listen", ":8090", "Address for the Servicer BFF HTTP server.")
 	flag.StringVar(&tlsListenAddr, "tls-listen", ":8443", "Address for the Servicer BFF HTTPS Kubernetes proxy listener. Leave empty to disable.")
+	flag.StringVar(&metricsListenAddr, "metrics-listen", ":9090", "Address for the Servicer BFF metrics server. Leave empty to disable.")
 
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
@@ -55,8 +57,9 @@ func main() {
 	errs := make(chan error, 2)
 	if listenAddr != "" {
 		go func() {
+			httpServer := productionHTTPServer(listenAddr, server.Handler())
 			ctrl.Log.WithName("bff").Info("starting BFF", "listen", listenAddr)
-			errs <- http.ListenAndServe(listenAddr, server.Handler())
+			errs <- httpServer.ListenAndServe()
 		}()
 	}
 	if tlsListenAddr != "" {
@@ -67,9 +70,13 @@ func main() {
 		}
 		go func() {
 			httpsServer := &http.Server{
-				Addr:      tlsListenAddr,
-				Handler:   server.Handler(),
-				TLSConfig: tlsConfig,
+				Addr:              tlsListenAddr,
+				Handler:           server.Handler(),
+				TLSConfig:         tlsConfig,
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       15 * time.Second,
+				WriteTimeout:      30 * time.Second,
+				IdleTimeout:       60 * time.Second,
 			}
 			ctrl.Log.WithName("bff").Info("starting BFF HTTPS proxy", "listen", tlsListenAddr)
 			listener, err := net.Listen("tcp", tlsListenAddr)
@@ -84,9 +91,27 @@ func main() {
 		ctrl.Log.WithName("bff").Error(nil, "at least one of --listen or --tls-listen must be set")
 		os.Exit(1)
 	}
+	if metricsListenAddr != "" {
+		go func() {
+			metricsServer := productionHTTPServer(metricsListenAddr, server.MetricsHandler())
+			ctrl.Log.WithName("bff").Info("starting BFF metrics", "listen", metricsListenAddr)
+			errs <- metricsServer.ListenAndServe()
+		}()
+	}
 	if err := <-errs; err != nil {
 		ctrl.Log.WithName("bff").Error(err, "BFF server stopped")
 		os.Exit(1)
+	}
+}
+
+func productionHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 }
 

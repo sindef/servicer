@@ -36,6 +36,7 @@ import (
 const (
 	authSessionCookieName = "servicer_session"
 	authFlowCookieName    = "servicer_auth_flow"
+	csrfCookieName        = "servicer_csrf"
 	defaultOIDCRedirect   = "/api/auth/callback"
 	defaultSessionSecret  = "servicer-local-session-secret-change-me"
 )
@@ -121,7 +122,13 @@ type sealedCookieCodec struct {
 func newAuthRuntime(client client.Client) (*authRuntime, error) {
 	sessionSecret := strings.TrimSpace(os.Getenv("SERVICER_SESSION_SECRET"))
 	if sessionSecret == "" {
+		if productionMode() {
+			return nil, errors.New("SERVICER_SESSION_SECRET is required when SERVICER_PRODUCTION=true")
+		}
 		sessionSecret = defaultSessionSecret
+	}
+	if productionMode() && (sessionSecret == defaultSessionSecret || len(sessionSecret) < 32) {
+		return nil, errors.New("SERVICER_SESSION_SECRET must be at least 32 characters and must not use the local default")
 	}
 	runtime := &authRuntime{
 		client:       client,
@@ -1160,6 +1167,19 @@ func authCookie(r *http.Request, name, value string, ttl time.Duration) *http.Co
 	}
 }
 
+func csrfCookie(r *http.Request, value string) *http.Cookie {
+	return &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: false,
+		Secure:   requestIsSecure(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((24 * time.Hour).Seconds()),
+		Expires:  time.Now().Add(24 * time.Hour),
+	}
+}
+
 func clearAuthCookie(r *http.Request, name string) *http.Cookie {
 	return &http.Cookie{
 		Name:     name,
@@ -1178,11 +1198,19 @@ func requestIsSecure(r *http.Request) bool {
 		if r.TLS != nil {
 			return true
 		}
-		if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		if trustedProxyHeadersEnabled() && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
 			return true
 		}
 	}
 	return false
+}
+
+func productionMode() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("SERVICER_PRODUCTION")), "true")
+}
+
+func trustedProxyHeadersEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("SERVICER_TRUSTED_PROXY_HEADERS")), "true")
 }
 
 func absoluteRedirectURL(r *http.Request, path string) string {

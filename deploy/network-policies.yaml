@@ -32,7 +32,7 @@ spec:
               app.kubernetes.io/name: bff
       ports:
         - protocol: TCP
-          port: 8090
+          port: 9090
     - to:
         - namespaceSelector:
             matchLabels:

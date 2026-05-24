@@ -34,6 +34,7 @@ type Server struct {
 	auth       *authRuntime
 	metrics    *serverMetrics
 	auditStore *auditStore
+	loginLimit *loginRateLimiter
 	handler    http.Handler
 }
 
@@ -42,7 +43,7 @@ func NewServer(client client.Client) *Server {
 }
 
 func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server {
-	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client)}
+	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client), loginLimit: newLoginRateLimiter(5, 15*time.Minute, 15*time.Minute)}
 	authRuntime, err := newAuthRuntime(client)
 	if err != nil {
 		panic(err)
@@ -125,12 +126,35 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("GET /api/tenants/{tenant}/repositories", server.handleListTenantRepositories)
 	mux.HandleFunc("POST /api/tenants/{tenant}/repositories", server.handleCreateTenantRepository)
 	mux.HandleFunc("DELETE /api/tenants/{tenant}/repositories/{repo}", server.handleDeleteTenantRepository)
-	server.handler = withJSON(server.withMetrics(server.withAuthentication(mux)))
+	server.handler = withJSON(server.withMetrics(server.withCSRF(server.withAuthentication(mux))))
 	return server
 }
 
 func (s *Server) Handler() http.Handler {
 	return s.handler
+}
+
+func (s *Server) MetricsHandler() http.Handler {
+	if s.metrics == nil {
+		return http.NotFoundHandler()
+	}
+	return s.metrics.handler()
+}
+
+func (s *Server) withCSRF(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !requiresCSRF(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		expected, err := r.Cookie(csrfCookieName)
+		token := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+		if err != nil || token == "" || expected.Value == "" || !secureCompare(token, expected.Value) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf token required"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) withAuthentication(next http.Handler) http.Handler {
@@ -209,10 +233,53 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 			return
 		}
+		rateLimitKey := loginRateLimitKey(r, req.Provider, req.Username)
+		if s.loginLimit != nil && !s.loginLimit.Allow(rateLimitKey) {
+			s.recordAudit(r.Context(), AuditEventSummary{
+				Time:     time.Now().UTC().Format(time.RFC3339),
+				Type:     "Auth",
+				Subject:  strings.TrimSpace(req.Username),
+				Action:   "login",
+				Actor:    strings.TrimSpace(req.Username),
+				Phase:    "Failed",
+				Reason:   "RateLimited",
+				Message:  "login temporarily locked after repeated failures",
+				Involved: "AuthProvider/" + strings.TrimSpace(req.Provider),
+			})
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed login attempts"})
+			return
+		}
 		if err := s.auth.CompletePasswordLogin(r.Context(), w, r, req); err != nil {
+			if s.loginLimit != nil {
+				s.loginLimit.RecordFailure(rateLimitKey)
+			}
+			s.recordAudit(r.Context(), AuditEventSummary{
+				Time:     time.Now().UTC().Format(time.RFC3339),
+				Type:     "Auth",
+				Subject:  strings.TrimSpace(req.Username),
+				Action:   "login",
+				Actor:    strings.TrimSpace(req.Username),
+				Phase:    "Failed",
+				Reason:   "InvalidCredentials",
+				Message:  err.Error(),
+				Involved: "AuthProvider/" + strings.TrimSpace(req.Provider),
+			})
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
 		}
+		if s.loginLimit != nil {
+			s.loginLimit.Reset(rateLimitKey)
+		}
+		s.ensureCSRFCookie(w, r)
+		s.recordAudit(r.Context(), AuditEventSummary{
+			Time:     time.Now().UTC().Format(time.RFC3339),
+			Type:     "Auth",
+			Subject:  strings.TrimSpace(req.Username),
+			Action:   "login",
+			Actor:    strings.TrimSpace(req.Username),
+			Phase:    "Succeeded",
+			Involved: "AuthProvider/" + strings.TrimSpace(req.Provider),
+		})
 		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -223,11 +290,21 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if err := s.auth.HandleCallback(r.Context(), w, r, absoluteRedirectURL(r, defaultOIDCRedirect)); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 	}
+	s.ensureCSRFCookie(w, r)
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, clearAuthCookie(r, authSessionCookieName))
 	http.SetCookie(w, clearAuthCookie(r, authFlowCookieName))
+	http.SetCookie(w, clearAuthCookie(r, csrfCookieName))
+	s.recordAudit(r.Context(), AuditEventSummary{
+		Time:     time.Now().UTC().Format(time.RFC3339),
+		Type:     "Auth",
+		Action:   "logout",
+		Actor:    actorFromRequest(r).UserName,
+		Phase:    "Succeeded",
+		Involved: "Session",
+	})
 	http.Redirect(w, r, s.auth.LogoutRedirectURL(r.Context(), r), http.StatusFound)
 }
 

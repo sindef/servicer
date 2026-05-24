@@ -22,35 +22,6 @@ Priority meanings:
 
 ## P0 Production Blockers
 
-### Auth/session defaults are not production-safe
-
-Authentication exists and is CRD-backed, but production-safe defaults and
-defense-in-depth are still missing.
-
-Evidence in repo:
-
-- `internal/bff/authenticator.go` falls back to
-  `servicer-local-session-secret-change-me` if `SERVICER_SESSION_SECRET` is not
-  set.
-- `deploy/bff.yaml` does not provide or require a session secret.
-- Login does not appear to have rate limiting, lockout, or brute-force
-  protection.
-- Mutating browser APIs rely on session cookies and SameSite behavior, but
-  there is no explicit CSRF token flow.
-- HTTP server construction lacks production request timeouts in the non-TLS
-  listener path.
-
-Required before production:
-
-- Fail BFF startup if `SERVICER_SESSION_SECRET` is missing in production mode.
-- Generate or require a Kubernetes Secret for session signing in the production
-  install.
-- Add login rate limiting and failed-auth audit events.
-- Add CSRF protection for mutating browser requests or a documented equivalent
-  defense.
-- Separately expose metrics for Prometheus scraping.
-- Add HTTP server read, write, idle, and header timeouts.
-
 ### Delivery path is not production GitOps by default
 
 The controller can publish delivery artifacts, but the production manifest still

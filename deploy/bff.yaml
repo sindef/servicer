@@ -32,8 +32,13 @@ spec:
           args:
             - --listen=:8090
             - --tls-listen=
+            - --metrics-listen=:9090
           env:
             - name: SERVICER_PRODUCTION
+              value: "true"
+            - name: SERVICER_TRUSTED_PROXY_HEADERS
+              value: "true"
+            - name: SERVICER_AUDIT_STDOUT
               value: "true"
             - name: SERVICER_SESSION_SECRET
               valueFrom:
@@ -43,6 +48,8 @@ spec:
           ports:
             - containerPort: 8090
               name: http
+            - containerPort: 9090
+              name: metrics
           livenessProbe:
             httpGet:
               path: /api/healthz
@@ -80,6 +87,9 @@ spec:
     - name: http
       port: 8090
       targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

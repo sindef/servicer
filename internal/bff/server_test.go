@@ -631,6 +631,54 @@ func TestMetricsEndpointExposesPrometheusMetrics(t *testing.T) {
 	}
 }
 
+func TestProductionModeRequiresStrongSessionSecret(t *testing.T) {
+	t.Setenv("SERVICER_PRODUCTION", "true")
+	t.Setenv("SERVICER_SESSION_SECRET", "")
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	if err := platformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	if _, err := newAuthRuntime(kubeClient); err == nil {
+		t.Fatalf("expected production auth runtime to require SERVICER_SESSION_SECRET")
+	}
+}
+
+func TestMutatingBrowserRequestRequiresCSRFToken(t *testing.T) {
+	server := testServer(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/namespaceclaims", strings.NewReader(`{}`))
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+	request.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: "session"})
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMutatingBrowserRequestAcceptsCSRFToken(t *testing.T) {
+	server := testServer(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/namespaceclaims", strings.NewReader(`{}`))
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: "session"})
+	request.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-token"})
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code == http.StatusForbidden {
+		t.Fatalf("expected CSRF to pass, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestNamespaceClaimsEndpointReturnsVisibleClaims(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()
@@ -1028,6 +1076,9 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 		"SERVICER_OIDC_REDIRECT_PATH",
 		"SERVICER_OIDC_END_SESSION_URL",
 		"SERVICER_SESSION_SECRET",
+		"SERVICER_PRODUCTION",
+		"SERVICER_TRUSTED_PROXY_HEADERS",
+		"SERVICER_AUDIT_STDOUT",
 	} {
 		_ = os.Unsetenv(key)
 	}
