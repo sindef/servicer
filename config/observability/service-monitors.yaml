@@ -1,0 +1,39 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: servicer-manager
+  namespace: servicer-system
+  labels:
+    app.kubernetes.io/name: servicer
+    app.kubernetes.io/component: manager
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: manager
+  namespaceSelector:
+    matchNames:
+      - servicer-system
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: servicer-bff
+  namespace: servicer-system
+  labels:
+    app.kubernetes.io/name: servicer
+    app.kubernetes.io/component: bff
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bff
+  namespaceSelector:
+    matchNames:
+      - servicer-system
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

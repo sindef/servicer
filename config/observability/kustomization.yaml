@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - prometheus-rules.yaml
+  - service-monitors.yaml
+configMapGenerator:
+  - name: servicer-grafana-dashboard
+    namespace: servicer-system
+    files:
+      - grafana-dashboard.json
+    options:
+      labels:
+        app.kubernetes.io/name: servicer
+        app.kubernetes.io/component: observability
+        grafana_dashboard: "1"

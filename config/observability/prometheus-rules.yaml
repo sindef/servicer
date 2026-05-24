@@ -65,6 +65,38 @@ spec:
           annotations:
             summary: Servicer controller reconcile errors detected.
             description: Controller-runtime is reporting sustained reconciliation failures.
+        - alert: ServicerDeliveryPublishFailed
+          expr: kube_customresource_status_condition{customresource_group="platform.servicer.io",customresource_kind="ServiceInstance",condition="Materialized",status="false",reason="PublishFailed"} > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Servicer delivery publication failed.
+            description: A ServiceInstance could not publish generated artifacts to the configured GitOps repository.
+        - alert: ServicerArgoSyncDrift
+          expr: kube_customresource_status_condition{customresource_group="platform.servicer.io",customresource_kind="ServiceInstance",condition="Synced",status="false"} > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer managed delivery is not synced.
+            description: A ServiceInstance has reported an unsynced or drifting Argo CD delivery state for more than 30 minutes.
+        - alert: ServicerProductHealthDegraded
+          expr: kube_customresource_status_condition{customresource_group="platform.servicer.io",customresource_kind="ServiceInstance",condition="Healthy",status="false"} > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer product health degraded.
+            description: A managed product reports degraded or failed health.
+        - alert: ServicerBackupFailed
+          expr: kube_job_status_failed{namespace="servicer-system",job_name=~"servicer-control-plane-backup.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Servicer control-plane backup failed.
+            description: A scheduled Servicer backup job failed and needs operator review.
         - alert: ServicerControllerDown
           expr: absent(up{job=~".*servicer.*manager.*"} == 1)
           for: 5m

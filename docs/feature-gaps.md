@@ -24,28 +24,6 @@ Priority meanings:
 
 ## P1 GA Gaps
 
-### Observability is present but not packaged as production monitoring
-
-Metrics, rules, and dashboards exist, but production install does not wire them
-up end to end.
-
-Evidence in repo:
-
-- `config/observability` contains Prometheus rules and a Grafana dashboard.
-- `deploy/kustomization.yaml` does not include observability resources.
-- `deploy/manager.yaml` disables manager metrics with
-  `--metrics-bind-address=:0`.
-- There is no `ServiceMonitor`, `PodMonitor`, or scrape documentation in the
-  production install.
-
-Required before GA:
-
-- Enable manager metrics by default or via a clear production overlay.
-- Add ServiceMonitor/PodMonitor resources for Prometheus Operator users.
-- Include alert rules and dashboards as an installable overlay.
-- Add alerts for reconcile failures, failed delivery publication, failed auth,
-  backup failure, Argo sync drift, and degraded product health.
-
 ### Audit trail is not yet compliance-grade
 
 Audit functionality exists, but it is not durable or complete enough for serious
