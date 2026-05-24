@@ -536,6 +536,23 @@ type RoleBindingSummary struct {
 	Roles       []string             `json:"roles"`
 }
 
+type RoleSummary struct {
+	Name        string   `json:"name"`
+	DisplayName string   `json:"displayName,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Scope       string   `json:"scope"`
+	BuiltIn     bool     `json:"builtIn"`
+	Permissions []string `json:"permissions"`
+}
+
+type RoleRequest struct {
+	Name        string   `json:"name"`
+	DisplayName string   `json:"displayName,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Scope       string   `json:"scope"`
+	Permissions []string `json:"permissions"`
+}
+
 type RoleBindingSubject struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`

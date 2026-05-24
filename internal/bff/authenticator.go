@@ -673,6 +673,11 @@ func (a *authRuntime) resolveActor(ctx context.Context, identity resolvedIdentit
 	if err := a.client.List(ctx, tenants); err != nil {
 		return actor{}, err
 	}
+	roles, err := authRolesFromClient(ctx, a.client)
+	if err != nil {
+		return actor{}, err
+	}
+	roleExpander := newRoleExpander(roles)
 
 	matchedUser := a.matchUser(users.Items, identity)
 	localGroupNames := map[string]struct{}{}
@@ -732,7 +737,9 @@ func (a *authRuntime) resolveActor(ctx context.Context, identity resolvedIdentit
 		switch binding.Spec.Scope {
 		case platformv1alpha1.AccessScopePlatform:
 			for _, role := range binding.Spec.Roles {
-				current.Roles[string(role)] = struct{}{}
+				for _, expanded := range roleExpander.expand(string(role), string(platformv1alpha1.AccessScopePlatform)) {
+					current.Roles[expanded] = struct{}{}
+				}
 			}
 		case platformv1alpha1.AccessScopeTenant:
 			if binding.Spec.TenantRef == nil || binding.Spec.TenantRef.Name == "" {
@@ -744,7 +751,9 @@ func (a *authRuntime) resolveActor(ctx context.Context, identity resolvedIdentit
 				current.TenantRoles[binding.Spec.TenantRef.Name] = tenantRoles
 			}
 			for _, role := range binding.Spec.Roles {
-				tenantRoles[string(role)] = struct{}{}
+				for _, expanded := range roleExpander.expand(string(role), string(platformv1alpha1.AccessScopeTenant)) {
+					tenantRoles[expanded] = struct{}{}
+				}
 			}
 		}
 	}

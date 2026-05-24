@@ -8,38 +8,32 @@ import {
   type UserRequest,
   type GroupSummary,
   type GroupRequest,
+  type RoleSummary,
+  type RoleRequest,
   type RoleBindingSummary,
   type RoleBindingRequest
 } from '../api'
 import { useApi } from '../composables/useApi'
 
-type AuthSection = 'users' | 'groups' | 'bindings' | 'providers'
-const authSections = ['users', 'groups', 'bindings', 'providers'] as const
+type AuthSection = 'users' | 'groups' | 'roles' | 'bindings' | 'providers'
+const authSections = ['users', 'groups', 'roles', 'bindings', 'providers'] as const
 
 const providers = useApi(api.admin.authProviders)
 const users = useApi(api.admin.users)
 const groups = useApi(api.admin.groups)
+const roles = useApi(api.admin.roles)
 const bindings = useApi(api.admin.roleBindings)
 const tenants = useApi(api.tenants)
 
 const providerRows = computed(() => (providers.data.value ?? []).slice().sort((a, b) => a.displayName.localeCompare(b.displayName)))
 const userRows = computed(() => (users.data.value ?? []).slice().sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)))
 const groupRows = computed(() => (groups.data.value ?? []).slice().sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)))
+const roleRows = computed(() => (roles.data.value ?? []).slice().sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)))
 const bindingRows = computed(() => (bindings.data.value ?? []).slice().sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)))
 const tenantRows = computed(() => tenants.data.value ?? [])
-const platformRoleOptions = [
-  { name: 'platform-admin', description: 'Full platform administration.' },
-  { name: 'catalog-admin', description: 'Manage catalog publication and defaults.' },
-  { name: 'cluster-admin', description: 'Manage cluster targets.' },
-  { name: 'auditor', description: 'Read audit events.' }
-]
-const tenantRoleOptions = [
-  { name: 'tenant-admin', description: 'Manage tenant-scoped projects, repositories, and access.' },
-  { name: 'tenant-operator', description: 'Operate tenant products and repositories.' },
-  { name: 'service-consumer', description: 'View and request assigned tenant products.' }
-]
+const builtInRoleRows = computed(() => roleRows.value.filter((role) => role.builtIn))
 const bindingRoleOptions = computed(() =>
-  bindingForm.scope === 'platform' ? platformRoleOptions : tenantRoleOptions
+  roleRows.value.filter((role) => role.scope === bindingForm.scope)
 )
 
 const activeSection = ref<AuthSection>('users')
@@ -77,6 +71,8 @@ function sectionCount(section: AuthSection) {
       return userRows.value.length
     case 'groups':
       return groupRows.value.length
+    case 'roles':
+      return roleRows.value.length
     case 'bindings':
       return bindingRows.value.length
   }
@@ -90,7 +86,9 @@ function modalTitle(section: AuthSection) {
         ? 'user'
         : section === 'groups'
           ? 'group'
-          : 'role binding'
+          : section === 'roles'
+            ? 'role'
+            : 'role binding'
   return `${modalMode.value === 'create' ? 'New' : 'Edit'} ${noun}`
 }
 
@@ -102,6 +100,8 @@ const sectionSearchPlaceholder = computed(() => {
       return 'Search users'
     case 'groups':
       return 'Search groups'
+    case 'roles':
+      return 'Search roles'
     case 'bindings':
       return 'Search bindings'
   }
@@ -128,6 +128,11 @@ const filteredGroups = computed(() =>
     matchesSearch([group.name, group.displayName, ...(group.members ?? []), ...(group.externalGroups ?? []).map((item) => item.provider), ...(group.externalGroups ?? []).map((item) => item.name)])
   )
 )
+const filteredRoles = computed(() =>
+  roleRows.value.filter((role) =>
+    matchesSearch([role.name, role.displayName, role.scope, role.builtIn ? 'built-in' : 'custom', ...(role.permissions ?? [])])
+  )
+)
 const filteredBindings = computed(() =>
   bindingRows.value.filter((binding) =>
     matchesSearch([binding.name, binding.displayName, binding.scope, binding.tenantName, ...binding.roles, ...binding.subjects.map((item) => item.name)])
@@ -137,15 +142,18 @@ const filteredBindings = computed(() =>
 const selectedProviderName = ref<string | null>(null)
 const selectedUserName = ref<string | null>(null)
 const selectedGroupName = ref<string | null>(null)
+const selectedRoleName = ref<string | null>(null)
 const selectedBindingName = ref<string | null>(null)
 const selectedProviderNames = ref<string[]>([])
 const selectedUserNames = ref<string[]>([])
 const selectedGroupNames = ref<string[]>([])
+const selectedRoleNames = ref<string[]>([])
 const selectedBindingNames = ref<string[]>([])
 
 const selectedProvider = computed(() => providerRows.value.find((item) => item.name === selectedProviderName.value) ?? null)
 const selectedUser = computed(() => userRows.value.find((item) => item.name === selectedUserName.value) ?? null)
 const selectedGroup = computed(() => groupRows.value.find((item) => item.name === selectedGroupName.value) ?? null)
+const selectedRole = computed(() => roleRows.value.find((item) => item.name === selectedRoleName.value) ?? null)
 const selectedBinding = computed(() => bindingRows.value.find((item) => item.name === selectedBindingName.value) ?? null)
 const activeSelectedCount = computed(() => selectionFor(activeSection.value).length)
 
@@ -161,6 +169,8 @@ function selectionFor(section: AuthSection) {
       return selectedUserNames.value
     case 'groups':
       return selectedGroupNames.value
+    case 'roles':
+      return selectedRoleNames.value
     case 'bindings':
       return selectedBindingNames.value
   }
@@ -178,6 +188,9 @@ function setSelection(section: AuthSection, names: string[]) {
     case 'groups':
       selectedGroupNames.value = uniqueNames
       break
+    case 'roles':
+      selectedRoleNames.value = uniqueNames
+      break
     case 'bindings':
       selectedBindingNames.value = uniqueNames
       break
@@ -192,6 +205,8 @@ function visibleNamesFor(section: AuthSection) {
       return filteredUsers.value.map((item) => item.name)
     case 'groups':
       return filteredGroups.value.map((item) => item.name)
+    case 'roles':
+      return filteredRoles.value.filter((item) => !item.builtIn).map((item) => item.name)
     case 'bindings':
       return filteredBindings.value.map((item) => item.name)
   }
@@ -561,6 +576,86 @@ async function deleteGroup(name: string) {
   }
 }
 
+const editingRole = ref<string | null>(null)
+const roleForm = reactive({
+  name: '',
+  displayName: '',
+  description: '',
+  scope: 'tenant' as 'platform' | 'tenant',
+  permissions: [] as string[]
+})
+const rolePermissionSearch = ref('')
+const rolePermissionOptions = computed(() => {
+  const term = rolePermissionSearch.value.trim().toLowerCase()
+  return builtInRoleRows.value.filter((role) => {
+    if (role.scope !== roleForm.scope || roleForm.permissions.includes(role.name)) return false
+    if (!term) return true
+    return [role.name, role.displayName, role.description].some((value) => (value ?? '').toLowerCase().includes(term))
+  })
+})
+
+function resetRoleForm() {
+	editingRole.value = null
+	selectedRoleName.value = null
+	rolePermissionSearch.value = ''
+  Object.assign(roleForm, {
+    name: '',
+    displayName: '',
+    description: '',
+    scope: 'tenant',
+    permissions: []
+  })
+}
+
+function editRole(role: RoleSummary) {
+  activeSection.value = 'roles'
+  selectedRoleName.value = role.name
+  editingRole.value = role.name
+  Object.assign(roleForm, {
+    name: role.name,
+    displayName: role.displayName ?? '',
+    description: role.description ?? '',
+    scope: role.scope,
+    permissions: [...(role.permissions ?? [])]
+  })
+}
+
+function openEditRole(role: RoleSummary) {
+  clearStatus()
+  editRole(role)
+  modalMode.value = 'edit'
+  modalSection.value = 'roles'
+}
+
+async function submitRole() {
+  const body: RoleRequest = {
+    name: roleForm.name,
+    displayName: roleForm.displayName || undefined,
+    description: roleForm.description || undefined,
+    scope: roleForm.scope,
+    permissions: roleForm.permissions
+  }
+  if (editingRole.value) {
+    await runWrite(() => api.admin.updateRole(editingRole.value!, body), roles.reload)
+  } else {
+    await runWrite(() => api.admin.createRole(body), roles.reload)
+  }
+  if (!error.value) {
+    selectedRoleName.value = body.name
+    editRole({ ...body, builtIn: false })
+  }
+}
+
+async function deleteRole(role: RoleSummary) {
+  if (role.builtIn) return
+  if (!window.confirm(`Delete role ${role.name}?`)) return
+  await runWrite(() => api.admin.deleteRole(role.name), roles.reload)
+  if (!error.value && selectedRoleName.value === role.name) {
+    selectedRoleName.value = null
+    resetRoleForm()
+  }
+}
+
 const editingBinding = ref<string | null>(null)
 const bindingForm = reactive({
   name: '',
@@ -597,7 +692,7 @@ const filteredBindingRoleOptions = computed(() => {
   return bindingRoleOptions.value.filter((role) => {
     if (bindingForm.roles.includes(role.name)) return false
     if (!term) return true
-    return [role.name, role.description].some((value) => value.toLowerCase().includes(term))
+    return [role.name, role.description].some((value) => (value ?? '').toLowerCase().includes(term))
   })
 })
 
@@ -684,6 +779,13 @@ function addFirstGroupMember() {
   groupMemberSearch.value = ''
 }
 
+function addFirstRolePermission() {
+  const match = rolePermissionOptions.value[0]
+  if (!match) return
+  addStringValue(roleForm.permissions, match.name)
+  rolePermissionSearch.value = ''
+}
+
 function subjectKey(subject: RoleBindingRequest['subjects'][number]) {
   return `${subject.kind}:${subject.name}`
 }
@@ -719,12 +821,18 @@ function bindingSubjectSelected(subject: RoleBindingRequest['subjects'][number])
 }
 
 watch(() => bindingForm.scope, (scope) => {
-  const allowed = new Set((scope === 'platform' ? platformRoleOptions : tenantRoleOptions).map((role) => role.name))
+  const allowed = new Set(bindingRoleOptions.value.map((role) => role.name))
   bindingForm.roles = bindingForm.roles.filter((role) => allowed.has(role))
   if (!bindingForm.roles.length) {
     bindingForm.roles = [scope === 'platform' ? 'platform-admin' : 'tenant-operator']
   }
   bindingRoleSearch.value = ''
+})
+
+watch(() => roleForm.scope, (scope) => {
+  const allowed = new Set(builtInRoleRows.value.filter((role) => role.scope === scope).map((role) => role.name))
+  roleForm.permissions = roleForm.permissions.filter((permission) => allowed.has(permission))
+  rolePermissionSearch.value = ''
 })
 
 function addFirstBindingRole() {
@@ -770,6 +878,11 @@ async function deleteSelected(section: AuthSection) {
         await api.admin.deleteUser(name)
       } else if (section === 'groups') {
         await api.admin.deleteGroup(name)
+      } else if (section === 'roles') {
+        const role = roleRows.value.find((item) => item.name === name)
+        if (role && !role.builtIn) {
+          await api.admin.deleteRole(name)
+        }
       } else {
         await api.admin.deleteRoleBinding(name)
       }
@@ -793,6 +906,12 @@ async function deleteSelected(section: AuthSection) {
         resetGroupForm()
       }
       await groups.reload()
+    } else if (section === 'roles') {
+      if (selectedRoleName.value && names.includes(selectedRoleName.value)) {
+        selectedRoleName.value = null
+        resetRoleForm()
+      }
+      await roles.reload()
     } else {
       if (selectedBindingName.value && names.includes(selectedBindingName.value)) {
         selectedBindingName.value = null
@@ -817,6 +936,8 @@ function sectionItemLabel(section: AuthSection, count: number) {
       return plural ? 'users' : 'user'
     case 'groups':
       return plural ? 'groups' : 'group'
+    case 'roles':
+      return plural ? 'roles' : 'role'
     case 'bindings':
       return plural ? 'role bindings' : 'role binding'
   }
@@ -842,6 +963,12 @@ function sectionMeta(section: AuthSection) {
         description: 'Reusable collections of users.',
         action: 'New group'
       }
+    case 'roles':
+      return {
+        title: 'Roles',
+        description: 'Built-in and custom permission sets.',
+        action: 'New role'
+      }
     case 'bindings':
       return {
         title: 'Role bindings',
@@ -859,6 +986,8 @@ function openNewCurrentSection() {
     resetUserForm()
   } else if (activeSection.value === 'groups') {
     resetGroupForm()
+  } else if (activeSection.value === 'roles') {
+    resetRoleForm()
   } else {
     resetBindingForm()
   }
@@ -885,6 +1014,11 @@ async function submitCreateGroup() {
   if (!error.value) closeModal()
 }
 
+async function submitCreateRole() {
+  await submitRole()
+  if (!error.value) closeModal()
+}
+
 async function submitCreateBinding() {
   await submitBinding()
   if (!error.value) closeModal()
@@ -902,6 +1036,11 @@ async function submitEditUser() {
 
 async function submitEditGroup() {
   await submitGroup()
+  if (!error.value) closeModal()
+}
+
+async function submitEditRole() {
+  await submitRole()
   if (!error.value) closeModal()
 }
 
@@ -937,6 +1076,13 @@ watch(groupRows, (rows) => {
   selectedGroupNames.value = selectedGroupNames.value.filter((name) => rows.some((item) => item.name === name))
 })
 
+watch(roleRows, (rows) => {
+  if (selectedRoleName.value && !rows.some((item) => item.name === selectedRoleName.value)) {
+    selectedRoleName.value = null
+  }
+  selectedRoleNames.value = selectedRoleNames.value.filter((name) => rows.some((item) => item.name === name && !item.builtIn))
+})
+
 watch(bindingRows, (rows) => {
   if (selectedBindingName.value && !rows.some((item) => item.name === selectedBindingName.value)) {
     selectedBindingName.value = null
@@ -947,6 +1093,7 @@ watch(bindingRows, (rows) => {
 resetProviderForm()
 resetUserForm()
 resetGroupForm()
+resetRoleForm()
 resetBindingForm()
 </script>
 
@@ -1139,6 +1286,50 @@ resetBindingForm()
             </tbody>
         </table>
 
+        <table v-else-if="activeSection === 'roles'" class="data-table auth-table">
+            <thead>
+              <tr>
+                <th class="auth-select-col">
+                  <input
+                    aria-label="Select all visible custom roles"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :checked="filteredRoles.filter((role) => !role.builtIn).length > 0 && filteredRoles.filter((role) => !role.builtIn).every((role) => isSelected('roles', role.name))"
+                    @change="toggleVisibleSelection('roles', checkboxValue($event))"
+                  />
+                </th>
+                <th>Role</th>
+                <th>Scope</th>
+                <th>Type</th>
+                <th>Permissions</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="role in filteredRoles" :key="role.name">
+                <td class="auth-select-col">
+                  <input
+                    :aria-label="`Select role ${role.displayName || role.name}`"
+                    class="auth-row-checkbox"
+                    type="checkbox"
+                    :disabled="role.builtIn"
+                    :checked="isSelected('roles', role.name)"
+                    @click.stop
+                    @change.stop="toggleSelected('roles', role.name, checkboxValue($event))"
+                  />
+                </td>
+                <td><strong>{{ role.displayName || role.name }}</strong><small>{{ role.name }}</small></td>
+                <td>{{ role.scope }}</td>
+                <td><span class="status-pill" :class="role.builtIn ? 'neutral' : 'good'">{{ role.builtIn ? 'Built-in' : 'Custom' }}</span></td>
+                <td>{{ role.permissions.join(', ') }}</td>
+                <td class="table-actions auth-table-actions">
+                  <button class="button secondary compact-button" @click="openEditRole(role)">{{ role.builtIn ? 'View' : 'Edit' }}</button>
+                  <button class="button secondary compact-button auth-remove-action" :disabled="role.builtIn" @click="deleteRole(role)">Remove</button>
+                </td>
+              </tr>
+            </tbody>
+        </table>
+
         <table v-else class="data-table auth-table">
             <thead>
               <tr>
@@ -1188,6 +1379,7 @@ resetBindingForm()
             (activeSection === 'providers' && filteredProviders.length === 0) ||
             (activeSection === 'users' && filteredUsers.length === 0) ||
             (activeSection === 'groups' && filteredGroups.length === 0) ||
+            (activeSection === 'roles' && filteredRoles.length === 0) ||
             (activeSection === 'bindings' && filteredBindings.length === 0)
           "
           class="empty-state auth-empty"
@@ -1456,6 +1648,76 @@ resetBindingForm()
             <button class="button secondary" :disabled="busy" @click="closeModal">Cancel</button>
             <button class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateGroup() : submitEditGroup()">
               {{ modalMode === 'create' ? 'Create group' : 'Save group' }}
+            </button>
+          </div>
+        </template>
+
+        <template v-else-if="modalSection === 'roles'">
+          <div class="auth-modal-body">
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Role details</h3>
+              </div>
+              <div class="auth-modal-grid">
+                <label><span>Role name</span><input v-model="roleForm.name" :disabled="modalMode === 'edit'" placeholder="database-operator" /></label>
+                <label><span>Display name</span><input v-model="roleForm.displayName" :disabled="selectedRole?.builtIn" placeholder="Database Operator" /></label>
+                <label>
+                  <span>Scope</span>
+                  <select v-model="roleForm.scope" :disabled="modalMode === 'edit'">
+                    <option value="platform">platform</option>
+                    <option value="tenant">tenant</option>
+                  </select>
+                </label>
+                <label class="auth-full-width">
+                  <span>Description</span>
+                  <input v-model="roleForm.description" :disabled="selectedRole?.builtIn" placeholder="Operate database products for assigned tenants." />
+                </label>
+              </div>
+            </section>
+
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Permissions</h3>
+                <p>Search built-in permissions and press Enter to add them.</p>
+              </div>
+              <input
+                v-model="rolePermissionSearch"
+                class="auth-search auth-picker-search"
+                type="search"
+                :disabled="selectedRole?.builtIn"
+                placeholder="Search permissions, Enter to add"
+                @keydown.enter.prevent="addFirstRolePermission"
+              />
+              <div v-if="rolePermissionSearch" class="auth-result-list">
+                <button v-for="permission in rolePermissionOptions.slice(0, 6)" :key="permission.name" type="button" @click="addStringValue(roleForm.permissions, permission.name); rolePermissionSearch = ''">
+                  <span>
+                    <strong>{{ permission.displayName || permission.name }}</strong>
+                    <small>{{ permission.name }} · {{ permission.description }}</small>
+                  </span>
+                </button>
+                <p v-if="rolePermissionOptions.length === 0" class="muted">No matching permissions.</p>
+              </div>
+              <div v-if="roleForm.permissions.length" class="auth-chip-row">
+                <button
+                  v-for="permission in roleForm.permissions"
+                  :key="permission"
+                  class="auth-chip"
+                  type="button"
+                  :disabled="selectedRole?.builtIn"
+                  @click="toggleStringValue(roleForm.permissions, permission, false)"
+                >
+                  {{ permission }} <span v-if="!selectedRole?.builtIn">×</span>
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <div class="auth-modal-actions">
+            <button v-if="!selectedRole?.builtIn" class="button reset" :disabled="busy" @click="resetRoleForm">Reset</button>
+            <div class="auth-action-spacer"></div>
+            <button class="button secondary" :disabled="busy" @click="closeModal">Close</button>
+            <button v-if="!selectedRole?.builtIn" class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateRole() : submitEditRole()">
+              {{ modalMode === 'create' ? 'Create role' : 'Save role' }}
             </button>
           </div>
         </template>

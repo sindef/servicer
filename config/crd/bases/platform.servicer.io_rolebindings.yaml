@@ -49,19 +49,11 @@ spec:
                 description: DisplayName is the human-readable binding name.
                 type: string
               roles:
-                description: Roles lists the coarse-grained Servicer roles granted
-                  by this binding.
+                description: Roles lists Servicer roles granted by this binding.
                 items:
-                  description: ServicerRole identifies a coarse-grained Servicer authorization
-                    role.
-                  enum:
-                  - platform-admin
-                  - tenant-admin
-                  - tenant-operator
-                  - service-consumer
-                  - auditor
-                  - catalog-admin
-                  - cluster-admin
+                  description: ServicerRole identifies a Servicer authorization role.
+                    Built-in roles are predefined; custom role names may also be
+                    referenced by RoleBindings.
                   type: string
                 type: array
               scope:

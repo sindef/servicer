@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
@@ -13,9 +14,16 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const authSecretNamespace = "servicer-system"
+const (
+	roleDefinitionLabelKey   = "servicer.io/type"
+	roleDefinitionLabelValue = "auth-role"
+	roleDefinitionDataKey    = "role.json"
+	roleDefinitionPrefix     = "servicer-role-"
+)
 
 func (s *Server) handleListAuthProviders(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin); !ok {
@@ -459,6 +467,108 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, WriteResponse{Name: name, Message: "Group deleted."})
 }
 
+func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin); !ok {
+		return
+	}
+	roles, err := s.authRoles(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, roles)
+}
+
+func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin); !ok {
+		return
+	}
+	var req RoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	role, err := roleFromRequest(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if _, ok := builtInRoleMap()[role.Name]; ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "built-in roles cannot be replaced"})
+		return
+	}
+	configMap, err := roleConfigMap(role)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.client.Create(r.Context(), configMap); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, WriteResponse{Name: role.Name, Message: "Role created."})
+}
+
+func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin); !ok {
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if _, ok := builtInRoleMap()[name]; ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "built-in roles are locked"})
+		return
+	}
+	var req RoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	req.Name = name
+	role, err := roleFromRequest(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	configMap, err := roleConfigMap(role)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	var existing corev1.ConfigMap
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: configMap.Name, Namespace: configMap.Namespace}, &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	existing.Labels = configMap.Labels
+	existing.Data = configMap.Data
+	if err := s.client.Update(r.Context(), &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, WriteResponse{Name: role.Name, Message: "Role updated."})
+}
+
+func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin); !ok {
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if _, ok := builtInRoleMap()[name]; ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "built-in roles are locked"})
+		return
+	}
+	var existing corev1.ConfigMap
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: roleDefinitionPrefix + name, Namespace: authSecretNamespace}, &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.client.Delete(r.Context(), &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, WriteResponse{Name: name, Message: "Role deleted."})
+}
+
 func groupFromRequest(req GroupRequest) *platformv1alpha1.Group {
 	group := &platformv1alpha1.Group{
 		ObjectMeta: metav1.ObjectMeta{Name: req.Name},
@@ -607,6 +717,138 @@ func roleBindingFromRequest(req RoleBindingRequest) (*platformv1alpha1.RoleBindi
 		}
 	}
 	return binding, nil
+}
+
+func (s *Server) authRoles(ctx context.Context) ([]RoleSummary, error) {
+	return authRolesFromClient(ctx, s.client)
+}
+
+func authRolesFromClient(ctx context.Context, c client.Client) ([]RoleSummary, error) {
+	roles := builtInRoles()
+	var list corev1.ConfigMapList
+	if err := c.List(ctx, &list, client.InNamespace(authSecretNamespace), client.MatchingLabels{roleDefinitionLabelKey: roleDefinitionLabelValue}); err != nil {
+		return nil, err
+	}
+	for _, configMap := range list.Items {
+		role, err := roleFromConfigMap(configMap)
+		if err != nil {
+			continue
+		}
+		if _, builtIn := builtInRoleMap()[role.Name]; builtIn {
+			continue
+		}
+		roles = append(roles, role)
+	}
+	sort.Slice(roles, func(i, j int) bool {
+		if roles[i].BuiltIn != roles[j].BuiltIn {
+			return roles[i].BuiltIn
+		}
+		if roles[i].Scope != roles[j].Scope {
+			return roles[i].Scope < roles[j].Scope
+		}
+		return roles[i].Name < roles[j].Name
+	})
+	return roles, nil
+}
+
+func builtInRoles() []RoleSummary {
+	return []RoleSummary{
+		{Name: rolePlatformAdmin, DisplayName: "Platform Admin", Scope: "platform", BuiltIn: true, Description: "Full control over Servicer.", Permissions: []string{rolePlatformAdmin}},
+		{Name: roleCatalogAdmin, DisplayName: "Catalog Admin", Scope: "platform", BuiltIn: true, Description: "Manage service catalog registration, publication, and defaults.", Permissions: []string{roleCatalogAdmin}},
+		{Name: roleClusterAdmin, DisplayName: "Cluster Admin", Scope: "platform", BuiltIn: true, Description: "Manage cluster targets.", Permissions: []string{roleClusterAdmin}},
+		{Name: roleAuditor, DisplayName: "Auditor", Scope: "platform", BuiltIn: true, Description: "Read audit events.", Permissions: []string{roleAuditor}},
+		{Name: roleTenantAdmin, DisplayName: "Tenant Admin", Scope: "tenant", BuiltIn: true, Description: "Manage assigned tenant resources and access.", Permissions: []string{roleTenantAdmin}},
+		{Name: roleTenantOperator, DisplayName: "Tenant Operator", Scope: "tenant", BuiltIn: true, Description: "Operate assigned tenant products and repositories.", Permissions: []string{roleTenantOperator}},
+		{Name: roleServiceConsumer, DisplayName: "Service Consumer", Scope: "tenant", BuiltIn: true, Description: "View and request assigned tenant products.", Permissions: []string{roleServiceConsumer}},
+	}
+}
+
+func builtInRoleMap() map[string]RoleSummary {
+	roles := map[string]RoleSummary{}
+	for _, role := range builtInRoles() {
+		roles[role.Name] = role
+	}
+	return roles
+}
+
+func roleFromRequest(req RoleRequest) (RoleSummary, error) {
+	role := RoleSummary{
+		Name:        strings.TrimSpace(req.Name),
+		DisplayName: strings.TrimSpace(req.DisplayName),
+		Description: strings.TrimSpace(req.Description),
+		Scope:       strings.TrimSpace(req.Scope),
+		Permissions: uniquePermissionNames(req.Permissions),
+	}
+	if role.Name == "" {
+		return role, fmt.Errorf("name is required")
+	}
+	if role.Scope != string(platformv1alpha1.AccessScopePlatform) && role.Scope != string(platformv1alpha1.AccessScopeTenant) {
+		return role, fmt.Errorf("scope must be platform or tenant")
+	}
+	if len(role.Permissions) == 0 {
+		return role, fmt.Errorf("at least one permission is required")
+	}
+	allowed := allowedRolePermissions(role.Scope)
+	for _, permission := range role.Permissions {
+		if _, ok := allowed[permission]; !ok {
+			return role, fmt.Errorf("permission %q is not valid for %s roles", permission, role.Scope)
+		}
+	}
+	return role, nil
+}
+
+func allowedRolePermissions(scope string) map[string]struct{} {
+	allowed := map[string]struct{}{}
+	for _, role := range builtInRoles() {
+		if role.Scope == scope {
+			allowed[role.Name] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+func uniquePermissionNames(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func roleConfigMap(role RoleSummary) (*corev1.ConfigMap, error) {
+	payload, err := json.Marshal(role)
+	if err != nil {
+		return nil, err
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      roleDefinitionPrefix + role.Name,
+			Namespace: authSecretNamespace,
+			Labels: map[string]string{
+				roleDefinitionLabelKey: roleDefinitionLabelValue,
+			},
+		},
+		Data: map[string]string{roleDefinitionDataKey: string(payload)},
+	}, nil
+}
+
+func roleFromConfigMap(configMap corev1.ConfigMap) (RoleSummary, error) {
+	var role RoleSummary
+	if err := json.Unmarshal([]byte(configMap.Data[roleDefinitionDataKey]), &role); err != nil {
+		return role, err
+	}
+	role.BuiltIn = false
+	return role, nil
 }
 
 func (s *Server) upsertSecret(ctx context.Context, desired *corev1.Secret) error {

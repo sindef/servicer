@@ -30,6 +30,43 @@ type actor struct {
 	Groups        map[string]struct{}
 }
 
+type roleExpander struct {
+	roles map[string]RoleSummary
+}
+
+func newRoleExpander(roles []RoleSummary) roleExpander {
+	index := map[string]RoleSummary{}
+	for _, role := range roles {
+		index[role.Name] = role
+	}
+	return roleExpander{roles: index}
+}
+
+func (r roleExpander) expand(roleName, scope string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	var visit func(string)
+	visit = func(name string) {
+		if name == "" {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+		role, ok := r.roles[name]
+		if !ok || role.Scope != scope {
+			return
+		}
+		for _, permission := range role.Permissions {
+			visit(permission)
+		}
+	}
+	visit(roleName)
+	return out
+}
+
 func actorFromRequest(r *http.Request) actor {
 	if actor, ok := actorFromContext(r.Context()); ok {
 		return actor

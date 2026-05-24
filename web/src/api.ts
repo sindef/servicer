@@ -422,6 +422,23 @@ export interface RoleBindingSummary {
   roles: string[]
 }
 
+export interface RoleSummary {
+  name: string
+  displayName?: string
+  description?: string
+  scope: 'platform' | 'tenant'
+  builtIn: boolean
+  permissions: string[]
+}
+
+export interface RoleRequest {
+  name: string
+  displayName?: string
+  description?: string
+  scope: 'platform' | 'tenant'
+  permissions: string[]
+}
+
 export interface RoleBindingRequest {
   name: string
   displayName?: string
@@ -603,6 +620,21 @@ export const api = {
       }),
     deleteGroup: (name: string) =>
       request<{ name: string; message: string }>(`/api/admin/auth/groups/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      }),
+    roles: () => request<RoleSummary[]>('/api/admin/auth/roles'),
+    createRole: (body: RoleRequest) =>
+      request<{ name: string; message: string }>('/api/admin/auth/roles', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    updateRole: (name: string, body: RoleRequest) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/roles/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
+    deleteRole: (name: string) =>
+      request<{ name: string; message: string }>(`/api/admin/auth/roles/${encodeURIComponent(name)}`, {
         method: 'DELETE'
       }),
     roleBindings: () => request<RoleBindingSummary[]>('/api/admin/auth/rolebindings'),

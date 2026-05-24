@@ -82,6 +82,62 @@ func TestTenantScopedRoleInheritance(t *testing.T) {
 	}
 }
 
+func TestCustomRoleExpansion(t *testing.T) {
+	expander := newRoleExpander([]RoleSummary{
+		{Name: roleTenantOperator, Scope: "tenant", BuiltIn: true, Permissions: []string{roleTenantOperator}},
+		{Name: "database-operator", Scope: "tenant", Permissions: []string{roleTenantOperator}},
+	})
+	expanded := expander.expand("database-operator", "tenant")
+	if strings.Join(expanded, ",") != "database-operator,tenant-operator" {
+		t.Fatalf("unexpected custom role expansion %#v", expanded)
+	}
+}
+
+func TestRoleDefinitionLifecycle(t *testing.T) {
+	server := testServer(t)
+	body := strings.NewReader(`{
+		"name":"database-operator",
+		"displayName":"Database Operator",
+		"description":"Operate database products.",
+		"scope":"tenant",
+		"permissions":["tenant-operator"]
+	}`)
+	create := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/admin/auth/roles", body)
+	createRequest.Header.Set("X-Servicer-User", "admin@example.com")
+	createRequest.Header.Set("X-Servicer-Roles", "platform-admin")
+	server.Handler().ServeHTTP(create, createRequest)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", create.Code, create.Body.String())
+	}
+
+	list := httptest.NewRecorder()
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/admin/auth/roles", nil)
+	listRequest.Header.Set("X-Servicer-User", "admin@example.com")
+	listRequest.Header.Set("X-Servicer-Roles", "platform-admin")
+	server.Handler().ServeHTTP(list, listRequest)
+	if list.Code != http.StatusOK {
+		t.Fatalf("expected list status 200, got %d: %s", list.Code, list.Body.String())
+	}
+	var roles []RoleSummary
+	if err := json.Unmarshal(list.Body.Bytes(), &roles); err != nil {
+		t.Fatalf("decode roles: %v", err)
+	}
+	foundCustom := false
+	foundBuiltIn := false
+	for _, role := range roles {
+		if role.Name == "database-operator" && !role.BuiltIn && strings.Join(role.Permissions, ",") == "tenant-operator" {
+			foundCustom = true
+		}
+		if role.Name == rolePlatformAdmin && role.BuiltIn {
+			foundBuiltIn = true
+		}
+	}
+	if !foundCustom || !foundBuiltIn {
+		t.Fatalf("expected custom and built-in roles, got %#v", roles)
+	}
+}
+
 func TestAuthConfigEndpointReturnsConfiguredProviders(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()

@@ -11,8 +11,8 @@ const (
 	AccessScopeTenant   AccessScope = "tenant"
 )
 
-// ServicerRole identifies a coarse-grained Servicer authorization role.
-// +kubebuilder:validation:Enum=platform-admin;tenant-admin;tenant-operator;service-consumer;auditor;catalog-admin;cluster-admin
+// ServicerRole identifies a Servicer authorization role. Built-in roles are
+// predefined; custom role names may also be referenced by RoleBindings.
 type ServicerRole string
 
 const (
@@ -52,7 +52,7 @@ type RoleBindingSpec struct {
 	TenantRef *LocalObjectReference `json:"tenantRef,omitempty"`
 	// Subjects lists the Users and Groups granted the roles.
 	Subjects []SubjectReference `json:"subjects"`
-	// Roles lists the coarse-grained Servicer roles granted by this binding.
+	// Roles lists Servicer roles granted by this binding.
 	Roles []ServicerRole `json:"roles"`
 }
 
