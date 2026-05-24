@@ -12,14 +12,20 @@ rules:
   - apiGroups: ["platform.servicer.io"]
     resources:
       - actionrequests
+      - authproviders
       - clustertargets
+      - groups
       - namespaceclaims
+      - operatorpackages
+      - policies
       - projects
+      - rolebindings
       - servicebindings
       - serviceclasses
       - serviceinstances
       - serviceplans
       - tenants
+      - users
       - virtualmachineclaims
     verbs: ["get", "list"]
   - apiGroups: [""]
@@ -29,7 +35,7 @@ rules:
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list"]
   - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
+    resources: ["applications", "applicationsets"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -76,8 +82,19 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: backup
-              image: ghcr.io/sindef/servicer-tools:latest
+              image: ghcr.io/sindef/servicer-tools:v0.1.0
               imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
               command:
                 - /bin/sh
                 - -c

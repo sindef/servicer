@@ -1,0 +1,8 @@
+FROM alpine:3.21
+
+RUN apk add --no-cache bash coreutils kubectl python3 tar
+
+WORKDIR /workspace
+COPY hack/control-plane-backup.sh /workspace/hack/control-plane-backup.sh
+
+ENTRYPOINT ["/bin/bash"]

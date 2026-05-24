@@ -14,8 +14,10 @@ What it does:
   - snapshots local generated/ delivery tree when present
 
 Notes:
-  - best for control-plane demos, migrations, disaster drills
+  - backs up Servicer control-plane objects and selected runtime state
   - not full etcd backup
+  - does not replace cluster/etcd backup for workloads, PVs, node state, or third-party operators
+  - Git-backed delivery repositories are the source of truth for production artifacts
   - requires: kubectl, python3, tar
 EOF
 }
@@ -80,6 +82,12 @@ backup_resources() {
     tenants.platform.servicer.io
     projects.platform.servicer.io
     clustertargets.platform.servicer.io
+    authproviders.platform.servicer.io
+    users.platform.servicer.io
+    groups.platform.servicer.io
+    rolebindings.platform.servicer.io
+    operatorpackages.platform.servicer.io
+    policies.platform.servicer.io
     serviceclasses.platform.servicer.io
     serviceplans.platform.servicer.io
     serviceinstances.platform.servicer.io
@@ -108,6 +116,7 @@ backup_resources() {
 
   echo "exporting argocd Applications managed by Servicer"
   kubectl -n argocd get applications.argoproj.io -l servicer.io/managed-by=servicer -o json --ignore-not-found | sanitize_json >"$argo_dir/applications-argoproj-io.json" || true
+  kubectl -n argocd get applicationsets.argoproj.io -l servicer.io/managed-by=servicer -o json --ignore-not-found | sanitize_json >"$argo_dir/applicationsets-argoproj-io.json" || true
 }
 
 snapshot_generated_tree() {

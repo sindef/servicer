@@ -22,35 +22,6 @@ Priority meanings:
 
 ## P0 Production Blockers
 
-### Backup and restore coverage is incomplete
-
-Backup scaffolding exists, but it is not yet a production disaster-recovery
-story.
-
-Evidence in repo:
-
-- `config/backup` is not included by `deploy/kustomization.yaml`.
-- Backup and restore Jobs reference `ghcr.io/sindef/servicer-tools:latest`, but
-  the CI workflow does not build or publish a `servicer-tools` image.
-- `hack/control-plane-backup.sh` describes the snapshot as best-effort, not a
-  full etcd backup.
-- The backup resource list does not cover all newer control-plane APIs, such as
-  auth providers, users, groups, role bindings, operator packages, and policies.
-- Delivery artifacts are captured only from the configured delivery volume/path,
-  which is unsafe if production delivery is meant to be Git-backed.
-
-Required before production:
-
-- Build and publish a versioned `servicer-tools` image.
-- Include backup/restore manifests in the production install or a documented
-  production add-on.
-- Update backup RBAC and scripts to include every Servicer CRD and runtime
-  namespace resource needed for restore.
-- Add restore validation in CI or nightly e2e: install, create tenants/projects,
-  create services, back up, restore into a fresh cluster, and verify status.
-- Document what is and is not covered compared with an etcd-level cluster
-  backup.
-
 ### Product catalog and operator lifecycle are incomplete
 
 Servicer can model products, but production users need a supported catalog

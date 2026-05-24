@@ -41,4 +41,5 @@ kubectl kustomize "${REPO_ROOT}/deploy" \
     -e "s#ghcr.io/sindef/servicer-manager:v0.1.0#${IMAGE_PREFIX}-manager:${VERSION}#g" \
     -e "s#ghcr.io/sindef/servicer-bff:v0.1.0#${IMAGE_PREFIX}-bff:${VERSION}#g" \
     -e "s#ghcr.io/sindef/servicer-web:v0.1.0#${IMAGE_PREFIX}-web:${VERSION}#g" \
+    -e "s#ghcr.io/sindef/servicer-tools:v0.1.0#${IMAGE_PREFIX}-tools:${VERSION}#g" \
     -e "s#servicer-system#${NAMESPACE}#g"

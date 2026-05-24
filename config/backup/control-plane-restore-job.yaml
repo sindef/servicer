@@ -15,8 +15,19 @@ spec:
       restartPolicy: Never
       containers:
         - name: restore
-          image: ghcr.io/sindef/servicer-tools:latest
+          image: ghcr.io/sindef/servicer-tools:v0.1.0
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: BACKUP_PATH
               value: /backups/servicer-YYYYMMDD-HHMMSS

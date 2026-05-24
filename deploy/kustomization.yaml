@@ -14,3 +14,4 @@ resources:
   - web.yaml
   - network-policies.yaml
   - ingress.yaml
+  - ../config/backup
