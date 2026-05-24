@@ -24,34 +24,6 @@ Priority meanings:
 
 ## P1 GA Gaps
 
-### Product adapter action maturity is uneven
-
-The adapter layer is broad, but not all advertised day-2 actions are actually
-implemented with production-grade behavior.
-
-Evidence in repo:
-
-- Some adapters advertise or accept actions that still return queued or
-  placeholder results.
-- Cassandra/K8ssandra support is still first-pass and lacks operator-deep
-  repair, backup, and health behavior.
-- KubeVirt support is still shallow around guest readiness, storage conditions,
-  and power/action execution.
-- MySQL backup/restore and more advanced topologies need stronger runtime
-  validation.
-- NATS, Valkey, Yugabyte, and PostgreSQL need repeatable failover/restore/drift
-  drills against real operators, not only manifest rendering tests.
-
-Required before GA:
-
-- Publish an action support matrix per product and plan.
-- Hide or block unsupported actions instead of returning placeholder queued
-  states.
-- Add integration tests against real operators for every product marked
-  production-supported.
-- Define health semantics per product: ready, degraded, failed, progressing,
-  backup stale, replication lag, and restore required.
-
 ### End-to-end and upgrade testing is missing
 
 Unit coverage is useful, and CI builds the app, but production readiness needs

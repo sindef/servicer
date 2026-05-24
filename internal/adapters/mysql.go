@@ -53,8 +53,6 @@ var MySQLContract = ProductContract{
 		{Key: "failover-readiness", DisplayName: "Failover Readiness", Description: "Whether the active-passive topology has a promotion candidate available.", Severity: HealthSeverityWarning},
 	},
 	Actions: []ActionCapability{
-		{Name: ActionBackup, DisplayName: "Backup", RequiresApproval: false, Disruptive: false},
-		{Name: ActionRestore, DisplayName: "Restore", RequiresApproval: true, Disruptive: true},
 		{Name: ActionScale, DisplayName: "Scale", RequiresApproval: false, Disruptive: true},
 		{Name: ActionRestart, DisplayName: "Restart", RequiresApproval: false, Disruptive: true},
 		{Name: ActionRotateCredentials, DisplayName: "Rotate Credentials", RequiresApproval: false, Disruptive: false},
@@ -261,7 +259,7 @@ func (a *MySQLAdapter) Delete(_ context.Context, request DeleteRequest) (DeleteR
 func (a *MySQLAdapter) SupportedActions(_ context.Context, ctx ServiceContext) []ActionCapability {
 	params, err := a.parameters(ctx)
 	if err != nil {
-		return append([]ActionCapability(nil), a.Contract().Actions[:5]...)
+		return append([]ActionCapability(nil), a.Contract().Actions[:3]...)
 	}
 	mode := a.replicationMode(ctx, params)
 	actions := make([]ActionCapability, 0, len(a.Contract().Actions))
@@ -278,37 +276,9 @@ func (a *MySQLAdapter) ExecuteAction(_ context.Context, request ExecuteActionReq
 	if request.Context.Instance == nil || request.Action == nil {
 		return ActionExecutionResult{}, fmt.Errorf("service instance and action request context are required")
 	}
-	namespace := instanceNamespace(request.Context)
 	switch request.Action.Spec.Action {
-	case string(ActionBackup):
-		return ActionExecutionResult{
-			Phase: "Queued",
-			OperationRef: &platformv1alpha1.TypedObjectReference{
-				APIVersion: "batch/v1",
-				Kind:       "Job",
-				Name:       fmt.Sprintf("%s-backup-%s", request.Context.Instance.Name, request.Action.Name),
-				Namespace:  namespace,
-			},
-			Message:   "MySQL backup request queued for the runtime controller.",
-			Retryable: true,
-		}, nil
-	case string(ActionRestore):
-		return ActionExecutionResult{
-			Phase: "Queued",
-			OperationRef: &platformv1alpha1.TypedObjectReference{
-				APIVersion: platformv1alpha1.GroupVersion.String(),
-				Kind:       "ServiceInstance",
-				Name:       request.Context.Instance.Name,
-			},
-			Message:   "MySQL restore request queued for operator-assisted handling.",
-			Retryable: false,
-		}, nil
 	default:
-		return ActionExecutionResult{
-			Phase:     "Queued",
-			Message:   fmt.Sprintf("MySQL action %q queued for runtime execution.", request.Action.Spec.Action),
-			Retryable: true,
-		}, nil
+		return ActionExecutionResult{}, fmt.Errorf("unsupported MySQL action %q", request.Action.Spec.Action)
 	}
 }
 

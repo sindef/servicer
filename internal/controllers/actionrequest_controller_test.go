@@ -32,20 +32,20 @@ func TestActionRequestReconcilerExecutesApprovedCNPGAction(t *testing.T) {
 	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db-backup"}, &actionRequest); err != nil {
 		t.Fatalf("Get returned error: %v", err)
 	}
-	if actionRequest.Status.Phase != "Queued" {
-		t.Fatalf("expected phase Queued, got %q", actionRequest.Status.Phase)
+	if actionRequest.Status.Phase != "Succeeded" {
+		t.Fatalf("expected phase Succeeded, got %q", actionRequest.Status.Phase)
 	}
 	if actionRequest.Status.StartedAt == nil {
 		t.Fatalf("expected StartedAt to be set")
 	}
-	if actionRequest.Status.CompletedAt != nil {
-		t.Fatalf("expected CompletedAt to be empty for queued action")
+	if actionRequest.Status.CompletedAt == nil {
+		t.Fatalf("expected CompletedAt to be set")
 	}
-	if actionRequest.Status.Result.Code != "queued" {
-		t.Fatalf("expected result code queued, got %q", actionRequest.Status.Result.Code)
+	if actionRequest.Status.Result.Code != "succeeded" {
+		t.Fatalf("expected result code succeeded, got %q", actionRequest.Status.Result.Code)
 	}
-	if actionRequest.Status.Result.Message != "CNPG backup request queued." {
-		t.Fatalf("expected queued backup message, got %q", actionRequest.Status.Result.Message)
+	if !strings.Contains(actionRequest.Status.Result.Message, "CNPG Backup") {
+		t.Fatalf("expected backup creation message, got %q", actionRequest.Status.Result.Message)
 	}
 	if actionRequest.Status.OperationRef == nil || actionRequest.Status.OperationRef.Kind != "Backup" {
 		t.Fatalf("expected Backup operation ref, got %#v", actionRequest.Status.OperationRef)
@@ -53,14 +53,14 @@ func TestActionRequestReconcilerExecutesApprovedCNPGAction(t *testing.T) {
 }
 
 func TestActionRequestReconcilerRequiresApprovalWhenCapabilityDemandsIt(t *testing.T) {
-	reconciler := newActionRequestReconciler(t, actionRequestFixture("orders-db-failover", string(adapters.ActionFailover), platformv1alpha1.ApprovalModeAuto))
+	reconciler := newValkeyActionRequestReconciler(t, valkeyActionRequestFixture("session-cache-failover-approval", string(adapters.ActionFailover), map[string]any{"candidateCluster": "west-2"}))
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db-failover"}}); err != nil {
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache-failover-approval"}}); err != nil {
 		t.Fatalf("Reconcile returned error: %v", err)
 	}
 
 	var actionRequest platformv1alpha1.ActionRequest
-	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db-failover"}, &actionRequest); err != nil {
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "session-cache-failover-approval"}, &actionRequest); err != nil {
 		t.Fatalf("Get returned error: %v", err)
 	}
 	if actionRequest.Status.Phase != "PendingApproval" {
@@ -78,16 +78,17 @@ func TestActionRequestReconcilerRequiresApprovalWhenCapabilityDemandsIt(t *testi
 }
 
 func TestActionRequestReconcilerRejectsApprovedActionWithoutApproverIdentity(t *testing.T) {
-	action := actionRequestFixture("orders-db-failover-approved", string(adapters.ActionFailover), platformv1alpha1.ApprovalModeApproved)
+	action := valkeyActionRequestFixture("session-cache-failover-approved", string(adapters.ActionFailover), map[string]any{"candidateCluster": "west-2"})
+	action.Spec.Approval.Mode = platformv1alpha1.ApprovalModeApproved
 	action.Spec.Approval.ApprovedBy = nil
-	reconciler := newActionRequestReconciler(t, action)
+	reconciler := newValkeyActionRequestReconciler(t, action)
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db-failover-approved"}}); err != nil {
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache-failover-approved"}}); err != nil {
 		t.Fatalf("Reconcile returned error: %v", err)
 	}
 
 	var actionRequest platformv1alpha1.ActionRequest
-	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db-failover-approved"}, &actionRequest); err != nil {
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "session-cache-failover-approved"}, &actionRequest); err != nil {
 		t.Fatalf("Get returned error: %v", err)
 	}
 	if actionRequest.Status.Phase != "Failed" {

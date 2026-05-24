@@ -41,12 +41,7 @@ var KubeVirtContract = ProductContract{
 		{Key: "guest-access", DisplayName: "Guest Access", Description: "Whether guest bootstrap and access material are configured.", Severity: HealthSeverityWarning},
 		{Key: "storage-posture", DisplayName: "Storage Posture", Description: "Whether persistent VM storage intent is materialized.", Severity: HealthSeverityWarning},
 	},
-	Actions: []ActionCapability{
-		{Name: ActionStart, DisplayName: "Start", RequiresApproval: false, Disruptive: true},
-		{Name: ActionStop, DisplayName: "Stop", RequiresApproval: true, Disruptive: true},
-		{Name: ActionReboot, DisplayName: "Reboot", RequiresApproval: true, Disruptive: true},
-		{Name: ActionSnapshot, DisplayName: "Snapshot", RequiresApproval: false, Disruptive: false},
-	},
+	Actions: []ActionCapability{},
 }
 
 type KubeVirtAdapter struct{}

@@ -21,10 +21,6 @@ var PostgreSQLContract = ProductContract{
 	},
 	Actions: []ActionCapability{
 		{Name: ActionBackup, DisplayName: "Backup", RequiresApproval: false, Disruptive: false},
-		{Name: ActionRestore, DisplayName: "Restore", RequiresApproval: true, Disruptive: true},
-		{Name: ActionFailover, DisplayName: "Failover", RequiresApproval: true, Disruptive: true},
-		{Name: ActionScale, DisplayName: "Scale", RequiresApproval: false, Disruptive: true},
-		{Name: ActionRotateCredentials, DisplayName: "Rotate Credentials", RequiresApproval: false, Disruptive: false},
 	},
 }
 

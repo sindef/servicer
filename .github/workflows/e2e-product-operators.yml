@@ -1,0 +1,30 @@
+name: Product Operator E2E
+
+on:
+  workflow_dispatch:
+
+jobs:
+  product-operators:
+    name: KinD product operators
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.2
+
+      - name: Set up KinD
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Run product operator e2e
+        run: ./hack/e2e-product-operators.sh

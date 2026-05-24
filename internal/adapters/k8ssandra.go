@@ -46,12 +46,7 @@ var K8ssandraContract = ProductContract{
 		{Key: "repair-posture", DisplayName: "Repair Posture", Description: "Whether the cluster is within its repair and anti-entropy expectations.", Severity: HealthSeverityWarning},
 		{Key: "backup-freshness", DisplayName: "Backup Freshness", Description: "Whether backups satisfy the plan's retention and recovery expectations.", Severity: HealthSeverityWarning},
 	},
-	Actions: []ActionCapability{
-		{Name: ActionScale, DisplayName: "Scale", RequiresApproval: false, Disruptive: true},
-		{Name: ActionRestart, DisplayName: "Rolling Restart", RequiresApproval: false, Disruptive: true},
-		{Name: ActionRepair, DisplayName: "Repair", RequiresApproval: true, Disruptive: true},
-		{Name: ActionBackup, DisplayName: "Backup", RequiresApproval: false, Disruptive: false},
-	},
+	Actions: []ActionCapability{},
 }
 
 // DefaultK8ssandraDeletionPolicy is the preferred default for Cassandra instances.

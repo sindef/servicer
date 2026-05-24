@@ -55,14 +55,7 @@ var YugabyteContract = ProductContract{
 		{Key: "replication-lag", DisplayName: "Replication Lag", Description: "Whether cross-cluster replication lag is within acceptable bounds.", Severity: HealthSeverityWarning},
 		{Key: "backup-freshness", DisplayName: "Backup Freshness", Description: "Whether backups satisfy the configured retention policy.", Severity: HealthSeverityWarning},
 	},
-	Actions: []ActionCapability{
-		{Name: ActionBackup, DisplayName: "Backup", RequiresApproval: false, Disruptive: false},
-		{Name: ActionRestore, DisplayName: "Restore", RequiresApproval: true, Disruptive: true},
-		{Name: ActionScale, DisplayName: "Scale", RequiresApproval: false, Disruptive: true},
-		{Name: ActionFailover, DisplayName: "Failover", RequiresApproval: true, Disruptive: true},
-		{Name: ActionRestart, DisplayName: "Rolling Restart", RequiresApproval: false, Disruptive: true},
-		{Name: ActionRotateCredentials, DisplayName: "Rotate Credentials", RequiresApproval: false, Disruptive: false},
-	},
+	Actions: []ActionCapability{},
 }
 
 // DefaultYugabyteDeletionPolicy uses snapshot-first deletion, consistent with stateful database products.

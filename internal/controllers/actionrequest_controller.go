@@ -20,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -134,6 +135,9 @@ func (r *ActionRequestReconciler) executeAction(ctx context.Context, resolved re
 	if resolved.adapter.Contract().RuntimeDriver == "servicer-mysql" {
 		return r.executeMySQLAction(ctx, resolved.serviceContext, actionRequest)
 	}
+	if resolved.adapter.Contract().RuntimeDriver == "cnpg" {
+		return r.executeCNPGAction(ctx, resolved.serviceContext, actionRequest)
+	}
 	if resolved.adapter.Contract().RuntimeDriver == "kubernetes-namespace" {
 		return r.executeNamespaceAction(ctx, resolved.serviceContext, actionRequest)
 	}
@@ -141,6 +145,43 @@ func (r *ActionRequestReconciler) executeAction(ctx context.Context, resolved re
 		Context: resolved.serviceContext,
 		Action:  actionRequest,
 	})
+}
+
+func (r *ActionRequestReconciler) executeCNPGAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+	if actionRequest.Spec.Action != string(adapters.ActionBackup) {
+		return adapters.ActionExecutionResult{}, fmt.Errorf("unsupported PostgreSQL action %q", actionRequest.Spec.Action)
+	}
+	if serviceContext.Instance == nil {
+		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
+	}
+	namespace := actionRuntimeNamespace(serviceContext)
+	name := fmt.Sprintf("%s-%s", serviceContext.Instance.Name, actionRequest.Name)
+	backup := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "postgresql.cnpg.io/v1",
+		"kind":       "Backup",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+			"labels": map[string]any{
+				"servicer.io/managed-by": "servicer",
+				"servicer.io/instance":   serviceContext.Instance.Name,
+			},
+		},
+		"spec": map[string]any{
+			"cluster": map[string]any{
+				"name": serviceContext.Instance.Name,
+			},
+		},
+	}}
+	if err := r.Create(ctx, backup); err != nil && !apierrors.IsAlreadyExists(err) {
+		return adapters.ActionExecutionResult{}, err
+	}
+	return adapters.ActionExecutionResult{
+		Phase:        "Succeeded",
+		OperationRef: &platformv1alpha1.TypedObjectReference{APIVersion: "postgresql.cnpg.io/v1", Kind: "Backup", Name: name, Namespace: namespace},
+		Message:      fmt.Sprintf("CNPG Backup %s/%s created.", namespace, name),
+		Retryable:    true,
+	}, nil
 }
 
 func (r *ActionRequestReconciler) executeNATSAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
