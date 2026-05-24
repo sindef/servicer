@@ -12,10 +12,11 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /manager ./cmd/manager
 RUN apk add --no-cache curl tar && \
-    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" -o /tmp/helm.tgz && \
+    HELM_TAR=/tmp/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz && \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" -o "$HELM_TAR" && \
     curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz.sha256sum" -o /tmp/helm.tgz.sha256sum && \
-    grep "helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" /tmp/helm.tgz.sha256sum | sha256sum -c - && \
-    tar -xzf /tmp/helm.tgz -C /tmp && \
+    cd /tmp && grep "helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" helm.tgz.sha256sum | sha256sum -c - && \
+    tar -xzf "$HELM_TAR" -C /tmp && \
     mv /tmp/linux-${TARGETARCH}/helm /helm
 
 # ---- runtime ----
