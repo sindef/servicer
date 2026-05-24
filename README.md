@@ -297,6 +297,7 @@ This repo does not intentionally store live production credentials. It does incl
 
 - [Feature gap analysis](docs/feature-gaps.md)
 - [Catalog lifecycle](docs/catalog-lifecycle.md)
+- [Audit](docs/audit.md)
 - [Observability](docs/observability.md)
 - [Product support matrix](docs/product-support-matrix.md)
 - [Production install](docs/production-install.md)

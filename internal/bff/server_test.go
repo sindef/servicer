@@ -505,6 +505,46 @@ func TestAuditEndpointReturnsActionsAndEvents(t *testing.T) {
 	}
 }
 
+func TestAuditEndpointAllowsAuditorRole(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
+	request.Header.Set("X-Servicer-User", "audit@example.com")
+	request.Header.Set("X-Servicer-Roles", "auditor")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected auditor status 200, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMutatingEndpointWritesAuditEvent(t *testing.T) {
+	server := testServer(t)
+	body := strings.NewReader(`{"name":"newco","displayName":"New Co","allowedServiceClasses":["namespace"],"owners":["owner@example.com"]}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/tenants", body)
+	request.Header.Set("X-Servicer-User", "admin@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", response.Code, response.Body.String())
+	}
+	var stored corev1.ConfigMapList
+	if err := server.client.List(request.Context(), &stored, client.InNamespace(defaultAuditNamespace), client.MatchingLabels{auditEventLabelKey: auditEventLabelValue}); err != nil {
+		t.Fatalf("list stored audit events: %v", err)
+	}
+	for _, configMap := range stored.Items {
+		payload := configMap.Data["event.json"]
+		if strings.Contains(payload, `"type":"BFFRequest"`) && strings.Contains(payload, `/api/admin/tenants`) {
+			return
+		}
+	}
+	t.Fatalf("expected mutating request audit event, got %#v", stored.Items)
+}
+
 func TestAuditEndpointSupportsStructuredFilters(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()

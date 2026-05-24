@@ -24,31 +24,6 @@ Priority meanings:
 
 ## P1 GA Gaps
 
-### Audit trail is not yet compliance-grade
-
-Audit functionality exists, but it is not durable or complete enough for serious
-production accountability.
-
-Evidence in repo:
-
-- Audit data is derived from ActionRequests, Kubernetes Events, and BFF-side
-  summaries rather than a first-class immutable audit sink.
-- ConfigMap-backed audit storage is useful for demos but not a durable,
-  tamper-resistant audit log.
-- CRUD operations across tenants, projects, auth resources, catalog objects, and
-  repository configuration need consistent audit records.
-- The `roleAuditor` concept exists, but audit endpoint authorization should be
-  checked for exact intended role behavior.
-
-Required before GA:
-
-- Emit structured audit events for all login, logout, auth changes, CRUD,
-  approval, secret access, delivery, and admin actions.
-- Support an external audit sink such as stdout JSON, webhook, object storage,
-  or SIEM-forwarder integration.
-- Make retention, filtering, and tenant scoping explicit.
-- Add tests for audit coverage on every privileged endpoint.
-
 ### Product adapter action maturity is uneven
 
 The adapter layer is broad, but not all advertised day-2 actions are actually

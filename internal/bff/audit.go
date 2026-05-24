@@ -13,7 +13,7 @@ import (
 )
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleAuditor, roleTenantOperator, roleServiceConsumer)
 	if !ok {
 		return
 	}
@@ -29,6 +29,61 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	events = filter.apply(events)
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) withAudit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		if !shouldRecordRequestAudit(r) {
+			return
+		}
+		current := actorFromRequest(r)
+		phase := "Succeeded"
+		if recorder.status >= 400 {
+			phase = "Failed"
+		}
+		s.recordAudit(r.Context(), AuditEventSummary{
+			Time:     time.Now().UTC().Format(time.RFC3339),
+			Type:     "BFFRequest",
+			Subject:  requestRoutePattern(r),
+			Action:   r.Method,
+			Actor:    firstNonEmpty(current.UserName, current.Email, current.Name),
+			Phase:    phase,
+			Reason:   strconv.Itoa(recorder.status),
+			Message:  http.StatusText(recorder.status),
+			Involved: auditInvolvedResource(r),
+		})
+	})
+}
+
+func shouldRecordRequestAudit(r *http.Request) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/auth/") || r.URL.Path == "/api/healthz" || r.URL.Path == "/metrics" {
+		return false
+	}
+	if strings.Contains(r.URL.Path, "/credentials/") {
+		return true
+	}
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func auditInvolvedResource(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/"), "/")
+	if path == "" {
+		return "api"
+	}
+	return path
 }
 
 func (s *Server) auditEvents(r *http.Request, actor actor) ([]AuditEventSummary, error) {
