@@ -1,0 +1,33 @@
+name: Release Security
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  sign-and-scan:
+    name: Sign and scan images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [bff, manager, syncer, web, tools]
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/servicer-${{ matrix.component }}:${{ github.ref_name }}
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+      - name: Sign image
+        run: cosign sign --yes "${IMAGE}"

@@ -24,32 +24,6 @@ Priority meanings:
 
 ## P1 GA Gaps
 
-### Supply-chain security needs release-grade controls
-
-The GitHub workflows build and publish images, but production distribution needs
-stronger provenance and scanning.
-
-Evidence in repo:
-
-- Build workflow publishes images to GHCR.
-- Dependabot and gitleaks are configured.
-- There is no visible `govulncheck`, `gosec`, container vulnerability scan, SBOM
-  generation, image signing, provenance attestation, or SLSA-style release
-  metadata.
-- Containerfiles download external binaries such as Helm and kubectl without
-  checksum verification.
-- Images are built for amd64 only.
-
-Required before GA:
-
-- Add Go vulnerability scanning and static security checks.
-- Add image vulnerability scanning for every image.
-- Generate SBOMs for release artifacts.
-- Sign images and release manifests with cosign.
-- Publish provenance attestations.
-- Verify checksums for downloaded tool binaries.
-- Add multi-arch image builds if Linux arm64 clusters are supported.
-
 ### Web/BFF edge hardening is incomplete
 
 The web and BFF layers need standard production edge controls.

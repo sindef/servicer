@@ -1,8 +1,12 @@
 FROM alpine:3.21
 ARG KUBECTL_VERSION=v1.32.2
+ARG TARGETARCH=amd64
 RUN apk add --no-cache bash curl && \
-    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
       -o /usr/local/bin/kubectl && \
+    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl.sha256" \
+      -o /tmp/kubectl.sha256 && \
+    echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum -c - && \
     chmod +x /usr/local/bin/kubectl
 COPY hack/demo-sync-delivery.sh /sync.sh
 RUN chmod +x /sync.sh
