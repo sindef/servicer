@@ -276,6 +276,6 @@ jobs:
           path: servicer-install-${{ github.ref_name }}.yaml
 
       - name: Attach install manifest to GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: servicer-install-${{ github.ref_name }}.yaml
