@@ -22,34 +22,6 @@ Priority meanings:
 
 ## P0 Production Blockers
 
-### Delivery path is not production GitOps by default
-
-The controller can publish delivery artifacts, but the production manifest still
-uses an ephemeral local delivery path unless operators manually wire the GitOps
-pieces.
-
-Evidence in repo:
-
-- `deploy/manager.yaml` mounts `/delivery` as `emptyDir`.
-- The syncer sidecar reads from `/delivery` and can use a local kubeconfig,
-  which is useful for local validation but not a strong production contract.
-- `cmd/manager/main.go` supports delivery repo URL, worktree, auto-commit, and
-  auto-push flags, but `deploy/manager.yaml` does not configure them.
-- Generated artifacts can be lost on manager pod restart if no external Git
-  worktree or persistent volume is configured.
-
-Required before production:
-
-- Define one supported production delivery mode: GitOps repository first.
-- Add manifests for repo credentials, known-hosts/CA material, branch/ref,
-  delivery path, commit identity, and optional auto-push.
-- Decide whether the syncer sidecar is demo-only or production-supported. If it
-  is production-supported, document its security model and lifecycle.
-- Add reconciliation behavior for failed Git push, divergent worktrees, and
-  unavailable remote repositories.
-- Add e2e coverage proving a ServiceInstance creates committed artifacts and an
-  Argo CD Application syncs them.
-
 ### Backup and restore coverage is incomplete
 
 Backup scaffolding exists, but it is not yet a production disaster-recovery

@@ -38,8 +38,7 @@ IMAGE_PREFIX="${IMAGE_PREFIX:-$(default_image_prefix)}"
 
 kubectl kustomize "${REPO_ROOT}/deploy" \
   | sed \
-    -e "s#ghcr.io/sindef/servicer-manager:latest#${IMAGE_PREFIX}-manager:${VERSION}#g" \
-    -e "s#ghcr.io/sindef/servicer-syncer:latest#${IMAGE_PREFIX}-syncer:${VERSION}#g" \
-    -e "s#ghcr.io/sindef/servicer-bff:latest#${IMAGE_PREFIX}-bff:${VERSION}#g" \
-    -e "s#ghcr.io/sindef/servicer-web:latest#${IMAGE_PREFIX}-web:${VERSION}#g" \
+    -e "s#ghcr.io/sindef/servicer-manager:v0.1.0#${IMAGE_PREFIX}-manager:${VERSION}#g" \
+    -e "s#ghcr.io/sindef/servicer-bff:v0.1.0#${IMAGE_PREFIX}-bff:${VERSION}#g" \
+    -e "s#ghcr.io/sindef/servicer-web:v0.1.0#${IMAGE_PREFIX}-web:${VERSION}#g" \
     -e "s#servicer-system#${NAMESPACE}#g"

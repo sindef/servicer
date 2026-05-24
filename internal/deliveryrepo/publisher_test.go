@@ -128,6 +128,40 @@ func TestPublisherClonesEmptyWorktreeWhenRepoURLConfigured(t *testing.T) {
 	}
 }
 
+func TestPublisherRejectsNonGitNonEmptyWorktree(t *testing.T) {
+	worktree := t.TempDir()
+	if err := os.WriteFile(filepath.Join(worktree, "leftover.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write leftover: %v", err)
+	}
+	publisher := NewWithRepoURL(worktree, "published", true, true, "https://example.invalid/repo.git", "origin", "main", "Servicer", "servicer@example.com")
+	_, err := publisher.Publish(context.Background(), Request{
+		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
+		Artifacts: []adapters.RenderedArtifact{{
+			Path:    "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db/service.yaml",
+			Content: []byte("kind: Service\n"),
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a git repository and is not empty") {
+		t.Fatalf("expected non-git worktree error, got %v", err)
+	}
+}
+
+func TestPublisherReportsUnavailableRemote(t *testing.T) {
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	missingRemote := filepath.Join(t.TempDir(), "missing.git")
+	publisher := NewWithRepoURL(worktree, "published", true, true, "file://"+missingRemote, "origin", "main", "Servicer", "servicer@example.com")
+	_, err := publisher.Publish(context.Background(), Request{
+		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
+		Artifacts: []adapters.RenderedArtifact{{
+			Path:    "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db/service.yaml",
+			Content: []byte("kind: Service\n"),
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "git clone") {
+		t.Fatalf("expected clone error for unavailable remote, got %v", err)
+	}
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
