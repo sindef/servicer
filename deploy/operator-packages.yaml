@@ -24,3 +24,42 @@ spec:
       certController.create: "false"
       crds.conversion.enabled: "false"
     targetRevision: v0.10.7
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: OperatorPackage
+metadata:
+  name: cnpg
+spec:
+  displayName: CloudNativePG
+  description: >-
+    CloudNativePG manages PostgreSQL clusters and is required for the
+    production PostgreSQL service class.
+  version: "1.25.4"
+  targetNamespace: cnpg-system
+  probes:
+    - crd: clusters.postgresql.cnpg.io
+    - crd: backups.postgresql.cnpg.io
+    - crd: scheduledbackups.postgresql.cnpg.io
+  source:
+    manifestURL: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.25/releases/cnpg-1.25.4.yaml
+    repoURL: https://github.com/cloudnative-pg/cloudnative-pg
+    path: releases
+    targetRevision: release-1.25
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: OperatorPackage
+metadata:
+  name: yugabyte
+spec:
+  displayName: YugabyteDB Operator
+  description: >-
+    YugabyteDB Operator manages YBUniverse resources and is required for the
+    production YugabyteDB service class.
+  version: "2024-01-11-545a8b40af54"
+  targetNamespace: yugabyte-system
+  probes:
+    - crd: ybuniverses.operator.yugabyte.io
+  source:
+    repoURL: https://github.com/yugabyte/yugabyte-k8s-operator
+    path: config/default
+    targetRevision: 545a8b40af54

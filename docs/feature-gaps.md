@@ -22,30 +22,6 @@ Priority meanings:
 
 ## P0 Production Blockers
 
-### Product catalog and operator lifecycle are incomplete
-
-Servicer can model products, but production users need a supported catalog
-lifecycle, not just sample manifests.
-
-Evidence in repo:
-
-- `deploy/operator-packages.yaml` seeds External Secrets Operator only.
-- Product examples live mostly under samples/config paths.
-- Some sample operator/package data contains demo defaults that should not be
-  copied into production.
-- The admin UI can register known service classes, but plan/package lifecycle is
-  not yet a complete production management path.
-
-Required before production:
-
-- Define the supported production catalog set and version policy.
-- Seed required operator packages for every product advertised as production
-  supported.
-- Add upgrade, rollback, and compatibility guidance for operator packages.
-- Move demo-only defaults out of production paths.
-- Add UI/API support for the full catalog lifecycle or clearly document that it
-  is GitOps-managed.
-
 ## P1 GA Gaps
 
 ### Observability is present but not packaged as production monitoring
