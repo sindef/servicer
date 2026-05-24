@@ -24,27 +24,6 @@ Priority meanings:
 
 ## P1 GA Gaps
 
-### Web/BFF edge hardening is incomplete
-
-The web and BFF layers need standard production edge controls.
-
-Evidence in repo:
-
-- The nginx web image proxies to BFF but does not appear to define a full set of
-  security headers.
-- Production manifests do not include ingress TLS, HSTS, CSP, frame protection,
-  referrer policy, or request size/rate controls.
-- BFF cookies are secure only when the request appears to be HTTPS or
-  `X-Forwarded-Proto=https`.
-
-Required before GA:
-
-- Add a documented reverse-proxy contract for TLS termination.
-- Add security headers for the web app.
-- Add request size and rate limits at ingress or BFF.
-- Add explicit trusted proxy handling for forwarded headers.
-- Add smoke tests for login/session behavior behind ingress.
-
 ## P2 Scale and Maturity Gaps
 
 ### Multi-tenancy boundaries need threat-model validation

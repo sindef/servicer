@@ -687,6 +687,20 @@ func TestProductionModeRequiresStrongSessionSecret(t *testing.T) {
 	}
 }
 
+func TestForwardedHTTPSRequiresTrustedProxyHeaders(t *testing.T) {
+	t.Setenv("SERVICER_TRUSTED_PROXY_HEADERS", "")
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	request.Header.Set("X-Forwarded-Proto", "https")
+	if requestIsSecure(request) {
+		t.Fatalf("expected forwarded proto to be ignored without trusted proxy setting")
+	}
+
+	t.Setenv("SERVICER_TRUSTED_PROXY_HEADERS", "true")
+	if !requestIsSecure(request) {
+		t.Fatalf("expected trusted forwarded proto to mark request secure")
+	}
+}
+
 func TestMutatingBrowserRequestRequiresCSRFToken(t *testing.T) {
 	server := testServer(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/namespaceclaims", strings.NewReader(`{}`))
