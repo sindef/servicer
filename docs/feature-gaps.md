@@ -24,25 +24,6 @@ Priority meanings:
 
 ## P1 GA Gaps
 
-### API versioning and compatibility policy are absent
-
-All APIs are still `platform.servicer.io/v1alpha1`. That is fine for iteration,
-but production users need a compatibility contract.
-
-Evidence in repo:
-
-- CRDs are generated for `v1alpha1`.
-- There is no conversion webhook strategy or versioned API compatibility policy.
-- There are no compatibility fixtures showing old objects continuing to work.
-
-Required before GA:
-
-- Define the API support policy before the first production release.
-- Decide whether the first production API is still `v1alpha1` or moves to
-  `v1beta1`.
-- Add conversion and migration tests before introducing breaking schema changes.
-- Document deprecation windows for fields, plans, and product contracts.
-
 ### Supply-chain security needs release-grade controls
 
 The GitHub workflows build and publish images, but production distribution needs
