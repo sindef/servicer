@@ -1,0 +1,36 @@
+apiVersion: platform.servicer.io/v1alpha1
+kind: Tenant
+metadata:
+  name: fixture-tenant
+spec:
+  displayName: Fixture Tenant
+  quotaProfileRef:
+    name: standard
+  lifecycle:
+    phase: Active
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: Project
+metadata:
+  name: fixture-project
+spec:
+  tenantRef:
+    name: fixture-tenant
+  displayName: Fixture Project
+  environment: production
+  namespaceStrategy:
+    mode: Dedicated
+    prefix: fixture
+---
+apiVersion: platform.servicer.io/v1alpha1
+kind: ServiceInstance
+metadata:
+  name: fixture-namespace
+spec:
+  projectRef:
+    name: fixture-project
+  serviceClassRef:
+    name: namespace
+  servicePlanRef:
+    name: namespace-team
+  deletionPolicy: Delete

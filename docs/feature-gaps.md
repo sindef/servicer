@@ -24,27 +24,6 @@ Priority meanings:
 
 ## P1 GA Gaps
 
-### End-to-end and upgrade testing is missing
-
-Unit coverage is useful, and CI builds the app, but production readiness needs
-cluster-level validation.
-
-Evidence in repo:
-
-- CI runs Go tests, frontend build, npm audit, and kustomize rendering.
-- There is no obvious e2e suite that installs Servicer into a KinD cluster with
-  Argo CD and real product operators.
-- There are no CRD upgrade/conversion tests or stored-object migration tests.
-
-Required before GA:
-
-- Add a KinD-based e2e suite for install, login, tenant/project creation,
-  catalog setup, service provisioning, Argo sync, action approval, backup, and
-  restore.
-- Add upgrade tests from the previous released version to the current version.
-- Add CRD schema compatibility tests using stored object fixtures.
-- Add manifest policy tests for probes, resources, security contexts, and RBAC.
-
 ### API versioning and compatibility policy are absent
 
 All APIs are still `platform.servicer.io/v1alpha1`. That is fine for iteration,
