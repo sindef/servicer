@@ -11,11 +11,37 @@ import {
 import { useApi } from '../composables/useApi'
 import StatusPill from '../components/StatusPill.vue'
 import AuthAdminPanel from '../components/AuthAdminPanel.vue'
+import {
+  canManageRepositories,
+  canViewAuthAdmin,
+  canViewCatalogAdmin,
+  canViewClusterAdmin,
+  hasPlatformRole
+} from '../auth'
 
 // ── tabs ──────────────────────────────────────────────────────────────────────
 
 type Tab = 'tenants' | 'projects' | 'clusters' | 'catalog' | 'repositories' | 'auth'
 const activeTab = ref<Tab>('tenants')
+const adminTabs = computed<Array<{ name: Tab; label: string }>>(() => {
+  const tabs: Array<{ name: Tab; label: string }> = []
+  if (hasPlatformRole()) {
+    tabs.push({ name: 'tenants', label: 'Tenants' }, { name: 'projects', label: 'Projects' })
+  }
+  if (canViewClusterAdmin()) {
+    tabs.push({ name: 'clusters', label: 'Clusters' })
+  }
+  if (canViewCatalogAdmin()) {
+    tabs.push({ name: 'catalog', label: 'Catalog' })
+  }
+  if (canManageRepositories()) {
+    tabs.push({ name: 'repositories', label: 'Repositories' })
+  }
+  if (canViewAuthAdmin()) {
+    tabs.push({ name: 'auth', label: 'Auth' })
+  }
+  return tabs
+})
 
 // ── data ──────────────────────────────────────────────────────────────────────
 
@@ -457,6 +483,12 @@ watch(activeTab, (tab) => {
   }
 })
 
+watch(adminTabs, (tabs) => {
+  if (!tabs.some((tab) => tab.name === activeTab.value)) {
+    activeTab.value = tabs[0]?.name ?? 'repositories'
+  }
+}, { immediate: true })
+
 function openNewRepo() {
   if (!repoScopeTarget.value) return
   resetRepoForm()
@@ -545,13 +577,13 @@ async function executeDelete() {
   <!-- Tab strip -->
   <div class="tab-strip">
     <button
-      v-for="tab in (['tenants', 'projects', 'clusters', 'catalog', 'repositories', 'auth'] as const)"
-      :key="tab"
+      v-for="tab in adminTabs"
+      :key="tab.name"
       class="tab-btn"
-      :class="{ active: activeTab === tab }"
-      @click="activeTab = tab; clearOp()"
+      :class="{ active: activeTab === tab.name }"
+      @click="activeTab = tab.name; clearOp()"
     >
-      {{ tab.charAt(0).toUpperCase() + tab.slice(1) }}
+      {{ tab.label }}
     </button>
   </div>
 

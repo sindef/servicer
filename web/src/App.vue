@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { authError, authReady, authSession, logout } from './auth'
+import {
+  authError,
+  authReady,
+  authSession,
+  canViewAdminShell,
+  canViewAudit,
+  canViewInstances,
+  canViewTenancy,
+  logout
+} from './auth'
 
 const route = useRoute()
 const usePublicLayout = computed(() => route.meta.publicLayout === true)
@@ -38,11 +47,11 @@ const usePublicLayout = computed(() => route.meta.publicLayout === true)
       <nav class="nav">
         <RouterLink to="/">Overview</RouterLink>
         <RouterLink to="/catalog">Catalog</RouterLink>
-        <RouterLink to="/instances">Instances</RouterLink>
-        <RouterLink to="/namespace-claims">Namespace claims</RouterLink>
-        <RouterLink to="/tenancy">Tenancy</RouterLink>
-        <RouterLink to="/audit">Audit</RouterLink>
-        <RouterLink to="/admin">Admin</RouterLink>
+        <RouterLink v-if="canViewInstances()" to="/instances">Instances</RouterLink>
+        <RouterLink v-if="canViewInstances()" to="/namespace-claims">Namespace claims</RouterLink>
+        <RouterLink v-if="canViewTenancy()" to="/tenancy">Tenancy</RouterLink>
+        <RouterLink v-if="canViewAudit()" to="/audit">Audit</RouterLink>
+        <RouterLink v-if="canViewAdminShell()" to="/admin">Admin</RouterLink>
       </nav>
       <div class="auth-panel">
         <template v-if="authReady && authSession?.authenticated">

@@ -27,6 +27,20 @@ const userRows = computed(() => (users.data.value ?? []).slice().sort((a, b) => 
 const groupRows = computed(() => (groups.data.value ?? []).slice().sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)))
 const bindingRows = computed(() => (bindings.data.value ?? []).slice().sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)))
 const tenantRows = computed(() => tenants.data.value ?? [])
+const platformRoleOptions = [
+  { name: 'platform-admin', description: 'Full platform administration.' },
+  { name: 'catalog-admin', description: 'Manage catalog publication and defaults.' },
+  { name: 'cluster-admin', description: 'Manage cluster targets.' },
+  { name: 'auditor', description: 'Read audit events.' }
+]
+const tenantRoleOptions = [
+  { name: 'tenant-admin', description: 'Manage tenant-scoped projects, repositories, and access.' },
+  { name: 'tenant-operator', description: 'Operate tenant products and repositories.' },
+  { name: 'service-consumer', description: 'View and request assigned tenant products.' }
+]
+const bindingRoleOptions = computed(() =>
+  bindingForm.scope === 'platform' ? platformRoleOptions : tenantRoleOptions
+)
 
 const activeSection = ref<AuthSection>('users')
 const modalSection = ref<AuthSection | null>(null)
@@ -465,13 +479,22 @@ const editingGroup = ref<string | null>(null)
 const groupForm = reactive({
   name: '',
   displayName: '',
-  membersRaw: '',
+  members: [] as string[],
   externalGroupsRaw: ''
+})
+const groupMemberSearch = ref('')
+const filteredGroupMemberOptions = computed(() => {
+  const term = groupMemberSearch.value.trim().toLowerCase()
+  return userRows.value.filter((user) => {
+    if (!term) return true
+    return [user.name, user.displayName, user.email].some((value) => (value ?? '').toLowerCase().includes(term))
+  })
 })
 
 function resetGroupForm() {
   editingGroup.value = null
-  Object.assign(groupForm, { name: '', displayName: '', membersRaw: '', externalGroupsRaw: '' })
+  groupMemberSearch.value = ''
+  Object.assign(groupForm, { name: '', displayName: '', members: [], externalGroupsRaw: '' })
 }
 
 function editGroup(group: GroupSummary) {
@@ -481,7 +504,7 @@ function editGroup(group: GroupSummary) {
   Object.assign(groupForm, {
     name: group.name,
     displayName: group.displayName ?? '',
-    membersRaw: (group.members ?? []).join('\n'),
+    members: [...(group.members ?? [])],
     externalGroupsRaw: (group.externalGroups ?? []).map((external) => `${external.provider}:${external.name}`).join('\n')
   })
 }
@@ -509,7 +532,7 @@ async function submitGroup() {
   const body: GroupRequest = {
     name: groupForm.name,
     displayName: groupForm.displayName || undefined,
-    members: groupForm.membersRaw.split('\n').map((line) => line.trim()).filter(Boolean),
+    members: groupForm.members,
     externalGroups: parseExternalGroups(groupForm.externalGroupsRaw)
   }
   if (editingGroup.value) {
@@ -543,19 +566,40 @@ const bindingForm = reactive({
   displayName: '',
   scope: 'tenant' as 'platform' | 'tenant',
   tenantName: '',
-  subjectsRaw: 'User:',
-  rolesRaw: 'tenant-operator'
+  subjects: [] as RoleBindingRequest['subjects'],
+  roles: ['tenant-operator'] as string[]
+})
+const bindingSubjectSearch = ref('')
+const bindingSubjectOptions = computed(() => {
+  const users = userRows.value.map((user) => ({
+    kind: 'User' as const,
+    name: user.name,
+    label: user.displayName || user.name,
+    detail: user.email || user.name
+  }))
+  const groupOptions = groupRows.value.map((group) => ({
+    kind: 'Group' as const,
+    name: group.name,
+    label: group.displayName || group.name,
+    detail: `${group.members?.length || 0} members`
+  }))
+  const term = bindingSubjectSearch.value.trim().toLowerCase()
+  return [...users, ...groupOptions].filter((subject) => {
+    if (!term) return true
+    return [subject.kind, subject.name, subject.label, subject.detail].some((value) => value.toLowerCase().includes(term))
+  })
 })
 
 function resetBindingForm() {
   editingBinding.value = null
+  bindingSubjectSearch.value = ''
   Object.assign(bindingForm, {
     name: '',
     displayName: '',
     scope: 'tenant',
     tenantName: tenantRows.value[0]?.name ?? '',
-    subjectsRaw: 'User:',
-    rolesRaw: 'tenant-operator'
+    subjects: [],
+    roles: ['tenant-operator']
   })
 }
 
@@ -568,8 +612,8 @@ function editBinding(binding: RoleBindingSummary) {
     displayName: binding.displayName ?? '',
     scope: binding.scope,
     tenantName: binding.tenantName ?? '',
-    subjectsRaw: binding.subjects.map((subject) => `${subject.kind}:${subject.name}`).join('\n'),
-    rolesRaw: binding.roles.join(', ')
+    subjects: binding.subjects.map((subject) => ({ ...subject })),
+    roles: [...binding.roles]
   })
 }
 
@@ -580,26 +624,14 @@ function openEditBinding(binding: RoleBindingSummary) {
   modalSection.value = 'bindings'
 }
 
-function parseBindingSubjects(raw: string) {
-  return raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [kind, ...rest] = line.split(':')
-      return { kind: (kind.trim() || 'User') as 'User' | 'Group', name: rest.join(':').trim() }
-    })
-    .filter((subject) => subject.name)
-}
-
 async function submitBinding() {
   const body: RoleBindingRequest = {
     name: bindingForm.name,
     displayName: bindingForm.displayName || undefined,
     scope: bindingForm.scope,
     tenantName: bindingForm.scope === 'tenant' ? bindingForm.tenantName || undefined : undefined,
-    subjects: parseBindingSubjects(bindingForm.subjectsRaw),
-    roles: bindingForm.rolesRaw.split(',').map((role) => role.trim()).filter(Boolean)
+    subjects: bindingForm.subjects,
+    roles: bindingForm.roles
   }
   if (editingBinding.value) {
     await runWrite(() => api.admin.updateRoleBinding(editingBinding.value!, body), bindings.reload)
@@ -618,6 +650,47 @@ async function submitBinding() {
     })
   }
 }
+
+function toggleStringValue(values: string[], value: string, checked: boolean) {
+  const current = new Set(values)
+  if (checked) {
+    current.add(value)
+  } else {
+    current.delete(value)
+  }
+  values.splice(0, values.length, ...Array.from(current))
+}
+
+function subjectKey(subject: RoleBindingRequest['subjects'][number]) {
+  return `${subject.kind}:${subject.name}`
+}
+
+function toggleBindingSubject(subject: RoleBindingRequest['subjects'][number], checked: boolean) {
+  const key = subjectKey(subject)
+  if (checked) {
+    if (!bindingForm.subjects.some((item) => subjectKey(item) === key)) {
+      bindingForm.subjects.push({ ...subject })
+    }
+    return
+  }
+  const index = bindingForm.subjects.findIndex((item) => subjectKey(item) === key)
+  if (index !== -1) {
+    bindingForm.subjects.splice(index, 1)
+  }
+}
+
+function bindingSubjectSelected(subject: RoleBindingRequest['subjects'][number]) {
+  const key = subjectKey(subject)
+  return bindingForm.subjects.some((item) => subjectKey(item) === key)
+}
+
+watch(() => bindingForm.scope, (scope) => {
+  const allowed = new Set((scope === 'platform' ? platformRoleOptions : tenantRoleOptions).map((role) => role.name))
+  bindingForm.roles = bindingForm.roles.filter((role) => allowed.has(role))
+  if (!bindingForm.roles.length) {
+    bindingForm.roles = [scope === 'platform' ? 'platform-admin' : 'tenant-operator']
+  }
+})
 
 async function deleteBinding(name: string) {
   if (!window.confirm(`Delete role binding ${name}?`)) return
@@ -1167,13 +1240,13 @@ resetBindingForm()
               </div>
               <div class="auth-modal-grid">
                 <label><span>LDAP URL</span><input v-model="providerForm.ldapUrl" placeholder="ldaps://ldap.company.tld:636" /></label>
-                <label><span>Bind DN</span><input v-model="providerForm.ldapBindUsername" placeholder="cn=svc,dc=example,dc=com" /></label>
+                <label><span>Bind DN</span><input v-model="providerForm.ldapBindUsername" placeholder="cn=svc,dc=company,dc=tld" /></label>
                 <label class="auth-full-width"><span>Bind password</span><input v-model="providerForm.ldapBindPassword" type="password" placeholder="Stored in Kubernetes Secret on save" /></label>
-                <label><span>User base DN</span><input v-model="providerForm.ldapUserBaseDn" placeholder="ou=people,dc=example,dc=com" /></label>
+                <label><span>User base DN</span><input v-model="providerForm.ldapUserBaseDn" placeholder="ou=people,dc=company,dc=tld" /></label>
                 <label><span>User filter</span><input v-model="providerForm.ldapUserFilter" placeholder="(uid=%s)" /></label>
                 <label><span>Username attribute</span><input v-model="providerForm.ldapUsernameAttribute" placeholder="uid" /></label>
                 <label><span>Email attribute</span><input v-model="providerForm.ldapEmailAttribute" placeholder="mail" /></label>
-                <label><span>Group base DN</span><input v-model="providerForm.ldapGroupBaseDn" placeholder="ou=groups,dc=example,dc=com" /></label>
+                <label><span>Group base DN</span><input v-model="providerForm.ldapGroupBaseDn" placeholder="ou=groups,dc=company,dc=tld" /></label>
                 <label><span>Group filter</span><input v-model="providerForm.ldapGroupFilter" placeholder="(member=%s)" /></label>
                 <label><span>Group name attribute</span><input v-model="providerForm.ldapGroupNameAttribute" placeholder="cn" /></label>
               </div>
@@ -1247,7 +1320,7 @@ resetBindingForm()
               </div>
               <label class="auth-stacked-field">
                 <span>Mappings</span>
-                <textarea v-model="userForm.externalIdentitiesRaw" class="defaults-textarea" placeholder="oidc:00u1234567&#10;ldap:uid=alice,ou=people,dc=example,dc=com" />
+                <textarea v-model="userForm.externalIdentitiesRaw" class="defaults-textarea" placeholder="oidc:00u1234567&#10;ldap:uid=alice,ou=people,dc=company,dc=tld" />
               </label>
               <div class="auth-example-box">
                 Provider must match an AuthProvider name. Subject is the value returned by that provider.
@@ -1266,23 +1339,65 @@ resetBindingForm()
         </template>
 
         <template v-else-if="modalSection === 'groups'">
-          <div class="form-grid modal-form-grid">
-            <label><span>Group name</span><input v-model="groupForm.name" :disabled="modalMode === 'edit'" placeholder="platform-operators" /></label>
-            <label><span>Display name</span><input v-model="groupForm.displayName" placeholder="Platform Operators" /></label>
-            <label style="grid-column: 1 / -1">
-              <span>Members</span>
-              <textarea v-model="groupForm.membersRaw" class="defaults-textarea" placeholder="alice&#10;bob" />
-              <small class="field-help">One Servicer username per line.</small>
-            </label>
-            <label style="grid-column: 1 / -1">
-              <span>External group mappings</span>
-              <textarea v-model="groupForm.externalGroupsRaw" class="defaults-textarea" placeholder="oidc:platform-admins&#10;ldap:cn=platform-admins,ou=groups,dc=example,dc=com" />
-              <small class="field-help">One mapping per line. Format: provider:group. Provider must match an AuthProvider name.</small>
-            </label>
+          <div class="auth-modal-body">
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Group details</h3>
+              </div>
+              <div class="auth-modal-grid">
+                <label><span>Group name</span><input v-model="groupForm.name" :disabled="modalMode === 'edit'" placeholder="platform-operators" /></label>
+                <label><span>Display name</span><input v-model="groupForm.displayName" placeholder="Platform Operators" /></label>
+              </div>
+            </section>
+
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Members</h3>
+                <p>Select existing Servicer users.</p>
+              </div>
+              <input v-model="groupMemberSearch" class="auth-search auth-picker-search" type="search" placeholder="Search users" />
+              <div class="auth-choice-grid">
+                <label v-for="user in filteredGroupMemberOptions" :key="user.name" class="auth-choice">
+                  <input
+                    type="checkbox"
+                    :checked="groupForm.members.includes(user.name)"
+                    @change="toggleStringValue(groupForm.members, user.name, checkboxValue($event))"
+                  />
+                  <span>
+                    <strong>{{ user.displayName || user.name }}</strong>
+                    <small>{{ user.email || user.name }}</small>
+                  </span>
+                </label>
+              </div>
+              <div v-if="groupForm.members.length" class="auth-chip-row">
+                <button
+                  v-for="member in groupForm.members"
+                  :key="member"
+                  class="auth-chip"
+                  type="button"
+                  @click="toggleStringValue(groupForm.members, member, false)"
+                >
+                  {{ member }} ×
+                </button>
+              </div>
+            </section>
+
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>External group mappings</h3>
+                <p>Use one mapping per line: <code>provider:group</code>.</p>
+              </div>
+              <label class="auth-stacked-field">
+                <span>Mappings</span>
+                <textarea v-model="groupForm.externalGroupsRaw" class="defaults-textarea" placeholder="oidc:platform-admins&#10;ldap:cn=platform-admins,ou=groups,dc=company,dc=tld" />
+              </label>
+            </section>
           </div>
 
-          <div class="form-actions">
+          <div class="auth-modal-actions">
             <button class="button reset" :disabled="busy" @click="resetGroupForm">Reset</button>
+            <div class="auth-action-spacer"></div>
+            <button class="button secondary" :disabled="busy" @click="closeModal">Cancel</button>
             <button class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateGroup() : submitEditGroup()">
               {{ modalMode === 'create' ? 'Create group' : 'Save group' }}
             </button>
@@ -1290,37 +1405,89 @@ resetBindingForm()
         </template>
 
         <template v-else>
-          <div class="form-grid modal-form-grid">
-            <label><span>Binding name</span><input v-model="bindingForm.name" :disabled="modalMode === 'edit'" placeholder="tenant-operators" /></label>
-            <label><span>Display name</span><input v-model="bindingForm.displayName" placeholder="Tenant operators" /></label>
-            <label>
-              <span>Scope</span>
-              <select v-model="bindingForm.scope">
-                <option value="platform">platform</option>
-                <option value="tenant">tenant</option>
-              </select>
-            </label>
-            <label v-if="bindingForm.scope === 'tenant'">
-              <span>Tenant</span>
-              <select v-model="bindingForm.tenantName">
-                <option v-for="tenant in tenantRows" :key="tenant.name" :value="tenant.name">
-                  {{ tenant.displayName }}
-                </option>
-              </select>
-            </label>
-            <label style="grid-column: 1 / -1">
-              <span>Subjects</span>
-              <textarea v-model="bindingForm.subjectsRaw" class="defaults-textarea" placeholder="User:alice&#10;Group:platform-operators" />
-              <small class="field-help">One subject per line. Format: User:name or Group:name.</small>
-            </label>
-            <label style="grid-column: 1 / -1">
-              <span>Roles</span>
-              <input v-model="bindingForm.rolesRaw" placeholder="tenant-admin, tenant-operator" />
-            </label>
+          <div class="auth-modal-body">
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Binding details</h3>
+              </div>
+              <div class="auth-modal-grid">
+                <label><span>Binding name</span><input v-model="bindingForm.name" :disabled="modalMode === 'edit'" placeholder="tenant-operators" /></label>
+                <label><span>Display name</span><input v-model="bindingForm.displayName" placeholder="Tenant operators" /></label>
+                <label>
+                  <span>Scope</span>
+                  <select v-model="bindingForm.scope">
+                    <option value="platform">platform</option>
+                    <option value="tenant">tenant</option>
+                  </select>
+                </label>
+                <label v-if="bindingForm.scope === 'tenant'">
+                  <span>Tenant</span>
+                  <select v-model="bindingForm.tenantName">
+                    <option v-for="tenant in tenantRows" :key="tenant.name" :value="tenant.name">
+                      {{ tenant.displayName }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Subjects</h3>
+                <p>Select existing users or groups.</p>
+              </div>
+              <input v-model="bindingSubjectSearch" class="auth-search auth-picker-search" type="search" placeholder="Search users and groups" />
+              <div class="auth-choice-grid">
+                <label v-for="subject in bindingSubjectOptions" :key="subject.kind + ':' + subject.name" class="auth-choice">
+                  <input
+                    type="checkbox"
+                    :checked="bindingSubjectSelected(subject)"
+                    @change="toggleBindingSubject(subject, checkboxValue($event))"
+                  />
+                  <span>
+                    <strong>{{ subject.label }}</strong>
+                    <small>{{ subject.kind }} · {{ subject.detail }}</small>
+                  </span>
+                </label>
+              </div>
+              <div v-if="bindingForm.subjects.length" class="auth-chip-row">
+                <button
+                  v-for="subject in bindingForm.subjects"
+                  :key="subject.kind + ':' + subject.name"
+                  class="auth-chip"
+                  type="button"
+                  @click="toggleBindingSubject(subject, false)"
+                >
+                  {{ subject.kind }}:{{ subject.name }} ×
+                </button>
+              </div>
+            </section>
+
+            <section class="auth-modal-section">
+              <div class="auth-section-heading">
+                <h3>Roles</h3>
+                <p>Roles are built in; assign them with role bindings.</p>
+              </div>
+              <div class="auth-choice-grid">
+                <label v-for="role in bindingRoleOptions" :key="role.name" class="auth-choice">
+                  <input
+                    type="checkbox"
+                    :checked="bindingForm.roles.includes(role.name)"
+                    @change="toggleStringValue(bindingForm.roles, role.name, checkboxValue($event))"
+                  />
+                  <span>
+                    <strong>{{ role.name }}</strong>
+                    <small>{{ role.description }}</small>
+                  </span>
+                </label>
+              </div>
+            </section>
           </div>
 
-          <div class="form-actions">
+          <div class="auth-modal-actions">
             <button class="button reset" :disabled="busy" @click="resetBindingForm">Reset</button>
+            <div class="auth-action-spacer"></div>
+            <button class="button secondary" :disabled="busy" @click="closeModal">Cancel</button>
             <button class="button primary" :disabled="busy" @click="modalMode === 'create' ? submitCreateBinding() : submitEditBinding()">
               {{ modalMode === 'create' ? 'Create binding' : 'Save binding' }}
             </button>

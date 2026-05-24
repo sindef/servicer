@@ -39,6 +39,51 @@ export const authReady = ref(false)
 export const authError = ref<string | null>(null)
 
 export const availableAuthProviders = computed(() => authConfig.value?.providers ?? [])
+export const sessionRoles = computed(() => authSession.value?.roles ?? [])
+export const sessionTenantRoles = computed(() => authSession.value?.tenants ?? [])
+
+export function hasPlatformRole(...roles: string[]) {
+  const currentRoles = authSession.value?.roles ?? []
+  return currentRoles.includes('platform-admin') || roles.some((role) => currentRoles.includes(role))
+}
+
+export function hasAnyTenantRole(...roles: string[]) {
+  return (authSession.value?.tenants ?? []).some((tenant) =>
+    tenant.roles.some((role) => roles.includes(role))
+  )
+}
+
+export function canViewInstances() {
+  return hasPlatformRole() || hasAnyTenantRole('tenant-admin', 'tenant-operator', 'service-consumer')
+}
+
+export function canViewTenancy() {
+  return hasPlatformRole() || (authSession.value?.tenants ?? []).length > 0
+}
+
+export function canViewAudit() {
+  return hasPlatformRole('auditor')
+}
+
+export function canManageRepositories() {
+  return hasPlatformRole() || hasAnyTenantRole('tenant-admin', 'tenant-operator')
+}
+
+export function canViewAdminShell() {
+  return hasPlatformRole('catalog-admin', 'cluster-admin') || canManageRepositories()
+}
+
+export function canViewAuthAdmin() {
+  return hasPlatformRole()
+}
+
+export function canViewClusterAdmin() {
+  return hasPlatformRole('cluster-admin')
+}
+
+export function canViewCatalogAdmin() {
+  return hasPlatformRole('catalog-admin')
+}
 
 export async function initializeAuth() {
   authReady.value = false

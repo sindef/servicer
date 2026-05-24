@@ -874,9 +874,13 @@ h3 {
 }
 
 .auth-table-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+  display: table-cell;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.auth-table-actions .button + .button {
+  margin-left: 8px;
 }
 
 .button.secondary.auth-remove-action {
@@ -906,6 +910,74 @@ h3 {
 
 .auth-empty {
   margin-top: 18px;
+}
+
+.auth-picker-search {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.auth-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.auth-choice {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.auth-choice input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.auth-choice strong,
+.auth-choice small {
+  display: block;
+  min-width: 0;
+}
+
+.auth-choice strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.auth-choice small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.auth-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.auth-chip {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(46, 196, 182, 0.35);
+  border-radius: 999px;
+  background: rgba(46, 196, 182, 0.1);
+  color: var(--text);
+  cursor: pointer;
 }
 
 .repo-admin {

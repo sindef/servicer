@@ -11,7 +11,14 @@ import TenancyPage from './pages/TenancyPage.vue'
 import AuditPage from './pages/AuditPage.vue'
 import AdminPage from './pages/AdminPage.vue'
 import LoginPage from './pages/LoginPage.vue'
-import { authSession, initializeAuth } from './auth'
+import {
+  authSession,
+  canViewAdminShell,
+  canViewAudit,
+  canViewInstances,
+  canViewTenancy,
+  initializeAuth
+} from './auth'
 import './styles.css'
 
 const router = createRouter({
@@ -20,13 +27,13 @@ const router = createRouter({
     { path: '/login', name: 'login', component: LoginPage, meta: { publicLayout: true } },
     { path: '/', name: 'overview', component: OverviewPage },
     { path: '/catalog', name: 'catalog', component: CatalogPage },
-    { path: '/instances', name: 'instances', component: InstancesPage },
-    { path: '/instances/:name', name: 'instance-detail', component: InstanceDetailPage, props: true },
-    { path: '/namespace-claims', name: 'namespace-claims', component: NamespaceClaimsPage },
-    { path: '/namespace-claims/:name', name: 'namespace-claim-detail', component: NamespaceClaimDetailPage, props: true },
-    { path: '/tenancy', name: 'tenancy', component: TenancyPage },
-    { path: '/audit', name: 'audit', component: AuditPage },
-    { path: '/admin', name: 'admin', component: AdminPage }
+    { path: '/instances', name: 'instances', component: InstancesPage, meta: { requireCapability: 'instances' } },
+    { path: '/instances/:name', name: 'instance-detail', component: InstanceDetailPage, props: true, meta: { requireCapability: 'instances' } },
+    { path: '/namespace-claims', name: 'namespace-claims', component: NamespaceClaimsPage, meta: { requireCapability: 'instances' } },
+    { path: '/namespace-claims/:name', name: 'namespace-claim-detail', component: NamespaceClaimDetailPage, props: true, meta: { requireCapability: 'instances' } },
+    { path: '/tenancy', name: 'tenancy', component: TenancyPage, meta: { requireCapability: 'tenancy' } },
+    { path: '/audit', name: 'audit', component: AuditPage, meta: { requireCapability: 'audit' } },
+    { path: '/admin', name: 'admin', component: AdminPage, meta: { requireCapability: 'admin' } }
   ]
 })
 
@@ -49,7 +56,25 @@ router.beforeEach((to) => {
       }
     }
   }
+  if (!routeAllowed(to.meta.requireCapability)) {
+    return '/'
+  }
   return true
 })
 
 createApp(App).use(router).mount('#app')
+
+function routeAllowed(capability: unknown) {
+  switch (capability) {
+    case 'instances':
+      return canViewInstances()
+    case 'tenancy':
+      return canViewTenancy()
+    case 'audit':
+      return canViewAudit()
+    case 'admin':
+      return canViewAdminShell()
+    default:
+      return true
+  }
+}
