@@ -77,12 +77,16 @@ func withActor(r *http.Request, actor actor) *http.Request {
 
 func (a actor) hasAny(roles ...string) bool {
 	for _, role := range roles {
-		if _, ok := a.Roles[role]; ok {
-			return true
+		for granted := range a.Roles {
+			if platformRoleSatisfies(granted, role) {
+				return true
+			}
 		}
 		for _, tenantRoles := range a.TenantRoles {
-			if _, ok := tenantRoles[role]; ok {
-				return true
+			for granted := range tenantRoles {
+				if tenantRoleSatisfies(granted, role) {
+					return true
+				}
 			}
 		}
 	}
@@ -102,11 +106,37 @@ func (a actor) hasTenantRole(tenantName string, roles ...string) bool {
 		return false
 	}
 	for _, role := range roles {
-		if _, ok := tenantRoles[role]; ok {
-			return true
+		for granted := range tenantRoles {
+			if tenantRoleSatisfies(granted, role) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func platformRoleSatisfies(granted, required string) bool {
+	if granted == required {
+		return true
+	}
+	if granted == rolePlatformAdmin {
+		return true
+	}
+	return tenantRoleSatisfies(granted, required)
+}
+
+func tenantRoleSatisfies(granted, required string) bool {
+	if granted == required {
+		return true
+	}
+	switch granted {
+	case roleTenantAdmin:
+		return required == roleTenantOperator || required == roleServiceConsumer
+	case roleTenantOperator:
+		return required == roleServiceConsumer
+	default:
+		return false
+	}
 }
 
 func (a actor) hasTenantAccess(tenantName string) bool {

@@ -18,7 +18,7 @@ Examples:
 
 - `orders-db` -> `orders_db`
 - `billing` -> `billing`
-- `123-demo` -> `db_123_demo`
+- `123-reporting` -> `db_123_reporting`
 
 ### Normalization rules
 

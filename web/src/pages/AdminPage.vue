@@ -970,7 +970,7 @@ async function executeDelete() {
           </label>
           <label style="grid-column: 1 / -1">
             Owners (comma-separated user IDs)
-            <input v-model="tenantForm.owners" type="text" placeholder="alice@example.com, bob@example.com" />
+            <input v-model="tenantForm.owners" type="text" placeholder="owner@company.tld, admin@company.tld" />
           </label>
         </div>
       </div>
@@ -1099,7 +1099,7 @@ async function executeDelete() {
           </label>
           <label>
             Ingress domain
-            <input v-model="clusterForm.ingressDomain" type="text" placeholder="apps.example.com" />
+            <input v-model="clusterForm.ingressDomain" type="text" placeholder="apps.company.tld" />
           </label>
 
           <template v-if="!editCluster">

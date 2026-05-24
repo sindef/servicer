@@ -50,6 +50,7 @@ spec:
                 secretKeyRef:
                   name: servicer-delivery-repo
                   key: url
+                  optional: true
             - name: SERVICER_DELIVERY_REPO_REF
               valueFrom:
                 configMapKeyRef:
@@ -131,7 +132,7 @@ spec:
         - name: git-ssh
           secret:
             secretName: servicer-delivery-repo
-            optional: false
+            optional: true
             defaultMode: 0400
         - name: webhook-certs
           secret:

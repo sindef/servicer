@@ -54,12 +54,22 @@ func NewWithRepoURL(worktree, root string, autoCommit, autoPush bool, url, remot
 		Remote:      firstNonEmptyTrimmed(remote, "origin"),
 		Branch:      strings.TrimSpace(branch),
 		AuthorName:  firstNonEmptyTrimmed(authorName, "Servicer"),
-		AuthorEmail: firstNonEmptyTrimmed(authorEmail, "servicer@example.com"),
+		AuthorEmail: firstNonEmptyTrimmed(authorEmail, "servicer@platform.local"),
 	}
 }
 
 func (p *Publisher) Enabled() bool {
-	return strings.TrimSpace(p.Worktree) != ""
+	worktree := strings.TrimSpace(p.Worktree)
+	if worktree == "" {
+		return false
+	}
+	if strings.TrimSpace(p.URL) != "" {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".git")); err == nil {
+		return true
+	}
+	return false
 }
 
 func (p *Publisher) Publish(ctx context.Context, request Request) (Result, error) {

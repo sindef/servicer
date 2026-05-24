@@ -155,7 +155,7 @@ const actionForm = reactive({
   cpu: '2',
   memory: '4Gi',
   pods: '20',
-  subject: 'demo-user',
+  subject: '',
   defaultUrl: defaultNamespaceAccessUrl(),
   stream: '',
   consumer: '',
@@ -969,11 +969,11 @@ async function revealCredential(name: string, url?: string) {
             </label>
             <label v-if="supportsGrantAccess">
               Access subject
-              <input v-model="actionForm.subject" placeholder="user@example.com" />
+              <input v-model="actionForm.subject" placeholder="user@company.tld" />
             </label>
             <label v-if="supportsGrantAccess">
               Platform proxy URL
-              <input v-model="actionForm.defaultUrl" placeholder="https://servicer.example.com" />
+              <input v-model="actionForm.defaultUrl" placeholder="https://servicer.company.tld" />
             </label>
             <label v-if="supportsDeleteStream || supportsPurgeStream || supportsDeleteConsumer">
               Stream name
@@ -1133,7 +1133,7 @@ async function revealCredential(name: string, url?: string) {
             <label>Storage size<input v-model="parameterForm.storageSize" /></label>
             <label>StorageClass<input v-model="parameterForm.storageClass" placeholder="default" /></label>
             <label>Service type<select v-model="parameterForm.serviceType"><option value="ClusterIP">ClusterIP</option><option value="NodePort">NodePort</option><option value="LoadBalancer">LoadBalancer</option></select></label>
-            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" /></label>
+            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" /></label>
           </div>
           <div v-else-if="data.productClass === 'mysql'" class="form-grid modal-form-grid">
             <label>Nodes<input v-model.number="parameterForm.replicas" min="1" type="number" /></label>
@@ -1146,7 +1146,7 @@ async function revealCredential(name: string, url?: string) {
             <label>Primary cluster<input v-model="parameterForm.primaryCluster" placeholder="project default" /></label>
             <label>Standby clusters<input v-model="parameterForm.standbyClusters" placeholder="cluster-a, cluster-b" /></label>
             <label>Service type<select v-model="parameterForm.serviceType"><option value="ClusterIP">ClusterIP</option><option value="NodePort">NodePort</option><option value="LoadBalancer">LoadBalancer</option></select></label>
-            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="mysql.example.com" /></label>
+            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="mysql.apps.company.tld" /></label>
           </div>
           <div v-else-if="data.productClass === 'nats'" class="form-grid modal-form-grid">
             <label>Nodes<input v-model.number="parameterForm.replicas" min="1" type="number" /></label>
@@ -1155,7 +1155,7 @@ async function revealCredential(name: string, url?: string) {
             <label>Storage size<input v-model="parameterForm.storageSize" /></label>
             <label>Max payload<input v-model="parameterForm.maxPayload" /></label>
             <label>Service type<select v-model="parameterForm.serviceType"><option value="ClusterIP">ClusterIP</option><option value="NodePort">NodePort</option><option value="LoadBalancer">LoadBalancer</option></select></label>
-            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" /></label>
+            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" /></label>
             <div v-if="updateForm.servicePlan === 'nats-jetstream' || updateForm.servicePlan === 'nats-geo'" class="nested-resource-editor" style="grid-column: span 2">
               <div class="resource-editor-head">
                 <div>
@@ -1251,7 +1251,7 @@ async function revealCredential(name: string, url?: string) {
             <label>Standby clusters<input v-model="parameterForm.standbyClusters" /></label>
             <label>Max failover lag<input v-model.number="parameterForm.maxReplicationLagSeconds" min="1" type="number" /></label>
             <label>Service type<select v-model="parameterForm.serviceType"><option value="ClusterIP">ClusterIP</option><option value="NodePort">NodePort</option><option value="LoadBalancer">LoadBalancer</option></select></label>
-            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" /></label>
+            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" /></label>
           </div>
           <div v-else-if="data.productClass === 'yugabyte'" class="form-grid modal-form-grid">
             <label>TServer / Master nodes<input v-model.number="parameterForm.replicas" min="1" type="number" /></label>
@@ -1264,7 +1264,7 @@ async function revealCredential(name: string, url?: string) {
             <label>Primary cluster<input v-model="parameterForm.primaryCluster" placeholder="project default" /></label>
             <label>Standby clusters<input v-model="parameterForm.standbyClusters" placeholder="cluster-a, cluster-b" /></label>
             <label>Service type<select v-model="parameterForm.serviceType"><option value="ClusterIP">ClusterIP</option><option value="NodePort">NodePort</option><option value="LoadBalancer">LoadBalancer</option></select></label>
-            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" /></label>
+            <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" /></label>
           </div>
           </div>
         </section>

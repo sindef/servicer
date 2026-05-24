@@ -1147,7 +1147,7 @@ resetBindingForm()
                 <p>Client secret is stored in Kubernetes when saved.</p>
               </div>
               <div class="auth-modal-grid">
-                <label><span>Issuer URL</span><input v-model="providerForm.oidcIssuerUrl" placeholder="https://issuer.example.com" /></label>
+                <label><span>Issuer URL</span><input v-model="providerForm.oidcIssuerUrl" placeholder="https://issuer.company.tld" /></label>
                 <label><span>Client ID</span><input v-model="providerForm.oidcClientId" placeholder="servicer-web" /></label>
                 <label class="auth-full-width"><span>Client secret</span><input v-model="providerForm.oidcClientSecret" type="password" placeholder="Stored in Kubernetes Secret on save" /></label>
                 <label><span>Scopes</span><input v-model="providerForm.oidcScopes" placeholder="openid profile email offline_access" /></label>
@@ -1166,7 +1166,7 @@ resetBindingForm()
                 <p>Bind password is stored in Kubernetes when saved.</p>
               </div>
               <div class="auth-modal-grid">
-                <label><span>LDAP URL</span><input v-model="providerForm.ldapUrl" placeholder="ldaps://ldap.example.com:636" /></label>
+                <label><span>LDAP URL</span><input v-model="providerForm.ldapUrl" placeholder="ldaps://ldap.company.tld:636" /></label>
                 <label><span>Bind DN</span><input v-model="providerForm.ldapBindUsername" placeholder="cn=svc,dc=example,dc=com" /></label>
                 <label class="auth-full-width"><span>Bind password</span><input v-model="providerForm.ldapBindPassword" type="password" placeholder="Stored in Kubernetes Secret on save" /></label>
                 <label><span>User base DN</span><input v-model="providerForm.ldapUserBaseDn" placeholder="ou=people,dc=example,dc=com" /></label>
@@ -1218,7 +1218,7 @@ resetBindingForm()
               <div class="auth-modal-grid">
                 <label><span>Username</span><input v-model="userForm.name" :disabled="modalMode === 'edit'" placeholder="alice" /></label>
                 <label><span>Display name</span><input v-model="userForm.displayName" placeholder="Alice Johnson" /></label>
-                <label class="auth-full-width"><span>Email</span><input v-model="userForm.email" placeholder="alice@example.com" /></label>
+                <label class="auth-full-width"><span>Email</span><input v-model="userForm.email" placeholder="user@company.tld" /></label>
               </div>
             </section>
 
@@ -1291,8 +1291,8 @@ resetBindingForm()
 
         <template v-else>
           <div class="form-grid modal-form-grid">
-            <label><span>Binding name</span><input v-model="bindingForm.name" :disabled="modalMode === 'edit'" placeholder="demo-tenant-operators" /></label>
-            <label><span>Display name</span><input v-model="bindingForm.displayName" placeholder="Demo tenant operators" /></label>
+            <label><span>Binding name</span><input v-model="bindingForm.name" :disabled="modalMode === 'edit'" placeholder="tenant-operators" /></label>
+            <label><span>Display name</span><input v-model="bindingForm.displayName" placeholder="Tenant operators" /></label>
             <label>
               <span>Scope</span>
               <select v-model="bindingForm.scope">

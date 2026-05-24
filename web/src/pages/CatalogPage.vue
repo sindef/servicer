@@ -644,7 +644,7 @@ async function submitRequest() {
               pattern="([a-z]|[a-z][a-z0-9-]*[a-z0-9])"
               required
               title="Use lowercase letters, numbers, and hyphens. Start with a letter."
-              placeholder="team-cache"
+              placeholder="orders-cache"
             />
           </label>
           <label>
@@ -743,7 +743,7 @@ async function submitRequest() {
             </label>
             <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">
               External DNS hostname
-              <input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" />
+              <input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" />
             </label>
             <div class="form-section-heading" style="grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; cursor: pointer; user-select: none" @click.stop="showBackup = !showBackup">
               <div>
@@ -828,7 +828,7 @@ async function submitRequest() {
             </label>
             <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">
               External DNS hostname
-              <input v-model="parameterForm.externalDnsHostname" placeholder="mysql.example.com" />
+              <input v-model="parameterForm.externalDnsHostname" placeholder="mysql.apps.company.tld" />
             </label>
             <div v-if="selectedPlan?.topology === 'multi-region'" style="grid-column: span 2">
               <label>
@@ -878,7 +878,7 @@ async function submitRequest() {
             </label>
             <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">
               External DNS hostname
-              <input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" />
+              <input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" />
             </label>
             <div v-if="selectedPlan?.topology === 'multi-region'" style="grid-column: span 2">
               <p style="color: var(--muted-strong); font-size: 12px; font-weight: 800; text-transform: uppercase; margin: 0 0 8px">Standby clusters</p>
@@ -1024,7 +1024,7 @@ async function submitRequest() {
             </label>
             <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">
               External DNS hostname
-              <input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" />
+              <input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" />
             </label>
             <label>
               Max failover lag
@@ -1095,7 +1095,7 @@ async function submitRequest() {
             </label>
             <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">
               External DNS hostname
-              <input v-model="parameterForm.externalDnsHostname" placeholder="my-service.example.com" />
+              <input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" />
             </label>
             <label>
               Primary cluster

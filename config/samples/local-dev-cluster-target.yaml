@@ -12,13 +12,7 @@ metadata:
   namespace: servicer-system
 type: Opaque
 stringData:
-  kubeconfig: |
-    apiVersion: v1
-    kind: Config
-    clusters: []
-    contexts: []
-    current-context: ""
-    users: []
+  kubeconfig: ""
 ---
 apiVersion: platform.servicer.io/v1alpha1
 kind: ClusterTarget
@@ -37,6 +31,3 @@ spec:
     operator.nats: available
     operator.servicer-valkey: planned
     storageclass.default: standard
-  requiredPackages:
-    - cnpg
-    - external-secrets

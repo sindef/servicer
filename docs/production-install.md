@@ -6,13 +6,13 @@ Servicer production installs use the `deploy/` kustomization. The install assume
 - TLS terminates at ingress and forwards traffic to the `web` Service
 - generated delivery artifacts are committed to a GitOps repository
 - Argo CD syncs the committed artifacts to target clusters
-- the demo syncer sidecar is not part of the production path
+- the local development syncer sidecar is not part of the production path
 
 Before applying `deploy/`, replace these values:
 
 - `deploy/ingress.yaml`: set the production host, `ingressClassName`, TLS Secret, and certificate issuer
-- `deploy/delivery-repo.yaml`: set the Git repository URL, branch/ref, known hosts, and deploy key
 - create `servicer-bff-session` with a randomly generated signing secret
+- create or update `servicer-delivery-repo` with the Git repository URL, known hosts, and deploy key
 
 Example session secret:
 
@@ -20,6 +20,18 @@ Example session secret:
 kubectl -n servicer-system create secret generic servicer-bff-session \
   --from-literal=session-secret="$(openssl rand -base64 48)"
 ```
+
+Delivery repo secret:
+
+```bash
+kubectl -n servicer-system create secret generic servicer-delivery-repo \
+  --from-literal=url="$SERVICER_DELIVERY_REPO_URL" \
+  --from-file=ssh-privatekey="$HOME/.ssh/servicer_delivery" \
+  --from-file=known_hosts="$HOME/.ssh/known_hosts" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Restart the manager after changing this Secret so the repository URL environment variable refreshes. When the Secret is absent, Git publishing is disabled and ServiceInstances stay materialized locally instead of failing on a placeholder remote.
 
 The manager clones the configured delivery repository into an ephemeral worktree, commits rendered artifacts with the configured commit identity, and pushes to the configured branch. If the remote is unavailable, the worktree is divergent, or push fails, reconciliation fails and records the Git error in ServiceInstance status instead of silently falling back to local-only delivery.
 

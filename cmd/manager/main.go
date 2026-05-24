@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"github.com/sindef/servicer/internal/adapters"
@@ -62,7 +63,7 @@ func main() {
 	flag.StringVar(&deliveryRepoRemote, "delivery-repo-remote", "origin", "Git remote that should receive published delivery commits when auto-push is enabled.")
 	flag.StringVar(&deliveryRepoBranch, "delivery-repo-branch", "", "Git branch that should receive published delivery commits when auto-push is enabled. Defaults to the current worktree branch.")
 	flag.StringVar(&deliveryRepoCommitName, "delivery-repo-commit-name", "Servicer", "Git author name used for generated delivery commits.")
-	flag.StringVar(&deliveryRepoCommitEmail, "delivery-repo-commit-email", "servicer@example.com", "Git author email used for generated delivery commits.")
+	flag.StringVar(&deliveryRepoCommitEmail, "delivery-repo-commit-email", "servicer@platform.local", "Git author email used for generated delivery commits.")
 	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd", "Namespace where Argo CD Application resources are created.")
 	flag.StringVar(&argoCDProject, "argocd-project", "default", "Argo CD project used for Servicer-managed Applications.")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", false, "Enable admission webhooks for Servicer APIs.")
@@ -74,6 +75,7 @@ func main() {
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
+	deliveryRepoURL = emptyIfUnresolvedEnv(deliveryRepoURL)
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 
@@ -247,4 +249,12 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func emptyIfUnresolvedEnv(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if strings.HasPrefix(trimmed, "$(") && strings.HasSuffix(trimmed, ")") {
+		return ""
+	}
+	return value
 }

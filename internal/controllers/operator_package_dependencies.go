@@ -122,6 +122,9 @@ func packagesReady(target *platformv1alpha1.ClusterTarget, packageNames []string
 	for _, packageName := range uniquePackageNames(packageNames) {
 		status := packageStatus(target, packageName)
 		if status == nil {
+			if !packageIsRequired(target, packageName) {
+				continue
+			}
 			return false, fmt.Sprintf("OperatorPackage %q on ClusterTarget %q is still reconciling.", packageName, target.Name)
 		}
 		if status.Phase != platformv1alpha1.PackagePhaseInstalled {

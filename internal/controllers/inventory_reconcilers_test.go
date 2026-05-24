@@ -221,6 +221,33 @@ func TestEffectiveRequiredPackagesForClusterTargetIncludesPublishedServiceClasse
 	}
 }
 
+func TestPackagesReadySkipsUnmanagedMissingPackageStatus(t *testing.T) {
+	target := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-dev"},
+		Status: platformv1alpha1.ClusterTargetStatus{
+			Packages: []platformv1alpha1.PackageStatus{{
+				Name:  "cnpg",
+				Phase: platformv1alpha1.PackagePhaseInstalled,
+			}},
+		},
+	}
+	if ready, message := packagesReady(target, []string{"cnpg", "external-secrets"}); !ready {
+		t.Fatalf("expected unmanaged missing package status to be skipped, got %q", message)
+	}
+}
+
+func TestPackagesReadyWaitsForExplicitMissingPackageStatus(t *testing.T) {
+	target := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			RequiredPackages: []string{"external-secrets"},
+		},
+	}
+	if ready, message := packagesReady(target, []string{"external-secrets"}); ready || !strings.Contains(message, "external-secrets") {
+		t.Fatalf("expected explicit required package to block, got ready=%v message=%q", ready, message)
+	}
+}
+
 func TestEnsureClusterTopologyLabelsSeedsMissingNodeTopology(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	target := &platformv1alpha1.ClusterTarget{

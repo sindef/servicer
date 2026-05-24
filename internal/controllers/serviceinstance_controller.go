@@ -64,7 +64,7 @@ func (r *ServiceInstanceReconciler) getTargetClient(ctx context.Context, target 
 	}
 	kubeconfigBytes := clusterConnectionData(&secret)
 	if len(kubeconfigBytes) == 0 {
-		return nil, fmt.Errorf("secret %s/%s for ClusterTarget %q has no kubeconfig data", target.Spec.ConnectionRef.Namespace, target.Spec.ConnectionRef.Name, target.Name)
+		return nil, nil
 	}
 	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigBytes)
 	if err != nil {

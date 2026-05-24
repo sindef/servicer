@@ -42,6 +42,6 @@ Rollback is the inverse Git change plus operator-specific rollback steps from up
 
 `argo-application` plans require repository credentials and Argo CD project policy to be reviewed for each tenant/project.
 
-## Demo Defaults
+## Sample Defaults
 
-Demo defaults live under `config/samples`. Production install paths use only the curated operator package seeds and must not copy sample credentials, local kubeconfigs, or demo-only plan values into customer clusters without review.
+Sample defaults live under `config/samples`. Production install paths use only curated operator package seeds and must not copy sample credentials, local kubeconfigs, or local-only plan values into customer clusters without review.

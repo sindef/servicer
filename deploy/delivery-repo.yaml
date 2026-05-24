@@ -8,17 +8,4 @@ data:
   branch: main
   path: generated/delivery
   commitName: Servicer
-  commitEmail: servicer@example.com
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: servicer-delivery-repo
-  namespace: servicer-system
-type: Opaque
-stringData:
-  url: "ssh://git@example.com/platform/servicer-delivery.git"
-  ssh-privatekey: |
-    REPLACE_WITH_DEPLOY_KEY
-  known_hosts: |
-    example.com ssh-ed25519 REPLACE_WITH_HOST_KEY
+  commitEmail: servicer@platform.local

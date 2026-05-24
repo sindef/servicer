@@ -52,6 +52,36 @@ func TestCatalogReturnsProductShapedEntries(t *testing.T) {
 	}
 }
 
+func TestTenantScopedRoleInheritance(t *testing.T) {
+	current := actor{
+		Roles: map[string]struct{}{},
+		TenantRoles: map[string]map[string]struct{}{
+			"acme": {roleTenantAdmin: {}},
+		},
+	}
+	if !current.hasAny(roleTenantOperator) || !current.hasAny(roleServiceConsumer) {
+		t.Fatalf("expected tenant-admin to satisfy tenant-operator and service-consumer")
+	}
+	if !current.hasTenantRole("acme", roleTenantOperator) || !current.hasTenantRole("acme", roleServiceConsumer) {
+		t.Fatalf("expected tenant-admin to satisfy tenant scoped access checks")
+	}
+	if current.hasAny(rolePlatformAdmin) {
+		t.Fatalf("tenant-admin must not satisfy platform-admin")
+	}
+
+	current.Roles = map[string]struct{}{roleTenantAdmin: {}}
+	current.TenantRoles = map[string]map[string]struct{}{}
+	if !current.hasAny(roleTenantOperator) || current.hasAny(rolePlatformAdmin) {
+		t.Fatalf("expected global tenant-admin to inherit tenant roles only")
+	}
+
+	current.Roles = map[string]struct{}{}
+	current.TenantRoles["acme"] = map[string]struct{}{roleTenantOperator: {}}
+	if !current.hasAny(roleServiceConsumer) {
+		t.Fatalf("expected tenant-operator to satisfy service-consumer")
+	}
+}
+
 func TestAuthConfigEndpointReturnsConfiguredProviders(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()

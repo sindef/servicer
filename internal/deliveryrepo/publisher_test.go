@@ -108,7 +108,7 @@ func TestPublisherClonesEmptyWorktreeWhenRepoURLConfigured(t *testing.T) {
 	runGit(t, seed, "push", "origin", "main")
 
 	worktree := filepath.Join(t.TempDir(), "worktree")
-	publisher := NewWithRepoURL(worktree, "published", true, true, remote, "origin", "main", "Servicer Bot", "servicer@example.com")
+	publisher := NewWithRepoURL(worktree, "published", true, true, remote, "origin", "main", "Servicer Bot", "servicer@platform.local")
 	result, err := publisher.Publish(context.Background(), Request{
 		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
 		Artifacts: []adapters.RenderedArtifact{{
@@ -128,12 +128,33 @@ func TestPublisherClonesEmptyWorktreeWhenRepoURLConfigured(t *testing.T) {
 	}
 }
 
+func TestPublisherDisabledForUnconfiguredEmptyWorktree(t *testing.T) {
+	worktree := t.TempDir()
+	publisher := NewWithRepoURL(worktree, "published", true, true, "", "origin", "main", "Servicer Bot", "servicer@platform.local")
+	if publisher.Enabled() {
+		t.Fatalf("expected publisher to be disabled without repo URL or existing git worktree")
+	}
+	result, err := publisher.Publish(context.Background(), Request{
+		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
+		Artifacts: []adapters.RenderedArtifact{{
+			Path:    "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db/service.yaml",
+			Content: []byte("kind: Service\n"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Publish returned error: %v", err)
+	}
+	if result.PublishedPath != "" || result.Commit != "" || result.Pushed {
+		t.Fatalf("expected empty publish result while disabled, got %#v", result)
+	}
+}
+
 func TestPublisherRejectsNonGitNonEmptyWorktree(t *testing.T) {
 	worktree := t.TempDir()
 	if err := os.WriteFile(filepath.Join(worktree, "leftover.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write leftover: %v", err)
 	}
-	publisher := NewWithRepoURL(worktree, "published", true, true, "https://example.invalid/repo.git", "origin", "main", "Servicer", "servicer@example.com")
+	publisher := NewWithRepoURL(worktree, "published", true, true, "https://example.invalid/repo.git", "origin", "main", "Servicer", "servicer@platform.local")
 	_, err := publisher.Publish(context.Background(), Request{
 		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
 		Artifacts: []adapters.RenderedArtifact{{
@@ -149,7 +170,7 @@ func TestPublisherRejectsNonGitNonEmptyWorktree(t *testing.T) {
 func TestPublisherReportsUnavailableRemote(t *testing.T) {
 	worktree := filepath.Join(t.TempDir(), "worktree")
 	missingRemote := filepath.Join(t.TempDir(), "missing.git")
-	publisher := NewWithRepoURL(worktree, "published", true, true, "file://"+missingRemote, "origin", "main", "Servicer", "servicer@example.com")
+	publisher := NewWithRepoURL(worktree, "published", true, true, "file://"+missingRemote, "origin", "main", "Servicer", "servicer@platform.local")
 	_, err := publisher.Publish(context.Background(), Request{
 		PackagePath: "clusters/local-dev/tenants/acme/projects/acme-prod/services/orders-db",
 		Artifacts: []adapters.RenderedArtifact{{
@@ -171,7 +192,7 @@ func initGitRepo(t *testing.T) string {
 
 func configureGitIdentity(t *testing.T, dir string) {
 	t.Helper()
-	runGit(t, dir, "config", "user.email", "servicer@example.com")
+	runGit(t, dir, "config", "user.email", "servicer@platform.local")
 	runGit(t, dir, "config", "user.name", "Servicer")
 }
 

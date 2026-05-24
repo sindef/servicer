@@ -8,7 +8,7 @@ Servicer emits structured audit records for:
 - credential detail and download access
 - Kubernetes Events and ActionRequests that are merged into audit search results
 
-The default durable demo sink stores audit records as labeled ConfigMaps in `servicer-system` with `SERVICER_AUDIT_RETENTION_DAYS` retention. Production installs should also set `SERVICER_AUDIT_STDOUT=true` and forward JSON logs to the platform SIEM or log pipeline.
+The default durable audit sink stores audit records as labeled ConfigMaps in `servicer-system` with `SERVICER_AUDIT_RETENTION_DAYS` retention. Production installs should also set `SERVICER_AUDIT_STDOUT=true` and forward JSON logs to the platform SIEM or log pipeline.
 
 Filtering is available on `/api/audit` with `q`, `type`, `actor`, `resource`, `action`, `phase`, `from`, `to`, and `limit`.
 
