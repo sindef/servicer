@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const projectedCredentialSuffix = "-projected"
+
 func (s *Server) handleDownloadNamespaceKubeconfig(w http.ResponseWriter, r *http.Request) {
 	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
 	if !ok {
@@ -150,6 +152,14 @@ func (s *Server) resolveInstanceCredential(w http.ResponseWriter, r *http.Reques
 	var secret corev1.Secret
 	if err := s.client.Get(r.Context(), types.NamespacedName{Name: credentialName, Namespace: namespace}, &secret); err != nil {
 		if apierrors.IsNotFound(err) {
+			// During external-secret delivery, projected Secrets may lag behind their
+			// source Secret. Allow reveal/download to fall back to the source Secret.
+			if sourceName, ok := sourceCredentialNameFromProjected(credentialName); ok {
+				var sourceSecret corev1.Secret
+				if sourceErr := s.client.Get(r.Context(), types.NamespacedName{Name: sourceName, Namespace: namespace}, &sourceSecret); sourceErr == nil {
+					return actor, &instance, &sourceSecret, true
+				}
+			}
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "credential Secret was not found"})
 			return actor, nil, nil, false
 		}
@@ -157,6 +167,18 @@ func (s *Server) resolveInstanceCredential(w http.ResponseWriter, r *http.Reques
 		return actor, nil, nil, false
 	}
 	return actor, &instance, &secret, true
+}
+
+func sourceCredentialNameFromProjected(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if !strings.HasSuffix(name, projectedCredentialSuffix) {
+		return "", false
+	}
+	base := strings.TrimSuffix(name, projectedCredentialSuffix)
+	if strings.TrimSpace(base) == "" {
+		return "", false
+	}
+	return base, true
 }
 
 func instanceReferencesCredential(instance *platformv1alpha1.ServiceInstance, namespace, name string) bool {

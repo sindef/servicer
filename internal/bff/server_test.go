@@ -2,6 +2,7 @@ package bff
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1119,6 +1120,42 @@ func TestCredentialDetailReturnsPublishedSecretData(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/instances/session-cache/credentials/acme-prod-session-cache/session-cache-auth", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var detail CredentialDetail
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if detail.Name != "session-cache-auth" || detail.Namespace != "acme-prod-session-cache" {
+		t.Fatalf("unexpected credential identity: %#v", detail)
+	}
+	if detail.Data["password"] != "super-secret-password" {
+		t.Fatalf("expected decoded password, got %#v", detail.Data)
+	}
+}
+
+func TestCredentialDetailFallsBackToSourceSecretWhenProjectedMissing(t *testing.T) {
+	server := testServer(t)
+
+	var instance platformv1alpha1.ServiceInstance
+	if err := server.client.Get(context.Background(), client.ObjectKey{Name: "session-cache"}, &instance); err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	instance.Status.CredentialRefs = []platformv1alpha1.NamespacedObjectReference{
+		{Name: "session-cache-auth-projected", Namespace: "acme-prod-session-cache"},
+	}
+	if err := server.client.Update(context.Background(), &instance); err != nil {
+		t.Fatalf("update instance: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/instances/session-cache/credentials/acme-prod-session-cache/session-cache-auth-projected", nil)
 	request.Header.Set("X-Servicer-User", "alice@example.com")
 	request.Header.Set("X-Servicer-Roles", "service-consumer")
 
