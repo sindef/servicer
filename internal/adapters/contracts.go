@@ -65,7 +65,7 @@ const (
 	ActionApplyPolicy       ActionName = "apply-policy"
 	ActionScale             ActionName = "scale"
 	ActionRestart           ActionName = "restart"
-	ActionRotateCredentials ActionName = "rotate-credentials"
+	ActionRotateCredentials ActionName = "rotate-credentials" // #nosec G101 -- Action identifier, not a credential.
 	ActionPause             ActionName = "pause"
 	ActionResume            ActionName = "resume"
 	ActionRepair            ActionName = "repair"

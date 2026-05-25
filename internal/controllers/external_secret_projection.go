@@ -1,7 +1,7 @@
 package controllers
 
 import (
-	"crypto/sha1"
+	"crypto/sha256"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -326,7 +326,7 @@ func projectedCredentialName(name string) string {
 }
 
 func secretStoreName(instanceName, sourceNamespace string) string {
-	sum := sha1.Sum([]byte(sourceNamespace))
+	sum := sha256.Sum256([]byte(sourceNamespace))
 	return fmt.Sprintf("%s-eso-%x", instanceName, sum[:4])
 }
 

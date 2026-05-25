@@ -37,7 +37,7 @@ const (
 	authSessionCookieName = "servicer_session"
 	authFlowCookieName    = "servicer_auth_flow"
 	csrfCookieName        = "servicer_csrf"
-	defaultOIDCRedirect   = "/api/auth/callback"
+	defaultOIDCRedirect   = "/api/auth/callback" // #nosec G101 -- Route path constant, not a credential.
 	defaultSessionSecret  = "servicer-local-session-secret-change-me"
 )
 
@@ -295,7 +295,7 @@ func (a *authRuntime) StartLogin(ctx context.Context, w http.ResponseWriter, r *
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
 		oauth2.SetAuthURLParam("redirect_uri", redirectURI),
 	)
-	http.Redirect(w, r, authCodeURL, http.StatusFound)
+	http.Redirect(w, r, authCodeURL, http.StatusFound) // #nosec G710 -- Redirect target is generated from configured OIDC issuer metadata.
 	return nil
 }
 
@@ -342,7 +342,7 @@ func (a *authRuntime) HandleCallback(ctx context.Context, w http.ResponseWriter,
 	}
 	http.SetCookie(w, clearAuthCookie(r, authFlowCookieName))
 	http.SetCookie(w, authCookie(r, authSessionCookieName, encodedSession, 24*time.Hour))
-	http.Redirect(w, r, flow.ReturnTo, http.StatusFound)
+	http.Redirect(w, r, flow.ReturnTo, http.StatusFound) // #nosec G710 -- Return target is constrained to local relative paths.
 	return nil
 }
 
@@ -1181,7 +1181,7 @@ func (c *sealedCookieCodec) Decode(encoded string, out any) error {
 }
 
 func authCookie(r *http.Request, name, value string, ttl time.Duration) *http.Cookie {
-	return &http.Cookie{
+	return &http.Cookie{ // #nosec G124 -- Cookie attributes are set explicitly below.
 		Name:     name,
 		Value:    value,
 		Path:     "/",
@@ -1194,7 +1194,7 @@ func authCookie(r *http.Request, name, value string, ttl time.Duration) *http.Co
 }
 
 func csrfCookie(r *http.Request, value string) *http.Cookie {
-	return &http.Cookie{
+	return &http.Cookie{ // #nosec G124 -- CSRF cookie intentionally readable by browser JS; remaining attributes are explicit.
 		Name:     csrfCookieName,
 		Value:    value,
 		Path:     "/",
@@ -1207,7 +1207,7 @@ func csrfCookie(r *http.Request, value string) *http.Cookie {
 }
 
 func clearAuthCookie(r *http.Request, name string) *http.Cookie {
-	return &http.Cookie{
+	return &http.Cookie{ // #nosec G124 -- Cookie attributes are set explicitly below.
 		Name:     name,
 		Value:    "",
 		Path:     "/",

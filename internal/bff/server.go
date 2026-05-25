@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -309,7 +310,7 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		Phase:    "Succeeded",
 		Involved: "Session",
 	})
-	http.Redirect(w, r, s.auth.LogoutRedirectURL(r.Context(), r), http.StatusFound)
+	http.Redirect(w, r, s.auth.LogoutRedirectURL(r.Context(), r), http.StatusFound) // #nosec G710 -- Redirect target is constrained by LogoutRedirectURL validation.
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -330,9 +331,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	actions.Items = visibleActions(actor, actions.Items, instances.Items)
 
 	response := OverviewResponse{
-		Tenants:       int32(len(tenants.Items)),
-		Projects:      int32(len(projects.Items)),
-		Instances:     int32(len(instances.Items)),
+		Tenants:       safeOverviewCount(len(tenants.Items)),
+		Projects:      safeOverviewCount(len(projects.Items)),
+		Instances:     safeOverviewCount(len(instances.Items)),
 		RecentActions: actionSummaries(actions.Items, 6),
 	}
 	for _, instance := range instances.Items {
@@ -355,6 +356,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func safeOverviewCount(length int) int32 {
+	if length > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(length) // #nosec G115 -- Value is bounds-checked above.
 }
 
 func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {

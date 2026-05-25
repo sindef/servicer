@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
@@ -119,8 +120,15 @@ func (r *ProjectReconciler) populateUsageSummary(ctx context.Context, project *p
 			namespaces[namespace] = struct{}{}
 		}
 	}
-	project.Status.UsageSummary.Namespaces = int32(len(namespaces))
+	project.Status.UsageSummary.Namespaces = safeNamespaceUsageCount(len(namespaces))
 	return nil
+}
+
+func safeNamespaceUsageCount(length int) int32 {
+	if length > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(length) // #nosec G115 -- Value is bounds-checked above.
 }
 
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {

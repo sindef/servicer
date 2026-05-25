@@ -105,7 +105,7 @@ func (p *Publisher) Publish(ctx context.Context, request Request) (Result, error
 			relativePath = filepath.ToSlash(filepath.Join(root, filepath.FromSlash(artifact.Path)))
 		}
 		fullPath := filepath.Join(p.Worktree, filepath.FromSlash(relativePath))
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
 			return Result{}, fmt.Errorf("create publish directory: %w", err)
 		}
 		if err := writeFileIfChanged(fullPath, artifact.Content); err != nil {
@@ -155,7 +155,7 @@ func (p *Publisher) ensureWorktree(ctx context.Context) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("inspect delivery repo worktree: %w", err)
 		}
-		if err := os.MkdirAll(p.Worktree, 0o755); err != nil {
+		if err := os.MkdirAll(p.Worktree, 0o750); err != nil {
 			return fmt.Errorf("create delivery repo worktree: %w", err)
 		}
 	} else if len(entries) > 0 {
@@ -267,7 +267,7 @@ func gitInDir(ctx context.Context, dir string, args ...string) error {
 }
 
 func gitOutputInDir(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...) // #nosec G204 -- Git binary is fixed; args are constructed by caller-controlled known commands.
 	cmd.Dir = dir
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -317,14 +317,14 @@ func firstNonEmptyTrimmed(values ...string) string {
 }
 
 func writeFileIfChanged(path string, content []byte) error {
-	existing, err := os.ReadFile(path)
+	existing, err := os.ReadFile(path) // #nosec G304 -- Path is rooted and normalized by cleanRelativePath + Publisher worktree join.
 	if err == nil && bytes.Equal(existing, content) {
 		return nil
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read existing artifact %q: %w", path, err)
 	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		return fmt.Errorf("write artifact %q: %w", path, err)
 	}
 	return nil

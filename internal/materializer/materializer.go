@@ -101,7 +101,7 @@ func (m *Materializer) Materialize(ctx context.Context, request Request) (Result
 		}
 		path, _ := cleanRelativePath(artifact.Path)
 		fullPath := filepath.Join(m.Root, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
 			return Result{}, fmt.Errorf("create artifact directory: %w", err)
 		}
 		if err := writeFileIfChanged(fullPath, artifact.Content); err != nil {
@@ -191,14 +191,14 @@ func cleanRelativePath(path string) (string, error) {
 }
 
 func writeFileIfChanged(path string, content []byte) error {
-	existing, err := os.ReadFile(path)
+	existing, err := os.ReadFile(path) // #nosec G304 -- Path is rooted and normalized by cleanRelativePath + Materializer root join.
 	if err == nil && bytes.Equal(existing, content) {
 		return nil
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read existing artifact %q: %w", path, err)
 	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		return fmt.Errorf("write artifact %q: %w", path, err)
 	}
 	return nil

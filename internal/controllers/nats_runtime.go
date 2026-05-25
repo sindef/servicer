@@ -118,7 +118,7 @@ func (r *ServiceInstanceReconciler) ensureNATSCredentialSecrets(ctx context.Cont
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.AuthConfigSecretName,
 			Namespace: namespace,
-			Labels: map[string]string{
+			Labels: map[string]string{ // #nosec G101 -- Metadata labels, not credentials.
 				"servicer.io/managed-by":       "servicer",
 				"servicer.io/service-instance": instance.Name,
 				"servicer.io/nats-secret-role": "auth-config",

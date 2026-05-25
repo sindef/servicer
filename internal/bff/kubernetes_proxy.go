@@ -164,7 +164,7 @@ func (s *Server) forwardKubernetesRequest(w http.ResponseWriter, r *http.Request
 	copyProxyHeader(request.Header, r.Header, "Accept")
 	copyProxyHeader(request.Header, r.Header, "User-Agent")
 	copyProxyHeader(request.Header, r.Header, "Accept-Encoding")
-	response, err := s.kubeClient.Do(request)
+	response, err := s.kubeClient.Do(request) // #nosec G704 -- Upstream host is fixed from kube config and path is namespace-validated before forwarding.
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.upstreamFailuresTotal.Inc()

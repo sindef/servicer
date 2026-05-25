@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -641,7 +642,7 @@ func (r *ServiceInstanceReconciler) enforceProjectQuota(ctx context.Context, ins
 		result, err := r.handleValidationFailure(ctx, instance, originalStatus, "ProjectServiceQuotaExceeded", fmt.Sprintf("Project %q allows at most %d service instances; observed %d.", project.Name, *maxServices, serviceCount))
 		return result, true, err
 	}
-	if maxNamespaces != nil && int32(len(namespaces)) > *maxNamespaces {
+	if maxNamespaces != nil && int64(len(namespaces)) > int64(*maxNamespaces) {
 		result, err := r.handleValidationFailure(ctx, instance, originalStatus, "ProjectNamespaceQuotaExceeded", fmt.Sprintf("Project %q allows at most %d namespaces; observed %d.", project.Name, *maxNamespaces, len(namespaces)))
 		return result, true, err
 	}
@@ -659,7 +660,7 @@ func materializedArtifactStatus(result materializer.Result) platformv1alpha1.Art
 	return platformv1alpha1.ArtifactStatus{
 		Revision:  result.Revision,
 		Path:      result.Path,
-		Count:     int32(len(artifacts)),
+		Count:     safeInt32FromLen(len(artifacts)),
 		Artifacts: artifacts,
 	}
 }
@@ -894,7 +895,7 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 			}); err != nil {
 				return observation, nil, err
 			}
-			observation.TotalPods = int32(len(pods.Items))
+			observation.TotalPods = safeInt32FromLen(len(pods.Items))
 			for _, pod := range pods.Items {
 				if isPodReady(&pod) {
 					observation.ReadyPods++
@@ -922,9 +923,9 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 			readyInstances, _, _ := unstructured.NestedInt64(u.Object, "status", "readyInstances")
 			instances, _, _ := unstructured.NestedInt64(u.Object, "status", "instances")
 			observation.Workload = &adapters.WorkloadObservation{
-				DesiredReplicas: int32(instances),
-				ReadyReplicas:   int32(readyInstances),
-				UpdatedReplicas: int32(readyInstances),
+				DesiredReplicas: safeInt32FromInt64(instances),
+				ReadyReplicas:   safeInt32FromInt64(readyInstances),
+				UpdatedReplicas: safeInt32FromInt64(readyInstances),
 				Observed:        true,
 			}
 		}
@@ -974,9 +975,9 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 					readyTServers = tservers
 				}
 				observation.Workload = &adapters.WorkloadObservation{
-					DesiredReplicas: int32(tservers),
-					ReadyReplicas:   int32(readyTServers),
-					UpdatedReplicas: int32(readyTServers),
+					DesiredReplicas: safeInt32FromInt64(tservers),
+					ReadyReplicas:   safeInt32FromInt64(readyTServers),
+					UpdatedReplicas: safeInt32FromInt64(readyTServers),
 					Observed:        true,
 				}
 			}
@@ -996,6 +997,23 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 	}
 
 	return observation, observedResources, nil
+}
+
+func safeInt32FromInt64(value int64) int32 {
+	if value > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if value < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(value) // #nosec G115 -- Value is bounds-checked above.
+}
+
+func safeInt32FromLen(length int) int32 {
+	if length > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(length) // #nosec G115 -- Value is bounds-checked above.
 }
 
 func applyObservedStatus(instance *platformv1alpha1.ServiceInstance, status adapters.NormalizedStatus) {

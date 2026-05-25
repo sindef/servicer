@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -43,6 +44,8 @@ type ClusterTargetReconciler struct {
 	ArgoCDNamespace string
 	ArgoCDProject   string
 }
+
+const maxExtractedChartFileBytes int64 = 64 << 20 // 64 MiB per file
 
 func (r *ClusterTargetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var target platformv1alpha1.ClusterTarget
@@ -284,7 +287,7 @@ func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, kube
 }
 
 func fetchURLBytes(url string) ([]byte, error) {
-	resp, err := http.Get(url) //nolint:noctx
+	resp, err := http.Get(url) // #nosec G107 -- URL is admin-configured OperatorPackage source.
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
@@ -392,7 +395,7 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 		args = append(args, "--set", fmt.Sprintf("%s=%s", key, pkg.Spec.Source.HelmValues[key]))
 	}
 
-	cmd := exec.Command("/helm", args...) //nolint:gosec
+	cmd := exec.Command("/helm", args...) // #nosec G204 -- Helm binary is fixed; args come from trusted OperatorPackage specs.
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("helm template failed: %w: %s", err, strings.TrimSpace(string(output)))
@@ -404,7 +407,7 @@ func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, target
 }
 
 func ensureHelmChartDependencies(chartPath string) error {
-	cmd := exec.Command("/helm", "dependency", "build", chartPath) //nolint:gosec
+	cmd := exec.Command("/helm", "dependency", "build", chartPath) // #nosec G204 -- Helm binary is fixed; chart path is validated before use.
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("helm dependency build failed: %w: %s", err, strings.TrimSpace(string(output)))
@@ -457,7 +460,7 @@ func extractTarGz(destDir string, data []byte) error {
 			return fmt.Errorf("reading chart archive: %w", err)
 		}
 
-		targetPath := filepath.Join(destDir, header.Name)
+		targetPath := filepath.Join(destDir, header.Name) // #nosec G305 -- Path is validated to remain under destDir before use.
 		cleanTarget := filepath.Clean(targetPath)
 		if !strings.HasPrefix(cleanTarget, filepath.Clean(destDir)+string(os.PathSeparator)) && cleanTarget != filepath.Clean(destDir) {
 			return fmt.Errorf("chart archive contains invalid path %q", header.Name)
@@ -465,19 +468,34 @@ func extractTarGz(destDir string, data []byte) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(cleanTarget, 0o755); err != nil {
+			if err := os.MkdirAll(cleanTarget, 0o750); err != nil {
 				return fmt.Errorf("creating chart directory: %w", err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o750); err != nil {
 				return fmt.Errorf("creating chart parent directory: %w", err)
 			}
-			file, err := os.OpenFile(cleanTarget, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(header.Mode))
+			fileMode, err := chartFileMode(header.Mode)
+			if err != nil {
+				return err
+			}
+			file, err := os.OpenFile(cleanTarget, os.O_CREATE|os.O_RDWR|os.O_TRUNC, fileMode)
 			if err != nil {
 				return fmt.Errorf("creating chart file: %w", err)
 			}
-			if _, err := io.Copy(file, tarReader); err != nil {
-				file.Close()
+			if header.Size < 0 {
+				_ = file.Close()
+				return fmt.Errorf("chart archive contains negative file size for %q", header.Name)
+			}
+			if header.Size > maxExtractedChartFileBytes {
+				_ = file.Close()
+				return fmt.Errorf("chart archive file %q exceeds maximum allowed size", header.Name)
+			}
+			if _, err := io.CopyN(file, tarReader, header.Size); err != nil {
+				closeErr := file.Close()
+				if closeErr != nil {
+					return fmt.Errorf("writing chart file: %w (close error: %v)", err, closeErr)
+				}
 				return fmt.Errorf("writing chart file: %w", err)
 			}
 			if err := file.Close(); err != nil {
@@ -485,6 +503,13 @@ func extractTarGz(destDir string, data []byte) error {
 			}
 		}
 	}
+}
+
+func chartFileMode(mode int64) (os.FileMode, error) {
+	if mode < 0 || mode > math.MaxUint32 {
+		return 0, fmt.Errorf("chart archive contains invalid file mode %d", mode)
+	}
+	return os.FileMode(uint32(mode)), nil // #nosec G115 -- Value is bounds-checked above.
 }
 
 func resolveExtractedChartPath(workdir, chartPath string) (string, error) {
@@ -725,7 +750,7 @@ func (r *ClusterTargetReconciler) ensureArgoCDClusterSecret(ctx context.Context,
 			Insecure: restCfg.TLSClientConfig.Insecure,
 		},
 	}
-	cfgJSON, err := json.Marshal(clusterCfg)
+	cfgJSON, err := json.Marshal(clusterCfg) // #nosec G117 -- Argo CD cluster Secret intentionally stores token-bearing cluster config.
 	if err != nil {
 		return fmt.Errorf("marshalling cluster config: %w", err)
 	}

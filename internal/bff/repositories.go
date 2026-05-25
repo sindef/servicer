@@ -19,9 +19,9 @@ const (
 	repoSecretNamespace  = "servicer-system"
 	repoSecretTypeLabel  = "servicer.io/type"
 	repoSecretTypeValue  = "repository"
-	repoSecretScopeKey   = "servicer.io/scope"
+	repoSecretScopeKey   = "servicer.io/scope" // #nosec G101 -- Kubernetes label keys, not credentials.
 	repoSecretTenantKey  = "servicer.io/tenant"
-	repoSecretProjectKey = "servicer.io/project"
+	repoSecretProjectKey = "servicer.io/project" // #nosec G101 -- Kubernetes label keys, not credentials.
 	argocdNamespace      = "argocd"
 )
 

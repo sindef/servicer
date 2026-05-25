@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"math"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -26,7 +27,7 @@ func (r *PolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	originalStatus := policy.Status
 	policy.Status.ObservedGeneration = policy.Generation
-	policy.Status.RuleCount = int32(len(policy.Spec.Rules))
+	policy.Status.RuleCount = safeRuleCount(len(policy.Spec.Rules))
 	policy.Status.TargetKinds = policy.Status.TargetKinds[:0]
 	for _, targetKind := range policy.Spec.TargetKinds {
 		policy.Status.TargetKinds = append(policy.Status.TargetKinds, string(targetKind))
@@ -61,4 +62,11 @@ func (r *PolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&platformv1alpha1.Policy{}).
 		Complete(r)
+}
+
+func safeRuleCount(length int) int32 {
+	if length > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(length) // #nosec G115 -- Value is bounds-checked above.
 }
