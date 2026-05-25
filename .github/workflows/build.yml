@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v5
         with:
           version: v1.32.2
 
@@ -337,7 +337,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v5
         with:
           version: v1.32.2
 
