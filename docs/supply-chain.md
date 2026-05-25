@@ -13,3 +13,8 @@ Release controls:
 - checksum verification for downloaded Helm and kubectl binaries in Containerfiles
 
 Production install manifests use release tags. Operators can pin image digests in a downstream kustomize overlay after release artifacts are published.
+
+Local pre-push parity check:
+
+- `./hack/ci-local-build-security.sh` runs validate checks plus local image
+  build and Trivy vulnerability scans aligned with the CI build workflow.

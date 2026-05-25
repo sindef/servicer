@@ -257,6 +257,20 @@ docker build -f Containerfile.web -t servicer/web:dev .
 docker build -f Containerfile.tools -t servicer/tools:dev .
 ```
 
+### Local CI-style image security checks
+
+Run the same build + Trivy image scan flow used by CI before pushing:
+
+```bash
+./hack/ci-local-build-security.sh
+```
+
+Fast path when you only want image build/scan (skip validate checks):
+
+```bash
+./hack/ci-local-build-security.sh --skip-validate
+```
+
 ### Render versioned install manifests
 
 ```bash
