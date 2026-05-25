@@ -5,6 +5,7 @@ Release controls:
 - Go dependency verification in CI
 - `govulncheck` for Go vulnerability reachability
 - `gosec` static security checks
+- Helm CLI smoke test against the manager-pinned Helm version
 - Trivy filesystem scan in validation
 - Trivy image scans for every release image
 - BuildKit SBOM and provenance generation for every image

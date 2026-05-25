@@ -265,6 +265,9 @@ Run the same build + Trivy image scan flow used by CI before pushing:
 ./hack/ci-local-build-security.sh
 ```
 
+This also runs `./hack/helm-cli-smoke.sh` to verify Helm CLI compatibility
+with the manager's pinned Helm version.
+
 Fast path when you only want image build/scan (skip validate checks):
 
 ```bash

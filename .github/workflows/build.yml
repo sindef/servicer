@@ -49,6 +49,9 @@ jobs:
       - name: Static security scan
         run: go run github.com/securego/gosec/v2/cmd/gosec@latest ./...
 
+      - name: Helm CLI smoke test
+        run: ./hack/helm-cli-smoke.sh
+
       - name: Filesystem vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
