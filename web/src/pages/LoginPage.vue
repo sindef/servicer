@@ -125,7 +125,7 @@ async function submitPasswordLogin() {
           </label>
           <p v-if="loginError" class="error-text" style="grid-column: 1 / -1">{{ loginError }}</p>
           <button class="button primary login-submit" :disabled="loginLoading || !providerDetails" type="submit">
-            Sign in
+            {{ loginLoading ? 'Signing in...' : 'Sign in' }}
           </button>
         </form>
       </section>
