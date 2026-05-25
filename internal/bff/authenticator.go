@@ -465,13 +465,13 @@ func (a *authRuntime) authenticateLDAP(ctx context.Context, provider *platformv1
 	if username == "" || password == "" {
 		return resolvedIdentity{}, errors.New("username and password are required")
 	}
-	conn, err := ldap.DialURL(cfg.URL, ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: cfg.InsecureSkipVerify})) //nolint:gosec
+	conn, err := ldap.DialURL(cfg.URL, ldap.DialWithTLSConfig(ldapTLSConfig(cfg.InsecureSkipVerify)))
 	if err != nil {
 		return resolvedIdentity{}, fmt.Errorf("connect to LDAP: %w", err)
 	}
 	defer conn.Close()
 	if strings.HasPrefix(strings.ToLower(cfg.URL), "ldap://") && cfg.StartTLS {
-		if err := conn.StartTLS(&tls.Config{InsecureSkipVerify: cfg.InsecureSkipVerify}); err != nil { //nolint:gosec
+		if err := conn.StartTLS(ldapTLSConfig(cfg.InsecureSkipVerify)); err != nil {
 			return resolvedIdentity{}, fmt.Errorf("start TLS: %w", err)
 		}
 	}
@@ -531,6 +531,16 @@ func (a *authRuntime) authenticateLDAP(ctx context.Context, provider *platformv1
 		Email:        strings.TrimSpace(entry.GetAttributeValue(cfg.EmailAttribute)),
 		Groups:       groupNames,
 	}, nil
+}
+
+func ldapTLSConfig(insecureSkipVerify bool) *tls.Config {
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+	if insecureSkipVerify {
+		cfg.InsecureSkipVerify = true // #nosec G402 - Explicit admin-controlled LDAP setting for test/self-signed directories.
+	}
+	return cfg
 }
 
 func (a *authRuntime) authenticateBearerToken(ctx context.Context, token string) (authSessionState, actor, error) {
