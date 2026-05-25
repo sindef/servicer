@@ -293,6 +293,14 @@ Optional bootstrap env vars for first-run access:
 
 This repo does not intentionally store live production credentials. It does include demo/bootstrap defaults in sample manifests where certain upstream operators require initial local-only credentials to self-initialize during demo bring-up.
 
+## Licensing
+
+Servicer is Apache-2.0 licensed. Third-party operators, services, Go modules,
+and web packages keep their own licenses and notices. See
+[Third-party notices](THIRD_PARTY_NOTICES.md), and run
+`./hack/generate-third-party-licenses.sh` before publishing release artifacts so
+the generated `dist/THIRD_PARTY_LICENSES/` bundle is shipped beside them.
+
 ## Additional docs
 
 - [Feature gap analysis](docs/feature-gaps.md)
