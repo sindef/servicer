@@ -1,6 +1,7 @@
 package bff
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,7 +11,10 @@ import (
 	"github.com/sindef/servicer/internal/adapters"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const projectedCredentialSuffix = "-projected"
@@ -160,6 +164,27 @@ func (s *Server) resolveInstanceCredential(w http.ResponseWriter, r *http.Reques
 					return actor, &instance, &sourceSecret, true
 				}
 			}
+
+			// Credentials are created in the runtime target cluster. If they aren't
+			// present on the control-plane cluster, fetch directly from the placed
+			// cluster using ClusterTarget connection credentials.
+			if clusterName := strings.TrimSpace(instance.Status.Placement.ClusterName); clusterName != "" {
+				if remoteSecret, remoteErr := s.getRemoteCredentialSecret(r.Context(), clusterName, namespace, credentialName); remoteErr == nil {
+					return actor, &instance, remoteSecret, true
+				} else if !apierrors.IsNotFound(remoteErr) {
+					writeError(w, remoteErr)
+					return actor, nil, nil, false
+				}
+				if sourceName, ok := sourceCredentialNameFromProjected(credentialName); ok {
+					if remoteSourceSecret, remoteSourceErr := s.getRemoteCredentialSecret(r.Context(), clusterName, namespace, sourceName); remoteSourceErr == nil {
+						return actor, &instance, remoteSourceSecret, true
+					} else if !apierrors.IsNotFound(remoteSourceErr) {
+						writeError(w, remoteSourceErr)
+						return actor, nil, nil, false
+					}
+				}
+			}
+
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "credential Secret was not found"})
 			return actor, nil, nil, false
 		}
@@ -179,6 +204,53 @@ func sourceCredentialNameFromProjected(name string) (string, bool) {
 		return "", false
 	}
 	return base, true
+}
+
+func (s *Server) getRemoteCredentialSecret(ctx context.Context, clusterName, namespace, credentialName string) (*corev1.Secret, error) {
+	clientset, err := s.clientsetForClusterTarget(ctx, clusterName)
+	if err != nil {
+		return nil, err
+	}
+	return clientset.CoreV1().Secrets(namespace).Get(ctx, credentialName, metav1.GetOptions{})
+}
+
+func (s *Server) clientsetForClusterTarget(ctx context.Context, clusterName string) (*kubernetes.Clientset, error) {
+	var target platformv1alpha1.ClusterTarget
+	if err := s.client.Get(ctx, types.NamespacedName{Name: clusterName}, &target); err != nil {
+		return nil, err
+	}
+	connectionRef := target.Spec.ConnectionRef
+	if strings.TrimSpace(connectionRef.Name) == "" || strings.TrimSpace(connectionRef.Namespace) == "" {
+		return nil, fmt.Errorf("cluster target %q does not define a connectionRef", clusterName)
+	}
+
+	var secret corev1.Secret
+	if err := s.client.Get(ctx, types.NamespacedName{Name: connectionRef.Name, Namespace: connectionRef.Namespace}, &secret); err != nil {
+		return nil, err
+	}
+	kubeconfig := clusterConnectionData(&secret)
+	if len(kubeconfig) == 0 {
+		return nil, fmt.Errorf("cluster connection Secret %s/%s does not contain kubeconfig data", connectionRef.Namespace, connectionRef.Name)
+	}
+
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfig(restConfig)
+}
+
+func clusterConnectionData(secret *corev1.Secret) []byte {
+	if secret == nil {
+		return nil
+	}
+	if value := secret.Data["kubeconfig"]; len(value) > 0 {
+		return value
+	}
+	if value := secret.Data["value"]; len(value) > 0 {
+		return value
+	}
+	return nil
 }
 
 func instanceReferencesCredential(instance *platformv1alpha1.ServiceInstance, namespace, name string) bool {
