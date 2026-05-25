@@ -1112,9 +1112,9 @@ func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, p
 				"prune":    true,
 				"selfHeal": true,
 			},
-			"syncOptions": []string{
-				"CreateNamespace=true",
-			},
+				"syncOptions": []any{
+					"CreateNamespace=true",
+				},
 		},
 	}
 

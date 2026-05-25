@@ -84,7 +84,7 @@ var (
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-actionrequest,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=actionrequests,verbs=create;update,versions=v1alpha1,name=mactionrequest.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-actionrequest,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=actionrequests,verbs=create;update,versions=v1alpha1,name=vactionrequest.platform.servicer.io,admissionReviewVersions=v1
 func (r *ActionRequest) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *ActionRequest) Default(_ context.Context, obj runtime.Object) error {
@@ -128,7 +128,7 @@ func (r *ActionRequest) ValidateDelete(_ context.Context, _ runtime.Object) (adm
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-clustertarget,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=clustertargets,verbs=create;update,versions=v1alpha1,name=mclustertarget.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-clustertarget,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=clustertargets,verbs=create;update,versions=v1alpha1,name=vclustertarget.platform.servicer.io,admissionReviewVersions=v1
 func (r *ClusterTarget) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *ClusterTarget) Default(_ context.Context, _ runtime.Object) error {
@@ -162,7 +162,7 @@ func (r *ClusterTarget) ValidateDelete(_ context.Context, _ runtime.Object) (adm
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-operatorpackage,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=operatorpackages,verbs=create;update,versions=v1alpha1,name=moperatorpackage.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-operatorpackage,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=operatorpackages,verbs=create;update,versions=v1alpha1,name=voperatorpackage.platform.servicer.io,admissionReviewVersions=v1
 func (r *OperatorPackage) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *OperatorPackage) Default(_ context.Context, obj runtime.Object) error {
@@ -206,7 +206,7 @@ func (r *OperatorPackage) ValidateDelete(_ context.Context, _ runtime.Object) (a
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-policy,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=policies,verbs=create;update,versions=v1alpha1,name=mpolicy.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-policy,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=policies,verbs=create;update,versions=v1alpha1,name=vpolicy.platform.servicer.io,admissionReviewVersions=v1
 func (r *Policy) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *Policy) Default(_ context.Context, _ runtime.Object) error {
@@ -236,7 +236,7 @@ func (r *Policy) ValidateDelete(_ context.Context, _ runtime.Object) (admission.
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-project,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=projects,verbs=create;update,versions=v1alpha1,name=mproject.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-project,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=projects,verbs=create;update,versions=v1alpha1,name=vproject.platform.servicer.io,admissionReviewVersions=v1
 func (r *Project) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *Project) Default(_ context.Context, obj runtime.Object) error {
@@ -280,7 +280,7 @@ func (r *Project) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-authprovider,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=authproviders,verbs=create;update,versions=v1alpha1,name=mauthprovider.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-authprovider,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=authproviders,verbs=create;update,versions=v1alpha1,name=vauthprovider.platform.servicer.io,admissionReviewVersions=v1
 func (r *AuthProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *AuthProvider) Default(_ context.Context, _ runtime.Object) error {
@@ -314,7 +314,7 @@ func (r *AuthProvider) ValidateDelete(_ context.Context, _ runtime.Object) (admi
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-user,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=users,verbs=create;update,versions=v1alpha1,name=muser.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-user,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=users,verbs=create;update,versions=v1alpha1,name=vuser.platform.servicer.io,admissionReviewVersions=v1
 func (r *User) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *User) Default(_ context.Context, _ runtime.Object) error {
@@ -348,7 +348,7 @@ func (r *User) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Wa
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-group,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=groups,verbs=create;update,versions=v1alpha1,name=mgroup.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-group,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=groups,verbs=create;update,versions=v1alpha1,name=vgroup.platform.servicer.io,admissionReviewVersions=v1
 func (r *Group) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *Group) Default(_ context.Context, _ runtime.Object) error {
@@ -378,7 +378,7 @@ func (r *Group) ValidateDelete(_ context.Context, _ runtime.Object) (admission.W
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-rolebinding,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=rolebindings,verbs=create;update,versions=v1alpha1,name=mrolebinding.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-rolebinding,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=rolebindings,verbs=create;update,versions=v1alpha1,name=vrolebinding.platform.servicer.io,admissionReviewVersions=v1
 func (r *RoleBinding) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *RoleBinding) Default(_ context.Context, _ runtime.Object) error {
@@ -412,7 +412,7 @@ func (r *RoleBinding) ValidateDelete(_ context.Context, _ runtime.Object) (admis
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-serviceinstance,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=serviceinstances,verbs=create;update,versions=v1alpha1,name=mserviceinstance.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-serviceinstance,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=serviceinstances,verbs=create;update,versions=v1alpha1,name=vserviceinstance.platform.servicer.io,admissionReviewVersions=v1
 func (r *ServiceInstance) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *ServiceInstance) Default(_ context.Context, obj runtime.Object) error {
@@ -453,7 +453,7 @@ func (r *ServiceInstance) ValidateDelete(_ context.Context, _ runtime.Object) (a
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-serviceclass,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=serviceclasses,verbs=create;update,versions=v1alpha1,name=mserviceclass.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-serviceclass,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=serviceclasses,verbs=create;update,versions=v1alpha1,name=vserviceclass.platform.servicer.io,admissionReviewVersions=v1
 func (r *ServiceClass) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *ServiceClass) Default(_ context.Context, _ runtime.Object) error {
@@ -487,7 +487,7 @@ func (r *ServiceClass) ValidateDelete(_ context.Context, _ runtime.Object) (admi
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-serviceplan,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=serviceplans,verbs=create;update,versions=v1alpha1,name=mserviceplan.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-serviceplan,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=serviceplans,verbs=create;update,versions=v1alpha1,name=vserviceplan.platform.servicer.io,admissionReviewVersions=v1
 func (r *ServicePlan) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *ServicePlan) Default(_ context.Context, _ runtime.Object) error {
@@ -521,7 +521,7 @@ func (r *ServicePlan) ValidateDelete(_ context.Context, _ runtime.Object) (admis
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-tenant,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=tenants,verbs=create;update,versions=v1alpha1,name=mtenant.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-tenant,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=tenants,verbs=create;update,versions=v1alpha1,name=vtenant.platform.servicer.io,admissionReviewVersions=v1
 func (r *Tenant) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *Tenant) Default(_ context.Context, obj runtime.Object) error {
@@ -562,7 +562,7 @@ func (r *Tenant) ValidateDelete(_ context.Context, _ runtime.Object) (admission.
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-namespaceclaim,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=namespaceclaims,verbs=create;update,versions=v1alpha1,name=mnamespaceclaim.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-namespaceclaim,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=namespaceclaims,verbs=create;update,versions=v1alpha1,name=vnamespaceclaim.platform.servicer.io,admissionReviewVersions=v1
 func (r *NamespaceClaim) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *NamespaceClaim) Default(_ context.Context, obj runtime.Object) error {
@@ -601,7 +601,7 @@ func (r *NamespaceClaim) ValidateDelete(_ context.Context, _ runtime.Object) (ad
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-servicebinding,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=servicebindings,verbs=create;update,versions=v1alpha1,name=mservicebinding.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-servicebinding,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=servicebindings,verbs=create;update,versions=v1alpha1,name=vservicebinding.platform.servicer.io,admissionReviewVersions=v1
 func (r *ServiceBinding) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *ServiceBinding) Default(_ context.Context, obj runtime.Object) error {
@@ -640,7 +640,7 @@ func (r *ServiceBinding) ValidateDelete(_ context.Context, _ runtime.Object) (ad
 // +kubebuilder:webhook:path=/mutate-platform-servicer-io-v1alpha1-virtualmachineclaim,mutating=true,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=virtualmachineclaims,verbs=create;update,versions=v1alpha1,name=mvirtualmachineclaim.platform.servicer.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-platform-servicer-io-v1alpha1-virtualmachineclaim,mutating=false,failurePolicy=fail,sideEffects=None,groups=platform.servicer.io,resources=virtualmachineclaims,verbs=create;update,versions=v1alpha1,name=vvirtualmachineclaim.platform.servicer.io,admissionReviewVersions=v1
 func (r *VirtualMachineClaim) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return builder.WebhookManagedBy(mgr).For(r).WithDefaulter(r).WithValidator(r).Complete()
+	return builder.WebhookManagedBy(mgr, r).WithCustomDefaulter(r).WithCustomValidator(r).Complete()
 }
 
 func (r *VirtualMachineClaim) Default(_ context.Context, obj runtime.Object) error {
