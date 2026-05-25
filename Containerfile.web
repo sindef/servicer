@@ -12,6 +12,9 @@ RUN npm run build
 # ---- runtime ----
 FROM nginx:1.27-alpine
 
+# Pull latest security patches from the base Alpine repository at build time.
+RUN apk upgrade --no-cache
+
 # Remove default config
 RUN rm /etc/nginx/conf.d/default.conf
 
