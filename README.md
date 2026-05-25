@@ -89,12 +89,16 @@ See [docs/feature-gaps.md](docs/feature-gaps.md) for the remaining partial areas
 
 ## Deploying to Kubernetes
 
-Tagged builds publish four images to GitHub Container Registry:
+Tagged builds publish five images to GitHub Container Registry:
 
 - `ghcr.io/sindef/servicer-manager:<version>`
 - `ghcr.io/sindef/servicer-syncer:<version>`
 - `ghcr.io/sindef/servicer-bff:<version>`
 - `ghcr.io/sindef/servicer-web:<version>`
+- `ghcr.io/sindef/servicer-tools:<version>`
+
+The `syncer` image is used in local demo and validation paths; production `deploy/`
+manifests do not deploy a syncer sidecar.
 
 Each Git tag matching `v*` also publishes a rendered install manifest as a GitHub release asset:
 
@@ -137,9 +141,9 @@ Optional environment overrides:
 `deploy/` is the real-cluster install path. It deploys:
 
 - `manager`
-- `syncer`
 - `bff`
 - `web`
+- backup and restore jobs using `tools`
 - webhook bootstrap/service manifests and RBAC
 
 The web service is a `ClusterIP`. Expose it with port-forward or your own ingress:
@@ -250,6 +254,7 @@ docker build -f Containerfile.manager -t servicer/manager:dev .
 docker build -f Containerfile.syncer -t servicer/syncer:dev .
 docker build -f Containerfile.bff -t servicer/bff:dev .
 docker build -f Containerfile.web -t servicer/web:dev .
+docker build -f Containerfile.tools -t servicer/tools:dev .
 ```
 
 ### Render versioned install manifests
@@ -306,6 +311,8 @@ the generated `dist/THIRD_PARTY_LICENSES/` bundle is shipped beside them.
 ## Additional docs
 
 - [Feature gap analysis](docs/feature-gaps.md)
+- [Release notes: v0.1.0](docs/releases/v0.1.0.md)
+- [Changelog](CHANGELOG.md)
 - [Catalog lifecycle](docs/catalog-lifecycle.md)
 - [Audit](docs/audit.md)
 - [API compatibility](docs/api-compatibility.md)
