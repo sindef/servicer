@@ -26,6 +26,24 @@ type kubeVirtParameters struct {
 	RunStrategy       string   `json:"runStrategy,omitempty"`
 	SSHAuthorizedKeys []string `json:"sshAuthorizedKeys,omitempty"`
 	CloudInitUserData string   `json:"cloudInitUserData,omitempty"`
+	Networks          []kubeVirtNetworkParameters `json:"networks,omitempty"`
+	Disks             []kubeVirtDiskParameters    `json:"disks,omitempty"`
+}
+
+type kubeVirtNetworkParameters struct {
+	Name              string `json:"name,omitempty"`
+	Type              string `json:"type,omitempty"`
+	BindingMethod     string `json:"bindingMethod,omitempty"`
+	MultusNetworkName string `json:"multusNetworkName,omitempty"`
+	Model             string `json:"model,omitempty"`
+}
+
+type kubeVirtDiskParameters struct {
+	Name         string `json:"name,omitempty"`
+	Image        string `json:"image,omitempty"`
+	Size         string `json:"size,omitempty"`
+	StorageClass string `json:"storageClass,omitempty"`
+	Bus          string `json:"bus,omitempty"`
 }
 
 // KubeVirtContract describes the normalized platform contract for virtual machines.
@@ -81,7 +99,7 @@ func (a *KubeVirtAdapter) Validate(_ context.Context, request ValidationRequest)
 	params, err := a.parameters(ctx)
 	if err != nil {
 		issues = append(issues, ValidationIssue{Path: "parameters", Message: err.Error(), Severity: HealthSeverityCritical})
-	} else if params.Image == "" {
+	} else if params.Image == "" && !hasKubeVirtDiskImage(params.Disks) {
 		issues = append(issues, ValidationIssue{Path: "parameters.image", Message: "virtual machine image is required", Severity: HealthSeverityCritical})
 	}
 	return ValidationResult{Valid: len(issues) == 0, Issues: issues}, nil
@@ -131,33 +149,84 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 			"userdata": a.cloudInitUserData(params),
 		},
 	}
-	rootDiskName := fmt.Sprintf("%s-rootdisk", ctx.Instance.Name)
-	dataVolumeManifest := map[string]any{
-		"apiVersion": kubeVirtDataVolumeAPI,
-		"kind":       "DataVolume",
-		"metadata": map[string]any{
-			"name":      rootDiskName,
-			"namespace": namespace,
-			"labels":    labels,
-			"annotations": map[string]string{
-				"servicer.io/source-image": params.Image,
-			},
-		},
-		"spec": map[string]any{
-			"source": map[string]any{
-				"registry": map[string]string{"url": params.Image},
-			},
-			"pvc": map[string]any{
-				"accessModes": []string{"ReadWriteOnce"},
-				"resources": map[string]any{
-					"requests": map[string]string{"storage": params.StorageSize},
+	vmDisks := make([]map[string]any, 0, len(params.Disks)+1)
+	vmVolumes := make([]map[string]any, 0, len(params.Disks)+1)
+	dataVolumeArtifacts := make([]RenderedArtifact, 0, len(params.Disks))
+	for _, disk := range params.Disks {
+		dvName := fmt.Sprintf("%s-%s", ctx.Instance.Name, disk.Name)
+		dataVolumeManifest := map[string]any{
+			"apiVersion": kubeVirtDataVolumeAPI,
+			"kind":       "DataVolume",
+			"metadata": map[string]any{
+				"name":      dvName,
+				"namespace": namespace,
+				"labels":    labels,
+				"annotations": map[string]string{
+					"servicer.io/source-image": disk.Image,
 				},
 			},
-		},
+			"spec": map[string]any{
+				"source": map[string]any{
+					"registry": map[string]string{"url": disk.Image},
+				},
+				"pvc": map[string]any{
+					"accessModes": []string{"ReadWriteOnce"},
+					"resources": map[string]any{
+						"requests": map[string]string{"storage": disk.Size},
+					},
+				},
+			},
+		}
+		if disk.StorageClass != "" {
+			dataVolumeManifest["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = disk.StorageClass
+		}
+		content, err := yaml.Marshal(dataVolumeManifest)
+		if err != nil {
+			return RenderResult{}, err
+		}
+		dataVolumeArtifacts = append(dataVolumeArtifacts, RenderedArtifact{Path: fmt.Sprintf("%s/datavolume-%s.yaml", basePath, disk.Name), Content: content})
+
+		vmDisks = append(vmDisks, map[string]any{
+			"name": disk.Name,
+			"disk": map[string]any{
+				"bus": disk.Bus,
+			},
+		})
+		vmVolumes = append(vmVolumes, map[string]any{
+			"name":       disk.Name,
+			"dataVolume": map[string]string{"name": dvName},
+		})
 	}
-	if params.StorageClass != "" {
-		dataVolumeManifest["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = params.StorageClass
+
+	interfaces := make([]map[string]any, 0, len(params.Networks))
+	networks := make([]map[string]any, 0, len(params.Networks))
+	for _, network := range params.Networks {
+		iface := map[string]any{"name": network.Name}
+		switch network.BindingMethod {
+		case "bridge":
+			iface["bridge"] = map[string]any{}
+		case "sriov":
+			iface["sriov"] = map[string]any{}
+		default:
+			iface["masquerade"] = map[string]any{}
+		}
+		if network.Model != "" {
+			iface["model"] = network.Model
+		}
+		interfaces = append(interfaces, iface)
+
+		networkSpec := map[string]any{"name": network.Name}
+		if network.Type == "multus" && network.MultusNetworkName != "" {
+			networkSpec["multus"] = map[string]any{"networkName": network.MultusNetworkName}
+		} else {
+			networkSpec["pod"] = map[string]any{}
+		}
+		networks = append(networks, networkSpec)
 	}
+
+	vmDisks = append(vmDisks, map[string]any{"name": "cloudinit", "disk": map[string]any{"bus": "virtio"}})
+	vmVolumes = append(vmVolumes, map[string]any{"name": "cloudinit", "cloudInitNoCloud": map[string]string{"secretRef": cloudInitName}})
+
 	vmManifest := map[string]any{
 		"apiVersion": kubeVirtRuntimeAPI,
 		"kind":       kubeVirtRuntimeKind,
@@ -166,7 +235,7 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 			"namespace": namespace,
 			"labels":    labels,
 			"annotations": map[string]string{
-				"servicer.io/image": params.Image,
+			"servicer.io/image": params.Image,
 			},
 		},
 		"spec": map[string]any{
@@ -176,11 +245,8 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 				"spec": map[string]any{
 					"domain": map[string]any{
 						"devices": map[string]any{
-							"disks": []map[string]any{
-								{"name": "rootdisk", "disk": map[string]any{"bus": "virtio"}},
-								{"name": "cloudinit", "disk": map[string]any{"bus": "virtio"}},
-							},
-							"interfaces": []map[string]any{{"name": "default", "masquerade": map[string]any{}}},
+							"disks":      vmDisks,
+							"interfaces": interfaces,
 						},
 						"resources": map[string]any{
 							"requests": map[string]string{
@@ -189,11 +255,8 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 							},
 						},
 					},
-					"networks": []map[string]any{{"name": "default", "pod": map[string]any{}}},
-					"volumes": []map[string]any{
-						{"name": "rootdisk", "dataVolume": map[string]string{"name": rootDiskName}},
-						{"name": "cloudinit", "cloudInitNoCloud": map[string]string{"secretRef": cloudInitName}},
-					},
+					"networks": networks,
+					"volumes":  vmVolumes,
 				},
 			},
 		},
@@ -206,7 +269,6 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 	}{
 		{name: "namespace.yaml", body: namespaceManifest},
 		{name: "cloudinit-secret.yaml", body: cloudInitManifest},
-		{name: "datavolume-rootdisk.yaml", body: dataVolumeManifest},
 		{name: "virtualmachine.yaml", body: vmManifest},
 	} {
 		content, err := yaml.Marshal(manifest.body)
@@ -215,6 +277,7 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 		}
 		artifacts = append(artifacts, RenderedArtifact{Path: fmt.Sprintf("%s/%s", basePath, manifest.name), Content: content})
 	}
+	artifacts = append(artifacts, dataVolumeArtifacts...)
 
 	return RenderResult{
 		RuntimeDriver: kubeVirtRuntimeDriver,
@@ -308,7 +371,79 @@ func (a *KubeVirtAdapter) parameters(ctx ServiceContext) (kubeVirtParameters, er
 	if params.RunStrategy == "" {
 		params.RunStrategy = "RerunOnFailure"
 	}
+	if len(params.Disks) == 0 && params.Image != "" {
+		params.Disks = []kubeVirtDiskParameters{{
+			Name:         "rootdisk",
+			Image:        params.Image,
+			Size:         params.StorageSize,
+			StorageClass: params.StorageClass,
+			Bus:          "virtio",
+		}}
+	}
+	validDisks := make([]kubeVirtDiskParameters, 0, len(params.Disks))
+	for idx, disk := range params.Disks {
+		if disk.Name == "" {
+			if idx == 0 {
+				disk.Name = "rootdisk"
+			} else {
+				disk.Name = fmt.Sprintf("disk-%d", idx+1)
+			}
+		}
+		if disk.Image == "" {
+			disk.Image = params.Image
+		}
+		if disk.Size == "" {
+			disk.Size = params.StorageSize
+		}
+		if disk.StorageClass == "" {
+			disk.StorageClass = params.StorageClass
+		}
+		if disk.Bus == "" {
+			disk.Bus = "virtio"
+		}
+		if disk.Image == "" {
+			continue
+		}
+		validDisks = append(validDisks, disk)
+	}
+	params.Disks = validDisks
+	if params.Image == "" && len(params.Disks) > 0 {
+		params.Image = params.Disks[0].Image
+	}
+	if len(params.Networks) == 0 {
+		params.Networks = []kubeVirtNetworkParameters{{Name: "default", Type: "pod", BindingMethod: "masquerade", Model: "virtio"}}
+	}
+	for idx := range params.Networks {
+		if params.Networks[idx].Name == "" {
+			if idx == 0 {
+				params.Networks[idx].Name = "default"
+			} else {
+				params.Networks[idx].Name = fmt.Sprintf("net-%d", idx+1)
+			}
+		}
+		if params.Networks[idx].Type == "" {
+			params.Networks[idx].Type = "pod"
+		}
+		if params.Networks[idx].BindingMethod == "" {
+			params.Networks[idx].BindingMethod = "masquerade"
+		}
+		if params.Networks[idx].Model == "" {
+			params.Networks[idx].Model = "virtio"
+		}
+		if params.Networks[idx].Type == "multus" && params.Networks[idx].MultusNetworkName == "" {
+			params.Networks[idx].Type = "pod"
+		}
+	}
 	return params, nil
+}
+
+func hasKubeVirtDiskImage(disks []kubeVirtDiskParameters) bool {
+	for _, disk := range disks {
+		if disk.Image != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *KubeVirtAdapter) cloudInitUserData(params kubeVirtParameters) string {

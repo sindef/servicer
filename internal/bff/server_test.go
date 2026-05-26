@@ -38,8 +38,8 @@ func TestCatalogReturnsProductShapedEntries(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &entries); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(entries) != 5 {
-		t.Fatalf("expected only implemented seeded products, got %#v", entries)
+	if len(entries) != 3 {
+		t.Fatalf("expected tenant-scoped published products only, got %#v", entries)
 	}
 	var namespaceEntry *CatalogEntry
 	var virtualMachineEntry *CatalogEntry
@@ -56,6 +56,39 @@ func TestCatalogReturnsProductShapedEntries(t *testing.T) {
 	}
 	if virtualMachineEntry == nil || len(virtualMachineEntry.Plans) != 1 {
 		t.Fatalf("expected virtual-machine catalog entry with plan visibility, got %#v", entries)
+	}
+}
+
+func TestCatalogHidesUnpublishedClasses(t *testing.T) {
+	server := testServer(t)
+
+	var valkeyClass platformv1alpha1.ServiceClass
+	if err := server.client.Get(context.Background(), client.ObjectKey{Name: "valkey"}, &valkeyClass); err != nil {
+		t.Fatalf("get valkey class: %v", err)
+	}
+	valkeyClass.Spec.Published = false
+	valkeyClass.Status.Published = false
+	if err := server.client.Update(context.Background(), &valkeyClass); err != nil {
+		t.Fatalf("update valkey class: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var entries []CatalogEntry
+	if err := json.Unmarshal(response.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.Name == "valkey" {
+			t.Fatalf("expected unpublished class to be hidden, got %#v", entries)
+		}
 	}
 }
 
@@ -1370,7 +1403,7 @@ func testTenant() *platformv1alpha1.Tenant {
 			DisplayName:           "Acme",
 			Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
 			QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "standard"},
-			AllowedServiceClasses: []string{"namespace", "valkey"},
+			AllowedServiceClasses: []string{"namespace", "valkey", "virtual-machine"},
 			Lifecycle:             platformv1alpha1.TenantLifecycleSpec{Phase: platformv1alpha1.TenantLifecyclePhaseActive},
 		},
 		Status: platformv1alpha1.TenantStatus{Phase: "Ready"},

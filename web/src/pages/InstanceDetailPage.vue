@@ -32,6 +32,24 @@ type NatsCredentialForm = {
   allowResponses: boolean
 }
 
+type VmNetworkForm = {
+  id: number
+  name: string
+  networkType: 'pod' | 'multus'
+  bindingMethod: 'masquerade' | 'bridge' | 'sriov'
+  multusNetworkName: string
+  model: string
+}
+
+type VmDiskForm = {
+  id: number
+  name: string
+  image: string
+  size: string
+  storageClass: string
+  bus: string
+}
+
 const props = defineProps<{ name: string }>()
 const { data, loading, error, reload } = useApi(() => api.instance(props.name), {
   refreshMs: 3000,
@@ -132,6 +150,10 @@ const parameterForm = reactive({
   backupSchedule: '',
   backupRetention: '30d',
   maxPayload: '1MiB',
+  vmImage: '',
+  vmRunStrategy: 'Always',
+  vmNetworks: [] as VmNetworkForm[],
+  vmDisks: [] as VmDiskForm[],
   primaryCluster: '',
   standbyClusters: '',
   maxReplicationLagSeconds: 30,
@@ -219,6 +241,28 @@ function createNatsCredential(values: Partial<Omit<NatsCredentialForm, 'id'>> = 
   }
 }
 
+function createVmNetwork(values: Partial<Omit<VmNetworkForm, 'id'>> = {}): VmNetworkForm {
+  return {
+    id: allocateNatsRowId(),
+    name: values.name || 'default',
+    networkType: values.networkType || 'pod',
+    bindingMethod: values.bindingMethod || 'masquerade',
+    multusNetworkName: values.multusNetworkName || '',
+    model: values.model || 'virtio'
+  }
+}
+
+function createVmDisk(values: Partial<Omit<VmDiskForm, 'id'>> = {}): VmDiskForm {
+  return {
+    id: allocateNatsRowId(),
+    name: values.name || 'rootdisk',
+    image: values.image || '',
+    size: values.size || '20Gi',
+    storageClass: values.storageClass || '',
+    bus: values.bus || 'virtio'
+  }
+}
+
 function csvList(value: string) {
   return value
     .split(',')
@@ -248,6 +292,22 @@ function addNatsCredential() {
 
 function removeNatsCredential(id: number) {
   parameterForm.natsAppCredentials = parameterForm.natsAppCredentials.filter((credential) => credential.id !== id)
+}
+
+function addVmNetwork() {
+  parameterForm.vmNetworks.push(createVmNetwork({ name: `net-${parameterForm.vmNetworks.length + 1}` }))
+}
+
+function removeVmNetwork(id: number) {
+  parameterForm.vmNetworks = parameterForm.vmNetworks.filter((network) => network.id !== id)
+}
+
+function addVmDisk() {
+  parameterForm.vmDisks.push(createVmDisk({ name: `disk-${parameterForm.vmDisks.length + 1}`, image: parameterForm.vmImage }))
+}
+
+function removeVmDisk(id: number) {
+  parameterForm.vmDisks = parameterForm.vmDisks.filter((disk) => disk.id !== id)
 }
 
 function conditionTone(type: string, status: string) {
@@ -368,6 +428,51 @@ function applyParameters(parameters: Record<string, unknown>) {
         })
       })
     : []
+  parameterForm.vmImage = stringParam(parameters, 'image', '')
+  parameterForm.vmRunStrategy = stringParam(parameters, 'runStrategy', 'Always')
+  parameterForm.vmNetworks = Array.isArray(parameters.networks)
+    ? parameters.networks.map((entry) => {
+        const network = entry as Record<string, unknown>
+        return createVmNetwork({
+          name: stringParam(network, 'name', 'default'),
+          networkType: stringParam(network, 'type', 'pod') === 'multus' ? 'multus' : 'pod',
+          bindingMethod: (() => {
+            const method = stringParam(network, 'bindingMethod', 'masquerade')
+            if (method === 'bridge' || method === 'sriov') {
+              return method
+            }
+            return 'masquerade'
+          })(),
+          multusNetworkName: stringParam(network, 'multusNetworkName', ''),
+          model: stringParam(network, 'model', 'virtio')
+        })
+      })
+    : []
+  if (parameterForm.vmNetworks.length === 0) {
+    parameterForm.vmNetworks = [createVmNetwork({ name: 'default' })]
+  }
+  parameterForm.vmDisks = Array.isArray(parameters.disks)
+    ? parameters.disks.map((entry) => {
+        const disk = entry as Record<string, unknown>
+        return createVmDisk({
+          name: stringParam(disk, 'name', 'rootdisk'),
+          image: stringParam(disk, 'image', parameterForm.vmImage),
+          size: stringParam(disk, 'size', parameterForm.storageSize || '20Gi'),
+          storageClass: stringParam(disk, 'storageClass', parameterForm.storageClass),
+          bus: stringParam(disk, 'bus', 'virtio')
+        })
+      })
+    : []
+  if (parameterForm.vmDisks.length === 0 && parameterForm.vmImage) {
+    parameterForm.vmDisks = [
+      createVmDisk({
+        name: 'rootdisk',
+        image: parameterForm.vmImage,
+        size: parameterForm.storageSize || '20Gi',
+        storageClass: parameterForm.storageClass
+      })
+    ]
+  }
 }
 
 function compactParams(values: Record<string, unknown>) {
@@ -522,6 +627,45 @@ function buildUpdateParameters() {
           .filter(Boolean),
         serviceType: parameterForm.serviceType,
         externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
+      })
+    case 'virtual-machine':
+      return compactParams({
+        image: parameterForm.vmImage,
+        cpu: parameterForm.cpu,
+        memory: parameterForm.memory,
+        runStrategy: parameterForm.vmRunStrategy,
+        storageClass: parameterForm.storageClass,
+        storageSize: parameterForm.storageSize,
+        networks: parameterForm.vmNetworks
+          .map((network) =>
+            compactParams({
+              name: network.name.trim(),
+              type: network.networkType,
+              bindingMethod: network.bindingMethod,
+              multusNetworkName: network.networkType === 'multus' ? network.multusNetworkName.trim() : undefined,
+              model: network.model.trim()
+            })
+          )
+          .filter((network) => typeof network.name === 'string' && network.name.length > 0),
+        disks: parameterForm.vmDisks
+          .map((disk) =>
+            compactParams({
+              name: disk.name.trim(),
+              image: disk.image.trim(),
+              size: disk.size.trim(),
+              storageClass: disk.storageClass.trim(),
+              bus: disk.bus.trim()
+            })
+          )
+          .filter(
+            (disk) =>
+              typeof disk.name === 'string' &&
+              disk.name.length > 0 &&
+              typeof disk.image === 'string' &&
+              disk.image.length > 0 &&
+              typeof disk.size === 'string' &&
+              disk.size.length > 0
+          )
       })
     default:
       return undefined
@@ -1252,6 +1396,92 @@ async function revealCredential(name: string, url?: string) {
             <label>Max failover lag<input v-model.number="parameterForm.maxReplicationLagSeconds" min="1" type="number" /></label>
             <label>Service type<select v-model="parameterForm.serviceType"><option value="ClusterIP">ClusterIP</option><option value="NodePort">NodePort</option><option value="LoadBalancer">LoadBalancer</option></select></label>
             <label v-if="parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort'">External DNS hostname<input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" /></label>
+          </div>
+          <div v-else-if="data.productClass === 'virtual-machine'" class="form-grid modal-form-grid">
+            <label>Guest image<input v-model="parameterForm.vmImage" placeholder="quay.io/containerdisks/ubuntu:22.04" /></label>
+            <label>
+              Run strategy
+              <select v-model="parameterForm.vmRunStrategy">
+                <option value="Always">Always</option>
+                <option value="RerunOnFailure">RerunOnFailure</option>
+                <option value="Manual">Manual</option>
+                <option value="Halted">Halted</option>
+              </select>
+            </label>
+            <label>Guest CPU<input v-model="parameterForm.cpu" placeholder="2" /></label>
+            <label>Guest memory<input v-model="parameterForm.memory" placeholder="4Gi" /></label>
+
+            <div class="nested-resource-editor" style="grid-column: span 2">
+              <div class="resource-editor-head">
+                <div>
+                  <h4>Networks</h4>
+                  <p class="muted">Configure VM interfaces and network attachments.</p>
+                </div>
+                <button class="button secondary compact-button" type="button" @click="addVmNetwork">Add network</button>
+              </div>
+              <div v-if="parameterForm.vmNetworks.length" class="resource-editor-list">
+                <article v-for="network in parameterForm.vmNetworks" :key="network.id" class="resource-editor-card">
+                  <div class="resource-editor-head">
+                    <strong>{{ network.name || 'New network' }}</strong>
+                    <button class="button secondary compact-button" type="button" @click="removeVmNetwork(network.id)">Remove</button>
+                  </div>
+                  <div class="resource-editor-grid">
+                    <label>Name<input v-model="network.name" placeholder="default" /></label>
+                    <label>
+                      Type
+                      <select v-model="network.networkType">
+                        <option value="pod">pod</option>
+                        <option value="multus">multus</option>
+                      </select>
+                    </label>
+                    <label>
+                      Binding
+                      <select v-model="network.bindingMethod">
+                        <option value="masquerade">masquerade</option>
+                        <option value="bridge">bridge</option>
+                        <option value="sriov">sriov</option>
+                      </select>
+                    </label>
+                    <label>Model<input v-model="network.model" placeholder="virtio" /></label>
+                    <label v-if="network.networkType === 'multus'">Multus network name<input v-model="network.multusNetworkName" placeholder="default/vlan-net" /></label>
+                  </div>
+                </article>
+              </div>
+              <p v-else class="muted">No networks defined yet.</p>
+            </div>
+
+            <div class="nested-resource-editor" style="grid-column: span 2">
+              <div class="resource-editor-head">
+                <div>
+                  <h4>Disks</h4>
+                  <p class="muted">Configure DataVolume-backed VM disks.</p>
+                </div>
+                <button class="button secondary compact-button" type="button" @click="addVmDisk">Add disk</button>
+              </div>
+              <div v-if="parameterForm.vmDisks.length" class="resource-editor-list">
+                <article v-for="disk in parameterForm.vmDisks" :key="disk.id" class="resource-editor-card">
+                  <div class="resource-editor-head">
+                    <strong>{{ disk.name || 'New disk' }}</strong>
+                    <button class="button secondary compact-button" type="button" @click="removeVmDisk(disk.id)">Remove</button>
+                  </div>
+                  <div class="resource-editor-grid">
+                    <label>Name<input v-model="disk.name" placeholder="rootdisk" /></label>
+                    <label>Image<input v-model="disk.image" placeholder="quay.io/containerdisks/ubuntu:22.04" /></label>
+                    <label>Size<input v-model="disk.size" placeholder="20Gi" /></label>
+                    <label>StorageClass<input v-model="disk.storageClass" placeholder="default" /></label>
+                    <label>
+                      Bus
+                      <select v-model="disk.bus">
+                        <option value="virtio">virtio</option>
+                        <option value="sata">sata</option>
+                        <option value="scsi">scsi</option>
+                      </select>
+                    </label>
+                  </div>
+                </article>
+              </div>
+              <p v-else class="muted">No disks defined yet.</p>
+            </div>
           </div>
           <div v-else-if="data.productClass === 'yugabyte'" class="form-grid modal-form-grid">
             <label>TServer / Master nodes<input v-model.number="parameterForm.replicas" min="1" type="number" /></label>

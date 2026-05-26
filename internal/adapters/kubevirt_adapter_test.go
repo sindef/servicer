@@ -65,6 +65,43 @@ func TestKubeVirtAdapterRenderProducesVirtualMachineManifest(t *testing.T) {
 	}
 }
 
+func TestKubeVirtAdapterRenderSupportsCustomNetworksAndDisks(t *testing.T) {
+	adapter := NewKubeVirtAdapter()
+	ctx := sampleKubeVirtContext(t)
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"cpu":        "4",
+		"memory":     "8Gi",
+		"runStrategy": "Manual",
+		"networks": []map[string]any{
+			{"name": "default", "type": "pod", "bindingMethod": "masquerade"},
+			{"name": "vlan220", "type": "multus", "bindingMethod": "bridge", "multusNetworkName": "default/vlan220"},
+		},
+		"disks": []map[string]any{
+			{"name": "os", "image": "quay.io/containerdisks/fedora:39", "size": "30Gi", "bus": "virtio"},
+			{"name": "data", "image": "quay.io/containerdisks/fedora:39", "size": "100Gi", "storageClass": "fast-ssd", "bus": "scsi"},
+		},
+	})
+
+	result, err := adapter.Render(context.Background(), RenderRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	rendered := renderedArtifacts(result)
+	for _, expected := range []string{
+		"networkName: default/vlan220",
+		"name: vlan220",
+		"bridge:",
+		"name: os",
+		"name: data",
+		"storageClassName: fast-ssd",
+		"storage: 100Gi",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("expected rendered output to contain %q:\n%s", expected, rendered)
+		}
+	}
+}
+
 func sampleKubeVirtContext(t *testing.T) ServiceContext {
 	t.Helper()
 	ctx := samplePostgreSQLContext(t)

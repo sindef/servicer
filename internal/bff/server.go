@@ -449,7 +449,8 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer); !ok {
+	actor, ok := requireRole(w, r, rolePlatformAdmin, roleTenantOperator, roleServiceConsumer)
+	if !ok {
 		return
 	}
 	var classes platformv1alpha1.ServiceClassList
@@ -462,6 +463,19 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	allowedByTenant := map[string]struct{}{}
+	if !actor.isPlatformAdmin() {
+		var tenants platformv1alpha1.TenantList
+		if err := s.client.List(r.Context(), &tenants); err != nil {
+			writeError(w, err)
+			return
+		}
+		for _, tenant := range visibleTenants(actor, tenants.Items) {
+			for _, className := range tenant.Spec.AllowedServiceClasses {
+				allowedByTenant[className] = struct{}{}
+			}
+		}
+	}
 	plansByClass := map[string][]platformv1alpha1.ServicePlan{}
 	for _, plan := range plans.Items {
 		plansByClass[plan.Spec.ServiceClassRef.Name] = append(plansByClass[plan.Spec.ServiceClassRef.Name], plan)
@@ -471,6 +485,14 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	for _, class := range classes.Items {
 		if _, ok := implementedProducts[class.Name]; !ok {
 			continue
+		}
+		if !class.Spec.Published && !class.Status.Published {
+			continue
+		}
+		if !actor.isPlatformAdmin() {
+			if _, ok := allowedByTenant[class.Name]; !ok {
+				continue
+			}
 		}
 		contract, _ := adapters.KnownContract(adapters.ServiceClass(class.Name))
 		entry := CatalogEntry{
