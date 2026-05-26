@@ -14,20 +14,24 @@ const (
 	kubeVirtRuntimeDriver = "kubevirt"
 	kubeVirtRuntimeAPI    = "kubevirt.io/v1"
 	kubeVirtRuntimeKind   = "VirtualMachine"
+	kubeVirtPoolAPI       = "pool.kubevirt.io/v1alpha1"
+	kubeVirtPoolKind      = "VirtualMachinePool"
 	kubeVirtDataVolumeAPI = "cdi.kubevirt.io/v1beta1"
 )
 
 type kubeVirtParameters struct {
-	Image             string   `json:"image,omitempty"`
-	CPU               string   `json:"cpu,omitempty"`
-	Memory            string   `json:"memory,omitempty"`
-	StorageClass      string   `json:"storageClass,omitempty"`
-	StorageSize       string   `json:"storageSize,omitempty"`
-	RunStrategy       string   `json:"runStrategy,omitempty"`
-	SSHAuthorizedKeys []string `json:"sshAuthorizedKeys,omitempty"`
-	CloudInitUserData string   `json:"cloudInitUserData,omitempty"`
+	Image             string                      `json:"image,omitempty"`
+	CPU               string                      `json:"cpu,omitempty"`
+	Memory            string                      `json:"memory,omitempty"`
+	StorageClass      string                      `json:"storageClass,omitempty"`
+	StorageSize       string                      `json:"storageSize,omitempty"`
+	RunStrategy       string                      `json:"runStrategy,omitempty"`
+	SSHAuthorizedKeys []string                    `json:"sshAuthorizedKeys,omitempty"`
+	CloudInitUserData string                      `json:"cloudInitUserData,omitempty"`
 	Networks          []kubeVirtNetworkParameters `json:"networks,omitempty"`
 	Disks             []kubeVirtDiskParameters    `json:"disks,omitempty"`
+	WorkloadType      string                      `json:"workloadType,omitempty"`
+	PoolReplicas      int32                       `json:"poolReplicas,omitempty"`
 }
 
 type kubeVirtNetworkParameters struct {
@@ -101,6 +105,8 @@ func (a *KubeVirtAdapter) Validate(_ context.Context, request ValidationRequest)
 		issues = append(issues, ValidationIssue{Path: "parameters", Message: err.Error(), Severity: HealthSeverityCritical})
 	} else if params.Image == "" && !hasKubeVirtDiskImage(params.Disks) {
 		issues = append(issues, ValidationIssue{Path: "parameters.image", Message: "virtual machine image is required", Severity: HealthSeverityCritical})
+	} else if params.WorkloadType == "vmp" && params.PoolReplicas < 1 {
+		issues = append(issues, ValidationIssue{Path: "parameters.poolReplicas", Message: "pool replicas must be at least 1 when workloadType=vmp", Severity: HealthSeverityCritical})
 	}
 	return ValidationResult{Valid: len(issues) == 0, Issues: issues}, nil
 }
@@ -149,42 +155,55 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 			"userdata": a.cloudInitUserData(params),
 		},
 	}
+	isPoolWorkload := params.WorkloadType == "vmp"
 	vmDisks := make([]map[string]any, 0, len(params.Disks)+1)
 	vmVolumes := make([]map[string]any, 0, len(params.Disks)+1)
 	dataVolumeArtifacts := make([]RenderedArtifact, 0, len(params.Disks))
+	dataVolumeTemplates := make([]map[string]any, 0, len(params.Disks))
 	for _, disk := range params.Disks {
 		dvName := fmt.Sprintf("%s-%s", ctx.Instance.Name, disk.Name)
-		dataVolumeManifest := map[string]any{
-			"apiVersion": kubeVirtDataVolumeAPI,
-			"kind":       "DataVolume",
-			"metadata": map[string]any{
-				"name":      dvName,
-				"namespace": namespace,
-				"labels":    labels,
-				"annotations": map[string]string{
-					"servicer.io/source-image": disk.Image,
-				},
+		dvSpec := map[string]any{
+			"source": map[string]any{
+				"registry": map[string]string{"url": disk.Image},
 			},
-			"spec": map[string]any{
-				"source": map[string]any{
-					"registry": map[string]string{"url": disk.Image},
-				},
-				"pvc": map[string]any{
-					"accessModes": []string{"ReadWriteOnce"},
-					"resources": map[string]any{
-						"requests": map[string]string{"storage": disk.Size},
-					},
+			"pvc": map[string]any{
+				"accessModes": []string{"ReadWriteOnce"},
+				"resources": map[string]any{
+					"requests": map[string]string{"storage": disk.Size},
 				},
 			},
 		}
 		if disk.StorageClass != "" {
-			dataVolumeManifest["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = disk.StorageClass
+			dvSpec["pvc"].(map[string]any)["storageClassName"] = disk.StorageClass
 		}
-		content, err := yaml.Marshal(dataVolumeManifest)
-		if err != nil {
-			return RenderResult{}, err
+		if isPoolWorkload {
+			dvName = disk.Name
+			dataVolumeTemplates = append(dataVolumeTemplates, map[string]any{
+				"metadata": map[string]any{
+					"name": dvName,
+				},
+				"spec": dvSpec,
+			})
+		} else {
+			dataVolumeManifest := map[string]any{
+				"apiVersion": kubeVirtDataVolumeAPI,
+				"kind":       "DataVolume",
+				"metadata": map[string]any{
+					"name":      dvName,
+					"namespace": namespace,
+					"labels":    labels,
+					"annotations": map[string]string{
+						"servicer.io/source-image": disk.Image,
+					},
+				},
+				"spec": dvSpec,
+			}
+			content, err := yaml.Marshal(dataVolumeManifest)
+			if err != nil {
+				return RenderResult{}, err
+			}
+			dataVolumeArtifacts = append(dataVolumeArtifacts, RenderedArtifact{Path: fmt.Sprintf("%s/datavolume-%s.yaml", basePath, disk.Name), Content: content})
 		}
-		dataVolumeArtifacts = append(dataVolumeArtifacts, RenderedArtifact{Path: fmt.Sprintf("%s/datavolume-%s.yaml", basePath, disk.Name), Content: content})
 
 		vmDisks = append(vmDisks, map[string]any{
 			"name": disk.Name,
@@ -227,7 +246,32 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 	vmDisks = append(vmDisks, map[string]any{"name": "cloudinit", "disk": map[string]any{"bus": "virtio"}})
 	vmVolumes = append(vmVolumes, map[string]any{"name": "cloudinit", "cloudInitNoCloud": map[string]string{"secretRef": cloudInitName}})
 
-	vmManifest := map[string]any{
+	vmTemplateSpec := map[string]any{
+		"runStrategy": params.RunStrategy,
+		"template": map[string]any{
+			"metadata": map[string]any{"labels": labels},
+			"spec": map[string]any{
+				"domain": map[string]any{
+					"devices": map[string]any{
+						"disks":      vmDisks,
+						"interfaces": interfaces,
+					},
+					"resources": map[string]any{
+						"requests": map[string]string{
+							"cpu":    params.CPU,
+							"memory": params.Memory,
+						},
+					},
+				},
+				"networks": networks,
+				"volumes":  vmVolumes,
+			},
+		},
+	}
+	runtimeAPIVersion := kubeVirtRuntimeAPI
+	runtimeKind := kubeVirtRuntimeKind
+	runtimeManifestName := "virtualmachine.yaml"
+	runtimeManifest := map[string]any{
 		"apiVersion": kubeVirtRuntimeAPI,
 		"kind":       kubeVirtRuntimeKind,
 		"metadata": map[string]any{
@@ -235,31 +279,49 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 			"namespace": namespace,
 			"labels":    labels,
 			"annotations": map[string]string{
-			"servicer.io/image": params.Image,
+				"servicer.io/image": params.Image,
 			},
 		},
-		"spec": map[string]any{
-			"runStrategy": params.RunStrategy,
-			"template": map[string]any{
-				"metadata": map[string]any{"labels": labels},
-				"spec": map[string]any{
-					"domain": map[string]any{
-						"devices": map[string]any{
-							"disks":      vmDisks,
-							"interfaces": interfaces,
-						},
-						"resources": map[string]any{
-							"requests": map[string]string{
-								"cpu":    params.CPU,
-								"memory": params.Memory,
-							},
-						},
-					},
-					"networks": networks,
-					"volumes":  vmVolumes,
+		"spec": vmTemplateSpec,
+	}
+	if params.WorkloadType == "vmp" {
+		runtimeAPIVersion = kubeVirtPoolAPI
+		runtimeKind = kubeVirtPoolKind
+		runtimeManifestName = "virtualmachinepool.yaml"
+		runtimeManifest = map[string]any{
+			"apiVersion": kubeVirtPoolAPI,
+			"kind":       kubeVirtPoolKind,
+			"metadata": map[string]any{
+				"name":      ctx.Instance.Name,
+				"namespace": namespace,
+				"labels": map[string]string{
+					"servicer.io/managed-by":       "servicer",
+					"servicer.io/project":          ctx.Project.Name,
+					"servicer.io/service-instance": ctx.Instance.Name,
+					"kubevirt.io/vmpool":           ctx.Instance.Name,
+				},
+				"annotations": map[string]string{
+					"servicer.io/image": params.Image,
 				},
 			},
-		},
+			"spec": map[string]any{
+				"replicas": params.PoolReplicas,
+				"selector": map[string]any{
+					"matchLabels": map[string]string{
+						"kubevirt.io/vmpool": ctx.Instance.Name,
+					},
+				},
+				"virtualMachineTemplate": map[string]any{
+					"metadata": map[string]any{
+						"labels": map[string]string{
+							"kubevirt.io/vmpool": ctx.Instance.Name,
+						},
+					},
+					"spec": vmTemplateSpec,
+				},
+			},
+		}
+		runtimeManifest["spec"].(map[string]any)["virtualMachineTemplate"].(map[string]any)["spec"].(map[string]any)["dataVolumeTemplates"] = dataVolumeTemplates
 	}
 
 	artifacts := []RenderedArtifact{}
@@ -269,7 +331,7 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 	}{
 		{name: "namespace.yaml", body: namespaceManifest},
 		{name: "cloudinit-secret.yaml", body: cloudInitManifest},
-		{name: "virtualmachine.yaml", body: vmManifest},
+		{name: runtimeManifestName, body: runtimeManifest},
 	} {
 		content, err := yaml.Marshal(manifest.body)
 		if err != nil {
@@ -282,8 +344,8 @@ func (a *KubeVirtAdapter) Render(_ context.Context, request RenderRequest) (Rend
 	return RenderResult{
 		RuntimeDriver: kubeVirtRuntimeDriver,
 		PrimaryResource: &platformv1alpha1.TypedObjectReference{
-			APIVersion: kubeVirtRuntimeAPI,
-			Kind:       kubeVirtRuntimeKind,
+			APIVersion: runtimeAPIVersion,
+			Kind:       runtimeKind,
 			Name:       ctx.Instance.Name,
 			Namespace:  namespace,
 		},
@@ -300,15 +362,27 @@ func (a *KubeVirtAdapter) Observe(_ context.Context, request ObserveRequest) (No
 	if ctx.Instance == nil {
 		return NormalizedStatus{}, fmt.Errorf("service instance context is required")
 	}
+	params, err := a.parameters(ctx)
+	if err != nil {
+		return NormalizedStatus{}, err
+	}
+	expectedAPI := kubeVirtRuntimeAPI
+	expectedKind := kubeVirtRuntimeKind
+	workloadLabel := "VirtualMachine"
+	if params.WorkloadType == "vmp" {
+		expectedAPI = kubeVirtPoolAPI
+		expectedKind = kubeVirtPoolKind
+		workloadLabel = "VirtualMachinePool"
+	}
 	phase := "Provisioning"
-	summary := "Waiting for KubeVirt VirtualMachine readiness."
+	summary := fmt.Sprintf("Waiting for KubeVirt %s readiness.", workloadLabel)
 	if request.Runtime.Blocked {
 		phase = "Blocked"
 		summary = firstNonEmptyTrimmedAdapter(request.Runtime.Message, "KubeVirt runtime dependency is missing in the target cluster.")
 	}
-	if runtimeResourceObserved(request.ObservedResources, kubeVirtRuntimeAPI, kubeVirtRuntimeKind, ctx.Instance.Name) {
+	if runtimeResourceObserved(request.ObservedResources, expectedAPI, expectedKind, ctx.Instance.Name) {
 		phase = "Ready"
-		summary = "KubeVirt VirtualMachine is materialized."
+		summary = fmt.Sprintf("KubeVirt %s is materialized.", workloadLabel)
 	}
 	return NormalizedStatus{
 		Phase:             phase,
@@ -370,6 +444,15 @@ func (a *KubeVirtAdapter) parameters(ctx ServiceContext) (kubeVirtParameters, er
 	}
 	if params.RunStrategy == "" {
 		params.RunStrategy = "RerunOnFailure"
+	}
+	if params.WorkloadType == "" {
+		params.WorkloadType = "vm"
+	}
+	if params.WorkloadType != "vm" && params.WorkloadType != "vmp" {
+		params.WorkloadType = "vm"
+	}
+	if params.PoolReplicas < 1 {
+		params.PoolReplicas = 1
 	}
 	if len(params.Disks) == 0 && params.Image != "" {
 		params.Disks = []kubeVirtDiskParameters{{

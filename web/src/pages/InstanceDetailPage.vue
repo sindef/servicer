@@ -151,6 +151,8 @@ const parameterForm = reactive({
   backupRetention: '30d',
   maxPayload: '1MiB',
   vmImage: '',
+  vmWorkloadType: 'vm',
+  vmPoolReplicas: 1,
   vmRunStrategy: 'Always',
   vmNetworks: [] as VmNetworkForm[],
   vmDisks: [] as VmDiskForm[],
@@ -429,6 +431,8 @@ function applyParameters(parameters: Record<string, unknown>) {
       })
     : []
   parameterForm.vmImage = stringParam(parameters, 'image', '')
+  parameterForm.vmWorkloadType = stringParam(parameters, 'workloadType', 'vm') === 'vmp' ? 'vmp' : 'vm'
+  parameterForm.vmPoolReplicas = numberParam(parameters, 'poolReplicas', 1)
   parameterForm.vmRunStrategy = stringParam(parameters, 'runStrategy', 'Always')
   parameterForm.vmNetworks = Array.isArray(parameters.networks)
     ? parameters.networks.map((entry) => {
@@ -631,6 +635,8 @@ function buildUpdateParameters() {
     case 'virtual-machine':
       return compactParams({
         image: parameterForm.vmImage,
+        workloadType: parameterForm.vmWorkloadType,
+        poolReplicas: parameterForm.vmWorkloadType === 'vmp' ? parameterForm.vmPoolReplicas : undefined,
         cpu: parameterForm.cpu,
         memory: parameterForm.memory,
         runStrategy: parameterForm.vmRunStrategy,
@@ -1399,6 +1405,14 @@ async function revealCredential(name: string, url?: string) {
           </div>
           <div v-else-if="data.productClass === 'virtual-machine'" class="form-grid modal-form-grid">
             <label>Guest image<input v-model="parameterForm.vmImage" placeholder="quay.io/containerdisks/ubuntu:22.04" /></label>
+            <label>
+              Workload type
+              <select v-model="parameterForm.vmWorkloadType">
+                <option value="vm">VirtualMachine</option>
+                <option value="vmp">VirtualMachinePool</option>
+              </select>
+            </label>
+            <label v-if="parameterForm.vmWorkloadType === 'vmp'">Pool replicas<input v-model.number="parameterForm.vmPoolReplicas" min="1" type="number" /></label>
             <label>
               Run strategy
               <select v-model="parameterForm.vmRunStrategy">

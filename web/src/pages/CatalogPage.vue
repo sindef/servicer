@@ -86,6 +86,8 @@ const parameterForm = reactive({
   backupRetention: '30d',
   maxPayload: '1MiB',
   vmImage: '',
+  vmWorkloadType: 'vm',
+  vmPoolReplicas: 1,
   vmRunStrategy: 'Always',
   vmNetworks: [] as VmNetworkForm[],
   vmDisks: [] as VmDiskForm[],
@@ -472,6 +474,8 @@ function applyPlanDefaults(serviceClass: string, servicePlan: string) {
     parameterForm.storageClass = ''
     parameterForm.storageSize = '20Gi'
     parameterForm.vmImage = 'quay.io/containerdisks/ubuntu:22.04'
+    parameterForm.vmWorkloadType = 'vm'
+    parameterForm.vmPoolReplicas = 1
     parameterForm.vmRunStrategy = 'Always'
     parameterForm.vmNetworks = [createVmNetwork({ name: 'default' })]
     parameterForm.vmDisks = [createVmDisk({ name: 'rootdisk', image: parameterForm.vmImage, size: '20Gi' })]
@@ -590,6 +594,8 @@ function buildParameters() {
     case 'virtual-machine':
       return compactParams({
         image: parameterForm.vmImage,
+        workloadType: parameterForm.vmWorkloadType,
+        poolReplicas: parameterForm.vmWorkloadType === 'vmp' ? parameterForm.vmPoolReplicas : undefined,
         cpu: parameterForm.cpu,
         memory: parameterForm.memory,
         runStrategy: parameterForm.vmRunStrategy,
@@ -1237,6 +1243,17 @@ async function submitRequest() {
             <label>
               Guest image
               <input v-model="parameterForm.vmImage" placeholder="quay.io/containerdisks/ubuntu:22.04" />
+            </label>
+            <label>
+              Workload type
+              <select v-model="parameterForm.vmWorkloadType">
+                <option value="vm">VirtualMachine</option>
+                <option value="vmp">VirtualMachinePool</option>
+              </select>
+            </label>
+            <label v-if="parameterForm.vmWorkloadType === 'vmp'">
+              Pool replicas
+              <input v-model.number="parameterForm.vmPoolReplicas" min="1" type="number" />
             </label>
             <label>
               Run strategy

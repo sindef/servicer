@@ -69,8 +69,8 @@ func TestKubeVirtAdapterRenderSupportsCustomNetworksAndDisks(t *testing.T) {
 	adapter := NewKubeVirtAdapter()
 	ctx := sampleKubeVirtContext(t)
 	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
-		"cpu":        "4",
-		"memory":     "8Gi",
+		"cpu":         "4",
+		"memory":      "8Gi",
 		"runStrategy": "Manual",
 		"networks": []map[string]any{
 			{"name": "default", "type": "pod", "bindingMethod": "masquerade"},
@@ -95,6 +95,45 @@ func TestKubeVirtAdapterRenderSupportsCustomNetworksAndDisks(t *testing.T) {
 		"name: data",
 		"storageClassName: fast-ssd",
 		"storage: 100Gi",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("expected rendered output to contain %q:\n%s", expected, rendered)
+		}
+	}
+}
+
+func TestKubeVirtAdapterRenderSupportsVirtualMachinePool(t *testing.T) {
+	adapter := NewKubeVirtAdapter()
+	ctx := sampleKubeVirtContext(t)
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"workloadType": "vmp",
+		"poolReplicas": 3,
+		"cpu":          "2",
+		"memory":       "4Gi",
+		"runStrategy":  "Always",
+		"networks": []map[string]any{
+			{"name": "default", "type": "pod", "bindingMethod": "masquerade"},
+		},
+		"disks": []map[string]any{
+			{"name": "rootdisk", "image": "quay.io/containerdisks/ubuntu:22.04", "size": "20Gi", "bus": "virtio"},
+		},
+	})
+
+	result, err := adapter.Render(context.Background(), RenderRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	if result.PrimaryResource == nil || result.PrimaryResource.Kind != kubeVirtPoolKind {
+		t.Fatalf("expected primary kind %q, got %#v", kubeVirtPoolKind, result.PrimaryResource)
+	}
+	rendered := renderedArtifacts(result)
+	for _, expected := range []string{
+		"kind: VirtualMachinePool",
+		"apiVersion: pool.kubevirt.io/v1alpha1",
+		"replicas: 3",
+		"kubevirt.io/vmpool: devbox",
+		"virtualMachineTemplate:",
+		"dataVolumeTemplates:",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("expected rendered output to contain %q:\n%s", expected, rendered)
