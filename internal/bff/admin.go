@@ -357,6 +357,7 @@ func (s *Server) handleRegisterServiceClass(w http.ResponseWriter, r *http.Reque
 		Spec: platformv1alpha1.ServiceClassSpec{
 			DisplayName:           contract.FriendlyName,
 			Driver:                contract.RuntimeDriver,
+			CapabilityFlags:       defaultCapabilityFlagsForServiceClass(req.Name),
 			AllowsVersionOverride: contract.SupportsVersionOverride,
 			Published:             false,
 		},

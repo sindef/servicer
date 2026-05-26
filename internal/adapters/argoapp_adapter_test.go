@@ -28,6 +28,96 @@ func TestArgoApplicationAdapterValidateRequiresRepoPathAndNamespace(t *testing.T
 	}
 }
 
+func TestArgoApplicationAdapterValidateRejectsInvalidSourceType(t *testing.T) {
+	adapter := NewArgoApplicationAdapter()
+	ctx := sampleArgoApplicationContext(t)
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"repoURL":         "https://github.com/acme/storefront.git",
+		"path":            "apps/storefront",
+		"targetNamespace": "storefront",
+		"sourceType":      "kustomize",
+	})
+
+	result, err := adapter.Validate(context.Background(), ValidationRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatalf("expected invalid sourceType to fail validation")
+	}
+	if !containsValidationIssue(result.Issues, "parameters.sourceType") {
+		t.Fatalf("expected sourceType validation issue, got %#v", result.Issues)
+	}
+}
+
+func TestArgoApplicationAdapterValidateRejectsPathTraversal(t *testing.T) {
+	adapter := NewArgoApplicationAdapter()
+	ctx := sampleArgoApplicationContext(t)
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"repoURL":         "https://github.com/acme/storefront.git",
+		"path":            "../secrets",
+		"targetNamespace": "storefront",
+		"sourceType":      "manifests",
+	})
+
+	result, err := adapter.Validate(context.Background(), ValidationRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatalf("expected traversal path to fail validation")
+	}
+	if !containsValidationIssue(result.Issues, "parameters.path") {
+		t.Fatalf("expected path validation issue, got %#v", result.Issues)
+	}
+}
+
+func TestArgoApplicationAdapterValidateRejectsHelmFieldsForManifestSource(t *testing.T) {
+	adapter := NewArgoApplicationAdapter()
+	ctx := sampleArgoApplicationContext(t)
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"repoURL":         "https://github.com/acme/storefront.git",
+		"path":            "apps/storefront",
+		"targetNamespace": "storefront",
+		"sourceType":      "manifests",
+		"helmReleaseName": "storefront",
+	})
+
+	result, err := adapter.Validate(context.Background(), ValidationRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatalf("expected manifests source with helm fields to fail validation")
+	}
+	if !containsValidationIssue(result.Issues, "parameters.sourceType") {
+		t.Fatalf("expected sourceType validation issue, got %#v", result.Issues)
+	}
+}
+
+func TestArgoApplicationAdapterValidateRejectsInvalidHelmValuesYAML(t *testing.T) {
+	adapter := NewArgoApplicationAdapter()
+	ctx := sampleArgoApplicationContext(t)
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"repoURL":         "https://github.com/acme/storefront.git",
+		"path":            "charts/storefront",
+		"targetNamespace": "storefront",
+		"sourceType":      "helm",
+		"helmValuesYAML":  "invalid: [",
+	})
+
+	result, err := adapter.Validate(context.Background(), ValidationRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatalf("expected invalid helm values YAML to fail validation")
+	}
+	if !containsValidationIssue(result.Issues, "parameters.helmValuesYAML") {
+		t.Fatalf("expected helmValuesYAML validation issue, got %#v", result.Issues)
+	}
+}
+
 func TestArgoApplicationAdapterRenderProducesApplicationManifest(t *testing.T) {
 	adapter := NewArgoApplicationAdapter()
 	ctx := sampleArgoApplicationContext(t)
@@ -62,6 +152,28 @@ func TestArgoApplicationAdapterRenderProducesApplicationManifest(t *testing.T) {
 	}
 }
 
+func TestArgoApplicationAdapterRenderOmitsHelmForManifestSource(t *testing.T) {
+	adapter := NewArgoApplicationAdapter()
+	ctx := sampleArgoApplicationContext(t)
+	ctx.Instance.Spec.Parameters = rawJSON(t, map[string]any{
+		"repoURL":         "https://github.com/acme/storefront.git",
+		"path":            "apps/storefront",
+		"targetRevision":  "main",
+		"targetNamespace": "storefront-prod",
+		"syncPolicy":      "manual",
+		"sourceType":      "manifests",
+	})
+
+	result, err := adapter.Render(context.Background(), RenderRequest{Context: ctx})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	rendered := renderedArtifacts(result)
+	if strings.Contains(rendered, "helm:") {
+		t.Fatalf("expected manifest source to omit helm source settings:\n%s", rendered)
+	}
+}
+
 func sampleArgoApplicationContext(t *testing.T) ServiceContext {
 	t.Helper()
 	ctx := sampleNamespaceContext(t)
@@ -89,9 +201,19 @@ func sampleArgoApplicationContext(t *testing.T) ServiceContext {
 		"targetNamespace": "storefront-prod",
 		"syncPolicy":      "auto",
 		"createNamespace": true,
+		"sourceType":      "helm",
 		"helmReleaseName": "storefront",
 		"helmValuesYAML":  "replicaCount: 2",
 	})
 	ctx.Instance.Status.Placement.ClusterName = "east-1"
 	return ctx
+}
+
+func containsValidationIssue(issues []ValidationIssue, path string) bool {
+	for _, issue := range issues {
+		if issue.Path == path {
+			return true
+		}
+	}
+	return false
 }

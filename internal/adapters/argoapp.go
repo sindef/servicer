@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
+	"strings"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"sigs.k8s.io/yaml"
@@ -11,8 +13,15 @@ import (
 
 const argoAppDriver = "argo-application"
 
+const (
+	argoSourceTypeManifests = "manifests"
+	argoSourceTypeHelm      = "helm"
+)
+
 // argoApplicationParameters holds the adapter-specific parameters for an Argo CD Application instance.
 type argoApplicationParameters struct {
+	// SourceType defines whether the repository path resolves to raw manifests or a Helm chart.
+	SourceType string `json:"sourceType,omitempty"`
 	// RepoURL is the Git repository URL (resolved from the project repository by the BFF).
 	RepoURL string `json:"repoURL"`
 	// Path is the directory within the repository containing the application manifests or Helm chart.
@@ -99,9 +108,27 @@ func (a *ArgoApplicationAdapter) Validate(_ context.Context, request ValidationR
 	}
 	if params.Path == "" {
 		issues = append(issues, ValidationIssue{Path: "parameters.path", Message: "repository path is required", Severity: HealthSeverityCritical})
+	} else if err := validateRepositoryPath(params.Path); err != nil {
+		issues = append(issues, ValidationIssue{Path: "parameters.path", Message: err.Error(), Severity: HealthSeverityCritical})
 	}
 	if params.TargetNamespace == "" {
 		issues = append(issues, ValidationIssue{Path: "parameters.targetNamespace", Message: "target namespace is required", Severity: HealthSeverityCritical})
+	}
+	if params.SyncPolicy != "" && params.SyncPolicy != "manual" && params.SyncPolicy != "auto" {
+		issues = append(issues, ValidationIssue{Path: "parameters.syncPolicy", Message: `syncPolicy must be either "manual" or "auto"`, Severity: HealthSeverityCritical})
+	}
+	sourceType := normalizedArgoSourceType(params)
+	if sourceType != "" && sourceType != argoSourceTypeManifests && sourceType != argoSourceTypeHelm {
+		issues = append(issues, ValidationIssue{Path: "parameters.sourceType", Message: `sourceType must be either "manifests" or "helm"`, Severity: HealthSeverityCritical})
+	}
+	if sourceType == argoSourceTypeManifests && (strings.TrimSpace(params.HelmReleaseName) != "" || strings.TrimSpace(params.HelmValuesYAML) != "") {
+		issues = append(issues, ValidationIssue{Path: "parameters.sourceType", Message: "helmReleaseName and helmValuesYAML require sourceType=helm", Severity: HealthSeverityCritical})
+	}
+	if strings.TrimSpace(params.HelmValuesYAML) != "" {
+		var valuesDoc any
+		if err := yaml.Unmarshal([]byte(params.HelmValuesYAML), &valuesDoc); err != nil {
+			issues = append(issues, ValidationIssue{Path: "parameters.helmValuesYAML", Message: fmt.Sprintf("invalid Helm values YAML: %v", err), Severity: HealthSeverityCritical})
+		}
 	}
 	return ValidationResult{Valid: len(issues) == 0, Issues: issues}, nil
 }
@@ -139,7 +166,9 @@ func (a *ArgoApplicationAdapter) Render(_ context.Context, request RenderRequest
 		"targetRevision": revision,
 		"path":           params.Path,
 	}
-	if params.HelmReleaseName != "" || params.HelmValuesYAML != "" {
+	sourceType := normalizedArgoSourceType(params)
+	useHelm := sourceType == argoSourceTypeHelm || (sourceType == "" && (params.HelmReleaseName != "" || params.HelmValuesYAML != ""))
+	if useHelm {
 		helm := map[string]any{}
 		if params.HelmReleaseName != "" {
 			helm["releaseName"] = params.HelmReleaseName
@@ -253,4 +282,26 @@ func (a *ArgoApplicationAdapter) parameters(ctx ServiceContext) (argoApplication
 		return argoApplicationParameters{}, fmt.Errorf("parse argo-application parameters: %w", err)
 	}
 	return params, nil
+}
+
+func normalizedArgoSourceType(params argoApplicationParameters) string {
+	return strings.ToLower(strings.TrimSpace(params.SourceType))
+}
+
+func validateRepositoryPath(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "/") {
+		return fmt.Errorf("repository path must be relative")
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == "/" {
+		return fmt.Errorf("repository path must resolve to a directory within the repository")
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("repository path must not traverse outside the repository root")
+	}
+	return nil
 }

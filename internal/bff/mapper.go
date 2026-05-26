@@ -73,10 +73,27 @@ func productDescription(name string) string {
 	case string(adapters.ServiceClassYugabyte):
 		return "YugabyteDB distributed SQL/NoSQL database with native multi-region and xCluster replication."
 	case string(adapters.ServiceClassArgoApp):
-		return "Managed Application points to a repository of manifests that will be deployed."
+		return "Managed Application points to a repository path of manifests or a Helm chart that will be deployed."
 	default:
 		return "Servicer-managed product."
 	}
+}
+
+func defaultCapabilityFlagsForServiceClass(className string) []string {
+	switch className {
+	case string(adapters.ServiceClassArgoApp):
+		return []string{"manifests", "helm"}
+	default:
+		return nil
+	}
+}
+
+func serviceClassCapabilities(class platformv1alpha1.ServiceClass) []string {
+	if len(class.Spec.CapabilityFlags) > 0 {
+		return append([]string(nil), class.Spec.CapabilityFlags...)
+	}
+	defaults := defaultCapabilityFlagsForServiceClass(class.Name)
+	return append([]string(nil), defaults...)
 }
 
 func actionSpecs(actions []adapters.ActionCapability) []ActionSpec {

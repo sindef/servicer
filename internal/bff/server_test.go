@@ -99,6 +99,17 @@ func TestServiceClassDisplayNameNormalizesLegacyArgoName(t *testing.T) {
 	}
 }
 
+func TestServiceClassCapabilitiesFallsBackForArgo(t *testing.T) {
+	class := platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "argo-application"},
+		Spec:       platformv1alpha1.ServiceClassSpec{},
+	}
+	got := serviceClassCapabilities(class)
+	if strings.Join(got, ",") != "manifests,helm" {
+		t.Fatalf("expected argo capability defaults, got %#v", got)
+	}
+}
+
 func TestTenantScopedRoleInheritance(t *testing.T) {
 	current := actor{
 		Roles: map[string]struct{}{},

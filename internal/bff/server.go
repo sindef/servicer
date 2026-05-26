@@ -502,7 +502,7 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 			Driver:       class.Spec.Driver,
 			Published:    class.Status.Published || class.Spec.Published,
 			Description:  productDescription(class.Name),
-			Capabilities: append([]string(nil), class.Spec.CapabilityFlags...),
+			Capabilities: serviceClassCapabilities(class),
 			Actions:      actionSpecs(contract.Actions),
 		}
 		for _, plan := range plansByClass[class.Name] {

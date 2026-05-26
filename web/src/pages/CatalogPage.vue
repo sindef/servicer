@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { load as parseYAML } from 'js-yaml'
 import { api, type CatalogEntry, type RepositorySummary } from '../api'
 import { useApi } from '../composables/useApi'
 import StatusPill from '../components/StatusPill.vue'
@@ -100,6 +101,7 @@ const parameterForm = reactive({
   natsConsumers: [] as NatsConsumerForm[],
   natsAppCredentials: [] as NatsCredentialForm[],
   // argo-application
+  argoSourceType: 'manifests',
   argoRepoRef: '',
   argoRepoURL: '',
   argoPath: '',
@@ -169,6 +171,16 @@ watch(
       projectRepositories.value = []
     } finally {
       repositoriesLoading.value = false
+    }
+  }
+)
+
+watch(
+  () => parameterForm.argoSourceType,
+  (sourceType) => {
+    if (sourceType !== 'helm') {
+      parameterForm.argoHelmReleaseName = ''
+      parameterForm.argoHelmValuesYAML = ''
     }
   }
 )
@@ -458,6 +470,7 @@ function applyPlanDefaults(serviceClass: string, servicePlan: string) {
     parameterForm.externalDnsHostname = ''
   }
   if (serviceClass === 'argo-application') {
+    parameterForm.argoSourceType = 'manifests'
     parameterForm.argoRepoRef = ''
     parameterForm.argoRepoURL = ''
     parameterForm.argoPath = ''
@@ -480,6 +493,51 @@ function applyPlanDefaults(serviceClass: string, servicePlan: string) {
     parameterForm.vmNetworks = [createVmNetwork({ name: 'default' })]
     parameterForm.vmDisks = [createVmDisk({ name: 'rootdisk', image: parameterForm.vmImage, size: '20Gi' })]
   }
+}
+
+function hasPathTraversal(pathValue: string) {
+  const cleaned = pathValue
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+  return cleaned.some((segment) => segment === '..')
+}
+
+function validateRequestParameters() {
+  if (requestForm.serviceClass !== 'argo-application') {
+    return null
+  }
+  const sourceType = parameterForm.argoSourceType.trim().toLowerCase()
+  if (sourceType !== 'manifests' && sourceType !== 'helm') {
+    return 'Managed Application source type must be either manifests or helm.'
+  }
+  if (!parameterForm.argoRepoURL.trim() && !parameterForm.argoRepoRef.trim()) {
+    return 'Managed Application requires a repository.'
+  }
+  const pathValue = parameterForm.argoPath.trim()
+  if (!pathValue) {
+    return 'Managed Application requires a repository path.'
+  }
+  if (pathValue.startsWith('/')) {
+    return 'Managed Application path must be relative to the repository root.'
+  }
+  if (hasPathTraversal(pathValue)) {
+    return 'Managed Application path must not include .. segments.'
+  }
+  if (!parameterForm.argoTargetNamespace.trim()) {
+    return 'Managed Application requires a target namespace.'
+  }
+  if (sourceType === 'manifests' && (parameterForm.argoHelmReleaseName.trim() || parameterForm.argoHelmValuesYAML.trim())) {
+    return 'Helm options require source type set to helm.'
+  }
+  if (sourceType === 'helm' && parameterForm.argoHelmValuesYAML.trim()) {
+    try {
+      parseYAML(parameterForm.argoHelmValuesYAML)
+    } catch {
+      return 'Helm values override must be valid YAML.'
+    }
+  }
+  return null
 }
 
 function buildParameters() {
@@ -581,14 +639,15 @@ function buildParameters() {
       })
     case 'argo-application':
       return compactParams({
+        sourceType: parameterForm.argoSourceType,
         repoURL: parameterForm.argoRepoURL || parameterForm.argoRepoRef,
         path: parameterForm.argoPath,
         targetRevision: parameterForm.argoTargetRevision,
         targetNamespace: parameterForm.argoTargetNamespace,
         syncPolicy: parameterForm.argoSyncPolicy,
         createNamespace: parameterForm.argoCreateNamespace || undefined,
-        helmReleaseName: parameterForm.argoHelmReleaseName,
-        helmValuesYAML: parameterForm.argoHelmValuesYAML,
+        helmReleaseName: parameterForm.argoSourceType === 'helm' ? parameterForm.argoHelmReleaseName : undefined,
+        helmValuesYAML: parameterForm.argoSourceType === 'helm' ? parameterForm.argoHelmValuesYAML : undefined,
         repoRef: parameterForm.argoRepoRef
       })
     case 'virtual-machine':
@@ -656,6 +715,11 @@ function closeRequest() {
 }
 
 async function submitRequest() {
+  const validationError = validateRequestParameters()
+  if (validationError) {
+    submitError.value = validationError
+    return
+  }
   submitting.value = true
   submitError.value = null
   submitMessage.value = null
@@ -808,6 +872,10 @@ async function submitRequest() {
               <p class="muted">
                 Placement follows selected project
                 <strong>{{ selectedProject?.clusterName || 'pending placement' }}</strong>.
+              </p>
+              <p v-if="selectedEntry?.capabilities?.length" class="muted" style="margin-top: 8px">
+                Supported modes:
+                <strong>{{ selectedEntry.capabilities.join(' · ') }}</strong>
               </p>
             </div>
             <span class="collapsible-chevron">{{ showCapabilities ? '▾' : '▸' }}</span>
@@ -1349,7 +1417,7 @@ async function submitRequest() {
             <label style="grid-column: span 2">
               Repository
               <span class="muted" style="display: block; font-size: 12px; margin: 4px 0 6px">
-                Managed Application points to a repository of manifests that will be deployed.
+                Managed Application points to a repository path of manifests or a Helm chart that will be deployed.
               </span>
               <select
                 v-if="projectRepositories.length > 0"
@@ -1372,8 +1440,18 @@ async function submitRequest() {
               <input v-model="parameterForm.argoRepoURL" placeholder="https://github.com/org/repo.git" />
             </label>
             <label>
+              Source type
+              <select v-model="parameterForm.argoSourceType">
+                <option value="manifests">Manifests</option>
+                <option value="helm">Helm chart</option>
+              </select>
+            </label>
+            <label>
               Path
-              <input v-model="parameterForm.argoPath" placeholder="charts/my-app" />
+              <input
+                v-model="parameterForm.argoPath"
+                :placeholder="parameterForm.argoSourceType === 'helm' ? 'charts/my-app' : 'apps/my-app'"
+              />
             </label>
             <label>
               Target revision
@@ -1394,11 +1472,11 @@ async function submitRequest() {
               <input type="checkbox" v-model="parameterForm.argoCreateNamespace" />
               Auto-create namespace
             </label>
-            <label>
+            <label v-if="parameterForm.argoSourceType === 'helm'">
               Helm release name <span class="muted" style="font-size: 11px">(optional)</span>
               <input v-model="parameterForm.argoHelmReleaseName" placeholder="leave blank to use instance name" />
             </label>
-            <label style="grid-column: span 2">
+            <label v-if="parameterForm.argoSourceType === 'helm'" style="grid-column: span 2">
               Helm values override <span class="muted" style="font-size: 11px">(optional YAML)</span>
               <textarea
                 v-model="parameterForm.argoHelmValuesYAML"

@@ -546,6 +546,9 @@ spec:
   displayName: Managed Application
   category: platform
   driver: argo-application
+  capabilityFlags:
+    - manifests
+    - helm
   published: true
 ---
 apiVersion: platform.servicer.io/v1alpha1
