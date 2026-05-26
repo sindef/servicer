@@ -25,6 +25,7 @@ var implementedProducts = map[string]struct{}{
 	string(adapters.ServiceClassNATS):       {},
 	string(adapters.ServiceClassK8ssandra):  {},
 	string(adapters.ServiceClassYugabyte):   {},
+	string(adapters.ServiceClassKubeVirt):   {},
 	string(adapters.ServiceClassArgoApp):    {},
 }
 

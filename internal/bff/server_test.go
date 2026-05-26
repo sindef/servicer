@@ -38,18 +38,24 @@ func TestCatalogReturnsProductShapedEntries(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &entries); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(entries) != 4 {
+	if len(entries) != 5 {
 		t.Fatalf("expected only implemented seeded products, got %#v", entries)
 	}
 	var namespaceEntry *CatalogEntry
+	var virtualMachineEntry *CatalogEntry
 	for i := range entries {
 		if entries[i].Name == "namespace" {
 			namespaceEntry = &entries[i]
-			break
+		}
+		if entries[i].Name == "virtual-machine" {
+			virtualMachineEntry = &entries[i]
 		}
 	}
 	if namespaceEntry == nil || len(namespaceEntry.Plans) != 1 || len(namespaceEntry.Actions) == 0 {
 		t.Fatalf("expected namespace catalog entry with plans/actions, got %#v", entries)
+	}
+	if virtualMachineEntry == nil || len(virtualMachineEntry.Plans) != 1 {
+		t.Fatalf("expected virtual-machine catalog entry with plan visibility, got %#v", entries)
 	}
 }
 
@@ -1336,6 +1342,8 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 			testValkeyReplicatedPlan(),
 			testYugabyteClass(),
 			testYugabytePlan(),
+			testVirtualMachineClass(),
+			testVirtualMachinePlan(),
 			testCassandraClass(),
 			testInstance(),
 			testOtherTenantInstance(),
@@ -1473,6 +1481,22 @@ func testYugabytePlan() *platformv1alpha1.ServicePlan {
 	return &platformv1alpha1.ServicePlan{
 		ObjectMeta: metav1.ObjectMeta{Name: "yugabyte-dev"},
 		Spec:       platformv1alpha1.ServicePlanSpec{ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "yugabyte"}, DisplayName: "Development", Topology: "single-cluster"},
+		Status:     platformv1alpha1.ServicePlanStatus{Published: true, Phase: "Ready"},
+	}
+}
+
+func testVirtualMachineClass() *platformv1alpha1.ServiceClass {
+	return &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "virtual-machine"},
+		Spec:       platformv1alpha1.ServiceClassSpec{DisplayName: "Virtual Machine", Category: "compute", Driver: "kubevirt", Published: true},
+		Status:     platformv1alpha1.ServiceClassStatus{Published: true, Phase: "Ready"},
+	}
+}
+
+func testVirtualMachinePlan() *platformv1alpha1.ServicePlan {
+	return &platformv1alpha1.ServicePlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "virtual-machine-dev"},
+		Spec:       platformv1alpha1.ServicePlanSpec{ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "virtual-machine"}, DisplayName: "Development", Topology: "single-cluster"},
 		Status:     platformv1alpha1.ServicePlanStatus{Published: true, Phase: "Ready"},
 	}
 }
