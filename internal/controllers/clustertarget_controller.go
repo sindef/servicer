@@ -22,6 +22,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -114,6 +115,11 @@ func (r *ClusterTargetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	target.Status.Reachable = true
 	now := metav1.Now()
 	target.Status.LastValidatedAt = &now
+	if discovered, discoverErr := discoveredOperatorInventory(ctx, targetClient, target.Status.OperatorInventory); discoverErr == nil {
+		target.Status.OperatorInventory = discovered
+	} else {
+		ctrl.LoggerFrom(ctx).Info("operator inventory discovery skipped", "target", target.Name, "reason", discoverErr.Error())
+	}
 	setStatusCondition(&target.Status.Conditions, target.Generation, "Ready", metav1.ConditionTrue, "ClusterValidated", "Cluster target credentials resolved for reconciliation.")
 	setStatusCondition(&target.Status.Conditions, target.Generation, "Failed", metav1.ConditionFalse, "ClusterValidated", "Cluster target has not failed.")
 
@@ -917,6 +923,73 @@ func operatorInventoryFromCapabilities(capabilities map[string]string) []string 
 	}
 	sort.Strings(inventory)
 	return inventory
+}
+
+func discoveredOperatorInventory(ctx context.Context, targetClient client.Client, declared []string) ([]string, error) {
+	inventory := make(map[string]struct{}, len(declared))
+	for _, item := range declared {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			inventory[trimmed] = struct{}{}
+		}
+	}
+	if targetClient == nil {
+		return mapKeysSorted(inventory), nil
+	}
+
+	for _, probe := range []struct {
+		operatorName string
+		crdName      string
+	}{
+		{operatorName: "cnpg", crdName: "clusters.postgresql.cnpg.io"},
+		{operatorName: "external-secrets", crdName: "externalsecrets.external-secrets.io"},
+		{operatorName: "yugabyte", crdName: "ybuniverses.operator.yugabyte.io"},
+	} {
+		present, err := clusterHasCRD(ctx, targetClient, probe.crdName)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			inventory[probe.operatorName] = struct{}{}
+		}
+	}
+
+	vmCRDPresent, err := clusterHasCRD(ctx, targetClient, kubeVirtVirtualMachineCRDName)
+	if err != nil {
+		return nil, err
+	}
+	dataVolumeCRDPresent, err := clusterHasCRD(ctx, targetClient, kubeVirtDataVolumeCRDName)
+	if err != nil {
+		return nil, err
+	}
+	if vmCRDPresent && dataVolumeCRDPresent {
+		inventory[kubeVirtServiceClassDriver] = struct{}{}
+	}
+
+	return mapKeysSorted(inventory), nil
+}
+
+func clusterHasCRD(ctx context.Context, c client.Client, crdName string) (bool, error) {
+	if c == nil {
+		return false, nil
+	}
+	crd := &unstructured.Unstructured{}
+	crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+	if err := c.Get(ctx, types.NamespacedName{Name: crdName}, crd); err != nil {
+		if apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func mapKeysSorted(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func clusterCapabilityValue(capabilities map[string]string, keys ...string) string {
