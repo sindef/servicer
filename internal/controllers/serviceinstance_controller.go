@@ -79,7 +79,12 @@ func (r *ServiceInstanceReconciler) getTargetClient(ctx context.Context, target 
 	return c, nil
 }
 
-const instanceFinalizer = "servicer.io/instance-cleanup"
+const (
+	instanceFinalizer                 = "servicer.io/instance-cleanup"
+	kubeVirtServiceClassDriver        = "kubevirt"
+	kubeVirtVirtualMachineCRDName     = "virtualmachines.kubevirt.io"
+	kubeVirtDataVolumeCRDName         = "datavolumes.cdi.kubevirt.io"
+)
 
 func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var instance platformv1alpha1.ServiceInstance
@@ -206,6 +211,59 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
+	var targetClient client.Client
+	if class.Spec.Driver == kubeVirtServiceClassDriver {
+		if clusterTarget == nil {
+			instance.Status.Phase = "PendingDependencies"
+			message := "KubeVirt provisioning requires placement on a reachable remote ClusterTarget."
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is waiting for KubeVirt runtime dependencies.")
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is blocked on a runtime dependency, not failed.")
+			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+				if err := r.Status().Update(ctx, &instance); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
+		var targetClientErr error
+		targetClient, targetClientErr = r.getTargetClient(ctx, clusterTarget)
+		if targetClientErr != nil {
+			return ctrl.Result{}, targetClientErr
+		}
+		if targetClient == nil {
+			instance.Status.Phase = "PendingDependencies"
+			message := fmt.Sprintf("ClusterTarget %q does not have usable connection credentials for KubeVirt runtime validation.", clusterTarget.Name)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is waiting for KubeVirt runtime dependencies.")
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is blocked on a runtime dependency, not failed.")
+			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+				if err := r.Status().Update(ctx, &instance); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		if ready, message, dependenciesErr := kubeVirtDependenciesReady(ctx, targetClient); dependenciesErr != nil {
+			return ctrl.Result{}, dependenciesErr
+		} else if !ready {
+			instance.Status.Phase = "PendingDependencies"
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is waiting for KubeVirt runtime dependencies.")
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
+			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is blocked on a runtime dependency, not failed.")
+			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+				if err := r.Status().Update(ctx, &instance); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+	}
+
 	adapter, ok := r.Adapters.Get(adapters.ServiceClass(instance.Spec.ServiceClassRef.Name))
 	if !ok {
 		instance.Status.Phase = "Failed"
@@ -273,9 +331,11 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return ctrl.Result{}, nil
 	}
-	targetClient, err := r.getTargetClient(ctx, clusterTarget)
-	if err != nil {
-		return ctrl.Result{}, err
+	if targetClient == nil {
+		targetClient, err = r.getTargetClient(ctx, clusterTarget)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult, targetClient); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -571,6 +631,23 @@ func (r *ServiceInstanceReconciler) handleValidationFailure(ctx context.Context,
 		}
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+func kubeVirtDependenciesReady(ctx context.Context, c client.Client) (bool, string, error) {
+	if c == nil {
+		return false, "KubeVirt runtime validation requires a remote cluster client.", nil
+	}
+	for _, requiredCRD := range []string{kubeVirtVirtualMachineCRDName, kubeVirtDataVolumeCRDName} {
+		crd := &unstructured.Unstructured{}
+		crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+		if err := c.Get(ctx, types.NamespacedName{Name: requiredCRD}, crd); err != nil {
+			if apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err) {
+				return false, fmt.Sprintf("KubeVirt dependency missing on target cluster: CRD %q is not installed.", requiredCRD), nil
+			}
+			return false, "", err
+		}
+	}
+	return true, "", nil
 }
 
 func resolvedClusterName(project *platformv1alpha1.Project) string {
@@ -981,6 +1058,28 @@ func (r *ServiceInstanceReconciler) observeRuntime(ctx context.Context, ref *pla
 					Observed:        true,
 				}
 			}
+		}
+	}
+
+	if ref != nil && ref.APIVersion == "kubevirt.io/v1" && ref.Kind == "VirtualMachine" && ref.Namespace != "" {
+		if ready, message, err := kubeVirtDependenciesReady(ctx, observeClient()); err != nil {
+			return observation, nil, err
+		} else if !ready {
+			observation.Blocked = true
+			observation.Message = message
+			return observation, observedResources, nil
+		}
+
+		u := &unstructured.Unstructured{}
+		u.SetGroupVersionKind(schema.GroupVersionKind{Group: "kubevirt.io", Version: "v1", Kind: "VirtualMachine"})
+		err := observeClient().Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.Namespace}, u)
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return observation, nil, err
+			}
+		}
+		if err == nil {
+			observedResources = append(observedResources, *ref)
 		}
 	}
 
