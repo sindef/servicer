@@ -57,7 +57,7 @@ var KubeVirtContract = ProductContract{
 	RuntimeDriver:           kubeVirtRuntimeDriver,
 	SupportsVersionOverride: false,
 	SupportsMultiCluster:    false,
-	TopologyModes:           []string{"single-vm"},
+	TopologyModes:           []string{"single-cluster"},
 	StatusSignals: []StatusSignalDescriptor{
 		{Key: "vm-ready", DisplayName: "VM Ready", Description: "Whether the KubeVirt VirtualMachine is ready.", Severity: HealthSeverityCritical},
 		{Key: "guest-access", DisplayName: "Guest Access", Description: "Whether guest bootstrap and access material are configured.", Severity: HealthSeverityWarning},

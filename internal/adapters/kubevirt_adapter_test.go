@@ -154,8 +154,8 @@ func sampleKubeVirtContext(t *testing.T) ServiceContext {
 	ctx.Plan = &platformv1alpha1.ServicePlan{
 		Spec: platformv1alpha1.ServicePlanSpec{
 			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "virtual-machine"},
-			DisplayName:     "Development VM",
-			Topology:        "single-vm",
+			DisplayName:     "Virtual Machine",
+			Topology:        "single-cluster",
 			DefaultParameters: rawJSON(t, map[string]any{
 				"cpu":         "1",
 				"memory":      "1Gi",

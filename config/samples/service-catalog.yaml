@@ -529,9 +529,9 @@ metadata:
 spec:
   serviceClassRef:
     name: virtual-machine
-  displayName: Development VM
+  displayName: Virtual Machine
   tier: development
-  topology: single-vm
+  topology: single-cluster
   defaultParameters:
     cpu: "1"
     memory: 1Gi

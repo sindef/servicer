@@ -150,8 +150,8 @@ func TestServiceInstanceReconcilerBlocksKubeVirtWithoutClusterTarget(t *testing.
 		ObjectMeta: metav1.ObjectMeta{Name: "virtual-machine-dev", Generation: 1},
 		Spec: platformv1alpha1.ServicePlanSpec{
 			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "virtual-machine"},
-			DisplayName:     "Development VM",
-			Topology:        "single-vm",
+			DisplayName:     "Virtual Machine",
+			Topology:        "single-cluster",
 		},
 		Status: platformv1alpha1.ServicePlanStatus{
 			ObservedGeneration: 1,
