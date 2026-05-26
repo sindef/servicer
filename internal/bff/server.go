@@ -216,6 +216,9 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		if encoded, err := s.auth.sessionCodec.Encode(session); err == nil {
 			http.SetCookie(w, authCookie(r, authSessionCookieName, encoded, 24*time.Hour))
 		}
+		// Ensure browsers with an existing auth session always have a CSRF token cookie.
+		// This self-heals upgraded sessions that predate CSRF issuance at login.
+		s.ensureCSRFCookie(w, r)
 	} else {
 		http.SetCookie(w, clearAuthCookie(r, authSessionCookieName))
 	}

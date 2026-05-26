@@ -183,6 +183,44 @@ func TestAuthSessionEndpointReturnsActorContext(t *testing.T) {
 	}
 }
 
+func TestAuthSessionEndpointMintsCSRFCookieForExistingSession(t *testing.T) {
+	server := testServer(t)
+	server.auth.allowTestHeaders = false
+
+	encodedSession, err := server.auth.sessionCodec.Encode(authSessionState{
+		ProviderName: "local",
+		ProviderType: string(platformv1alpha1.AuthProviderTypeLocal),
+		Subject:      "alice@example.com",
+		Name:         "alice@example.com",
+		Email:        "alice@example.com",
+	})
+	if err != nil {
+		t.Fatalf("encode session cookie: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	request.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: encodedSession})
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	setCookies := response.Result().Cookies()
+	foundCSRF := false
+	for _, cookie := range setCookies {
+		if cookie.Name == csrfCookieName {
+			foundCSRF = cookie.Value != ""
+			break
+		}
+	}
+	if !foundCSRF {
+		t.Fatalf("expected %q cookie to be issued for authenticated session, got %#v", csrfCookieName, setCookies)
+	}
+}
+
 func TestAuthSessionResponseIncludesEmptyRoleArrays(t *testing.T) {
 	payload, err := json.Marshal(authSessionResponse(actor{
 		Name:          "test",
