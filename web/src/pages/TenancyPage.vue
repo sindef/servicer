@@ -172,7 +172,7 @@ async function removeRepo(projectName: string, repo: RepositorySummary) {
                       <button class="button primary" style="padding: 4px 10px; font-size: 12px" @click="openAddRepo(project.name)">+ Add</button>
                     </div>
                     <p v-if="repoLoading[project.name]" class="muted" style="font-size: 13px">Loading...</p>
-                    <p v-else-if="!projectRepos[project.name]?.length" class="muted" style="font-size: 13px">No repositories registered. Add one to enable Argo CD Application deployments.</p>
+                    <p v-else-if="!projectRepos[project.name]?.length" class="muted" style="font-size: 13px">No repositories registered. Add one to enable Managed Application deployments.</p>
                     <table v-else style="width: 100%; border-collapse: collapse; font-size: 13px">
                       <thead>
                         <tr style="color: var(--muted-strong); text-align: left">

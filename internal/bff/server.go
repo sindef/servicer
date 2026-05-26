@@ -497,7 +497,7 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 		contract, _ := adapters.KnownContract(adapters.ServiceClass(class.Name))
 		entry := CatalogEntry{
 			Name:         class.Name,
-			DisplayName:  displayName(class.Spec.DisplayName, class.Name),
+			DisplayName:  serviceClassDisplayName(class.Name, class.Spec.DisplayName),
 			Category:     class.Spec.Category,
 			Driver:       class.Spec.Driver,
 			Published:    class.Status.Published || class.Spec.Published,
@@ -686,4 +686,19 @@ func displayName(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func serviceClassDisplayName(className, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if contract, ok := adapters.KnownContract(adapters.ServiceClass(className)); ok {
+		if className == string(adapters.ServiceClassArgoApp) {
+			if trimmed == "" || strings.EqualFold(trimmed, "Argo CD Application") || strings.EqualFold(trimmed, "ArgoCD Application") {
+				return contract.FriendlyName
+			}
+		}
+		if trimmed == "" {
+			return contract.FriendlyName
+		}
+	}
+	return displayName(trimmed, className)
 }

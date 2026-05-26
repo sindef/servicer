@@ -36,7 +36,7 @@ type argoApplicationParameters struct {
 // ArgoApplicationContract describes the normalized platform contract for Argo CD Application instances.
 var ArgoApplicationContract = ProductContract{
 	ServiceClass:            ServiceClassArgoApp,
-	FriendlyName:            "Argo CD Application",
+	FriendlyName:            "Managed Application",
 	RuntimeDriver:           argoAppDriver,
 	SupportsVersionOverride: false,
 	SupportsMultiCluster:    false,
@@ -224,7 +224,7 @@ func (a *ArgoApplicationAdapter) Observe(_ context.Context, request ObserveReque
 	summary := "Application manifest materialized"
 	if request.ApplicationName != "" {
 		phase = string(SyncPhaseSynced)
-		summary = "Argo CD Application deployed"
+		summary = "Managed Application deployed"
 	}
 	return NormalizedStatus{
 		Phase:   phase,

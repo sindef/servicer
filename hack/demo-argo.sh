@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hack/demo-argo.sh — end-to-end demo of the Argo CD Application product.
+# hack/demo-argo.sh — end-to-end demo of the Managed Application product.
 #
 # What it does:
 #   1. Creates a Tenant and Project (if they don't already exist).
@@ -151,7 +151,7 @@ fi
 
 # ── 6. Show the manifest ───────────────────────────────────────────────────────
 echo ""
-echo "==> Generated Argo CD Application manifest:"
+echo "==> Generated Managed Application manifest:"
 echo "--------------------------------------------"
 cat "${MANIFEST_PATH}"
 echo "--------------------------------------------"
@@ -170,7 +170,7 @@ fi
 
 echo ""
 echo "Done. To request this product from the UI:"
-echo "  1. Open Catalog → Argo CD Application → Standard"
+echo "  1. Open Catalog → Managed Application → Standard"
 echo "  2. Pick project '${PROJECT_NAME}'"
 echo "  3. Choose repository '${REPO_NAME}' from the dropdown"
 echo "  4. Set path=guestbook, target-namespace=${PROJECT_NAME}-guestbook, sync=auto"

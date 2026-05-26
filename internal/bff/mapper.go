@@ -21,7 +21,7 @@ func projectTenantMap(projects []platformv1alpha1.Project) map[string]string {
 func summarizeInstance(instance platformv1alpha1.ServiceInstance, projectTenants map[string]string, classes map[string]platformv1alpha1.ServiceClass, plans map[string]platformv1alpha1.ServicePlan) InstanceSummary {
 	class := classes[instance.Spec.ServiceClassRef.Name]
 	plan := plans[instance.Spec.ServicePlanRef.Name]
-	productName := class.Spec.DisplayName
+	productName := serviceClassDisplayName(instance.Spec.ServiceClassRef.Name, class.Spec.DisplayName)
 	if productName == "" {
 		if contract, ok := adapters.KnownContract(adapters.ServiceClass(instance.Spec.ServiceClassRef.Name)); ok {
 			productName = contract.FriendlyName
@@ -72,6 +72,8 @@ func productDescription(name string) string {
 		return "NATS messaging cluster with optional JetStream storage."
 	case string(adapters.ServiceClassYugabyte):
 		return "YugabyteDB distributed SQL/NoSQL database with native multi-region and xCluster replication."
+	case string(adapters.ServiceClassArgoApp):
+		return "Managed Application points to a repository of manifests that will be deployed."
 	default:
 		return "Servicer-managed product."
 	}

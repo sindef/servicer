@@ -92,6 +92,13 @@ func TestCatalogHidesUnpublishedClasses(t *testing.T) {
 	}
 }
 
+func TestServiceClassDisplayNameNormalizesLegacyArgoName(t *testing.T) {
+	got := serviceClassDisplayName("argo-application", "Argo CD Application")
+	if got != "Managed Application" {
+		t.Fatalf("expected normalized name, got %q", got)
+	}
+}
+
 func TestTenantScopedRoleInheritance(t *testing.T) {
 	current := actor{
 		Roles: map[string]struct{}{},

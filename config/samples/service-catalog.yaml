@@ -543,7 +543,7 @@ kind: ServiceClass
 metadata:
   name: argo-application
 spec:
-  displayName: Argo CD Application
+  displayName: Managed Application
   category: platform
   driver: argo-application
   published: true

@@ -67,7 +67,7 @@ func sampleArgoApplicationContext(t *testing.T) ServiceContext {
 	ctx := sampleNamespaceContext(t)
 	ctx.Class = &platformv1alpha1.ServiceClass{
 		Spec: platformv1alpha1.ServiceClassSpec{
-			DisplayName: "Argo CD Application",
+			DisplayName: "Managed Application",
 			Driver:      argoAppDriver,
 			Published:   true,
 		},

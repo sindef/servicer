@@ -1348,6 +1348,9 @@ async function submitRequest() {
           <div v-else-if="requestForm.serviceClass === 'argo-application'" class="form-grid modal-form-grid">
             <label style="grid-column: span 2">
               Repository
+              <span class="muted" style="display: block; font-size: 12px; margin: 4px 0 6px">
+                Managed Application points to a repository of manifests that will be deployed.
+              </span>
               <select
                 v-if="projectRepositories.length > 0"
                 v-model="parameterForm.argoRepoRef"

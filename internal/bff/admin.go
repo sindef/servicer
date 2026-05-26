@@ -303,7 +303,7 @@ func (s *Server) handleListServiceClasses(w http.ResponseWriter, r *http.Request
 		registered[sc.Name] = true
 		summary := ServiceClassAdminSummary{
 			Name:        sc.Name,
-			DisplayName: displayName(sc.Spec.DisplayName, sc.Name),
+			DisplayName: serviceClassDisplayName(sc.Name, sc.Spec.DisplayName),
 			Driver:      sc.Spec.Driver,
 			Category:    sc.Spec.Category,
 			Published:   sc.Spec.Published,
