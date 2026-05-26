@@ -235,6 +235,34 @@ func TestServiceClassRejectsEmptyRequiredPackageName(t *testing.T) {
 	}
 }
 
+func TestServiceClassRejectsKubeVirtOperatorPackageRequirement(t *testing.T) {
+	serviceClass := &ServiceClass{
+		Spec: ServiceClassSpec{
+			DisplayName:      "Virtual Machine",
+			Driver:           "kubevirt",
+			RequiredPackages: []string{"kubevirt"},
+		},
+	}
+
+	if _, err := serviceClass.ValidateCreate(context.Background(), serviceClass); err == nil {
+		t.Fatal("expected validation error for kubevirt required package")
+	}
+}
+
+func TestClusterTargetRejectsKubeVirtRequiredPackage(t *testing.T) {
+	target := &ClusterTarget{
+		Spec: ClusterTargetSpec{
+			DisplayName:      "Remote A",
+			ConnectionRef:    NamespacedObjectReference{Name: "remote-a-kubeconfig", Namespace: "servicer-system"},
+			RequiredPackages: []string{"kubevirt"},
+		},
+	}
+
+	if _, err := target.ValidateCreate(context.Background(), target); err == nil {
+		t.Fatal("expected validation error for kubevirt required package on cluster target")
+	}
+}
+
 func TestPolicyWebhookValidatesRuleSpec(t *testing.T) {
 	policy := &Policy{
 		Spec: PolicySpec{

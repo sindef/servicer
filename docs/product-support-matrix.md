@@ -10,6 +10,6 @@
 | Valkey | Preview | None seeded | Hidden from production catalog | ready/degraded/failover semantics require operator drills |
 | NATS | Preview | None seeded | Hidden from production catalog | gateway and JetStream recovery require operator drills |
 | Cassandra/K8ssandra | Preview | None seeded | Hidden from production catalog | ring repair, backup, and health require operator drills |
-| KubeVirt/VM | Preview | None seeded | Hidden from production catalog | guest readiness, storage, and power actions require operator drills |
+| KubeVirt/VM | Preview | KubeVirt + CDI preinstalled on target cluster | Hidden from production catalog | guest readiness, storage, and power actions require operator drills |
 
 Preview products can be enabled in non-production overlays and samples. Production catalog changes must update this matrix, `deploy/operator-packages.yaml`, and e2e coverage in the same pull request.

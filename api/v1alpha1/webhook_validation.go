@@ -44,6 +44,8 @@ const (
 	tenantKind               = "Tenant"
 	virtualMachineClaimKind  = "VirtualMachineClaim"
 	serviceInstanceAPIString = "platform.servicer.io/v1alpha1"
+	kubeVirtRuntimeDriver    = "kubevirt"
+	kubeVirtPackageName      = "kubevirt"
 )
 
 var (
@@ -768,6 +770,9 @@ func validateClusterTargetSpec(spec ClusterTargetSpec) field.ErrorList {
 		if strings.TrimSpace(requiredPackage) == "" {
 			allErrs = append(allErrs, field.Required(field.NewPath("spec", "requiredPackages").Index(i), "package name is required"))
 		}
+		if strings.EqualFold(strings.TrimSpace(requiredPackage), kubeVirtPackageName) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "requiredPackages").Index(i), requiredPackage, "kubevirt must be preinstalled on remote clusters and is not managed as an OperatorPackage"))
+		}
 	}
 	return allErrs
 }
@@ -1126,6 +1131,9 @@ func validateServiceClassSpec(spec ServiceClassSpec) field.ErrorList {
 	for i, requiredPackage := range spec.RequiredPackages {
 		if strings.TrimSpace(requiredPackage) == "" {
 			allErrs = append(allErrs, field.Required(field.NewPath("spec", "requiredPackages").Index(i), "package name is required"))
+		}
+		if spec.Driver == kubeVirtRuntimeDriver && strings.EqualFold(strings.TrimSpace(requiredPackage), kubeVirtPackageName) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "requiredPackages").Index(i), requiredPackage, "kubevirt service classes must rely on preinstalled KubeVirt/CDI dependencies rather than OperatorPackage installation"))
 		}
 	}
 	return allErrs
