@@ -403,8 +403,8 @@ jobs:
               echo "Image is available: ${IMAGE}"
               exit 0
             fi
-            echo "Attempt ${attempt}/60: image not available yet, sleeping 20s"
-            sleep 20
+            echo "Attempt ${attempt}/60: image not available yet, sleeping 30s"
+            sleep 30
           done
           echo "Timed out waiting for ${IMAGE}"
           exit 1
