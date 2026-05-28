@@ -53,7 +53,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := bff.NewServerWithConfig(kubeClient, restConfig)
+	server, err := bff.NewServerWithConfig(kubeClient, restConfig)
+	if err != nil {
+		ctrl.Log.WithName("bff").Error(err, "unable to initialize BFF server")
+		os.Exit(1)
+	}
 	errs := make(chan error, 2)
 	if listenAddr != "" {
 		go func() {

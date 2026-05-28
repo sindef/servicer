@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -886,6 +887,49 @@ func TestProductionModeRequiresStrongSessionSecret(t *testing.T) {
 	}
 }
 
+func TestNewServerWithConfigReturnsAuthInitError(t *testing.T) {
+	t.Setenv("SERVICER_PRODUCTION", "true")
+	t.Setenv("SERVICER_SESSION_SECRET", "")
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	if err := platformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	server, err := NewServerWithConfig(kubeClient, nil)
+	if err == nil {
+		t.Fatalf("expected server initialization error")
+	}
+	if server != nil {
+		t.Fatalf("expected nil server on auth runtime init failure")
+	}
+}
+
+func TestWriteErrorReturnsStablePublicMessageAndCode(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
+	writeError(response, request, errors.New("kube secret servicer-system/client-secret not found"))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", response.Code)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if payload["code"] != "internal_error" {
+		t.Fatalf("expected stable error code, got %#v", payload)
+	}
+	if payload["error"] != "internal server error" {
+		t.Fatalf("expected stable public message, got %#v", payload)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, "client-secret") || strings.Contains(body, "servicer-system") {
+		t.Fatalf("expected internal error details to be hidden, got %s", body)
+	}
+}
+
 func TestForwardedHTTPSRequiresTrustedProxyHeaders(t *testing.T) {
 	t.Setenv("SERVICER_TRUSTED_PROXY_HEADERS", "")
 	request := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
@@ -1410,7 +1454,10 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 			testValkeyCredentialSecret(),
 		).
 		Build()
-	server := NewServerWithConfig(client, restConfig)
+	server, err := NewServerWithConfig(client, restConfig)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 	server.auth.allowTestHeaders = true
 	return server
 }

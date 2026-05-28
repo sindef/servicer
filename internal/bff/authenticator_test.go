@@ -3,6 +3,7 @@ package bff
 import (
 	"context"
 	"crypto/tls"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -244,6 +245,37 @@ func TestAbsoluteRedirectURLRejectsUnsafePath(t *testing.T) {
 	request.TLS = &tls.ConnectionState{}
 	if got := absoluteRedirectURL(request, "//evil.example"); got != "https://servicer.local/" {
 		t.Fatalf("expected unsafe redirect path fallback, got %q", got)
+	}
+}
+
+func TestWriteAuthCallbackSuccessResponseSetsSessionAndCSRFCookies(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/callback", nil)
+	request.TLS = &tls.ConnectionState{}
+	response := httptest.NewRecorder()
+
+	writeAuthCallbackSuccessResponse(response, request, "encoded-session", "/console")
+
+	if response.Code != http.StatusFound {
+		t.Fatalf("expected redirect status, got %d", response.Code)
+	}
+	if location := response.Header().Get("Location"); location != "/console" {
+		t.Fatalf("expected redirect to /console, got %q", location)
+	}
+	setCookies := response.Result().Cookies()
+	foundSession := false
+	foundCSRF := false
+	for _, cookie := range setCookies {
+		if cookie.Name == authSessionCookieName && cookie.Value == "encoded-session" {
+			foundSession = true
+		}
+		if cookie.Name == csrfCookieName && cookie.Value != "" {
+			foundCSRF = true
+		}
+	}
+	if !foundSession || !foundCSRF {
+		t.Fatalf("expected session and csrf cookies, got %#v", setCookies)
 	}
 }
 

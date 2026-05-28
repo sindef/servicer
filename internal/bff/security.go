@@ -97,6 +97,10 @@ func secureCompare(left, right string) bool {
 }
 
 func (s *Server) ensureCSRFCookie(w http.ResponseWriter, r *http.Request) {
+	ensureCSRFCookieForRequest(w, r)
+}
+
+func ensureCSRFCookieForRequest(w http.ResponseWriter, r *http.Request) {
 	if _, err := r.Cookie(csrfCookieName); err == nil {
 		return
 	}

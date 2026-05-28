@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -40,15 +41,15 @@ type Server struct {
 	handler    http.Handler
 }
 
-func NewServer(client client.Client) *Server {
+func NewServer(client client.Client) (*Server, error) {
 	return NewServerWithConfig(client, nil)
 }
 
-func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server {
+func NewServerWithConfig(client client.Client, restConfig *rest.Config) (*Server, error) {
 	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client), loginLimit: newLoginRateLimiter(5, 15*time.Minute, 15*time.Minute)}
 	authRuntime, err := newAuthRuntime(client)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	server.auth = authRuntime
 	if restConfig != nil {
@@ -133,7 +134,7 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) *Server 
 	mux.HandleFunc("POST /api/tenants/{tenant}/repositories", server.handleCreateTenantRepository)
 	mux.HandleFunc("DELETE /api/tenants/{tenant}/repositories/{repo}", server.handleDeleteTenantRepository)
 	server.handler = withJSON(server.withMetrics(server.withCSRF(server.withAuthentication(server.withAudit(mux)))))
-	return server
+	return server, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -198,10 +199,10 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
 	response, err := s.auth.Config(context.Background())
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -234,7 +235,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 			providerName = s.auth.defaultProviderName(r.Context(), []platformv1alpha1.AuthProviderType{platformv1alpha1.AuthProviderTypeOIDC})
 		}
 		if err := s.auth.StartLogin(r.Context(), w, r, providerName, absoluteRedirectURL(r, defaultOIDCRedirect)); err != nil {
-			writeError(w, err)
+			writeError(w, r, err)
 		}
 	case http.MethodPost:
 		var req loginRequest
@@ -298,8 +299,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if err := s.auth.HandleCallback(r.Context(), w, r, absoluteRedirectURL(r, defaultOIDCRedirect)); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
 	}
-	s.ensureCSRFCookie(w, r)
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +326,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenants, projects, instances, actions, err := s.loadCore(ctx)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 
@@ -377,7 +378,7 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenants, projects, instances, _, err := s.loadCore(ctx)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	tenants.Items = visibleTenants(actor, tenants.Items)
@@ -421,7 +422,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenants, projects, instances, _, err := s.loadCore(ctx)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	projects.Items = visibleProjects(actor, projects.Items, tenants.Items)
@@ -456,18 +457,18 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	var classes platformv1alpha1.ServiceClassList
 	var plans platformv1alpha1.ServicePlanList
 	if err := s.client.List(r.Context(), &classes); err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	if err := s.client.List(r.Context(), &plans); err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	allowedByTenant := map[string]struct{}{}
 	if !actor.isPlatformAdmin() {
 		var tenants platformv1alpha1.TenantList
 		if err := s.client.List(r.Context(), &tenants); err != nil {
-			writeError(w, err)
+			writeError(w, r, err)
 			return
 		}
 		for _, tenant := range visibleTenants(actor, tenants.Items) {
@@ -530,14 +531,14 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenants, projects, instances, _, err := s.loadCore(ctx)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	projects.Items = visibleProjects(actor, projects.Items, tenants.Items)
 	instances.Items = visibleInstances(actor, instances.Items, projects.Items, tenants.Items)
 	classes, plans, err := s.classPlanMaps(ctx)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	projectTenants := projectTenantMap(projects.Items)
@@ -563,7 +564,7 @@ func (s *Server) handleInstanceDetail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var instance platformv1alpha1.ServiceInstance
 	if err := s.client.Get(ctx, client.ObjectKey{Name: name}, &instance); err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	if !s.authorizeInstance(ctx, actor, &instance) {
@@ -573,16 +574,16 @@ func (s *Server) handleInstanceDetail(w http.ResponseWriter, r *http.Request) {
 	var projects platformv1alpha1.ProjectList
 	var actions platformv1alpha1.ActionRequestList
 	if err := s.client.List(ctx, &projects); err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	if err := s.client.List(ctx, &actions); err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	classes, plans, err := s.classPlanMaps(ctx)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 
@@ -673,12 +674,71 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func writeError(w http.ResponseWriter, err error) {
-	status := http.StatusInternalServerError
-	if meta.IsNoMatchError(err) || errors.Is(err, context.Canceled) {
-		status = http.StatusServiceUnavailable
+func writeError(w http.ResponseWriter, args ...any) {
+	var (
+		r   *http.Request
+		err error
+	)
+	switch len(args) {
+	case 1:
+		err, _ = args[0].(error)
+	case 2:
+		r, _ = args[0].(*http.Request)
+		err, _ = args[1].(error)
 	}
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	if err == nil {
+		err = errors.New("internal server error")
+	}
+	status := http.StatusInternalServerError
+	code := "internal_error"
+	message := "internal server error"
+	switch {
+	case errors.Is(err, context.Canceled):
+		status = http.StatusRequestTimeout
+		code = "request_canceled"
+		message = "request canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusGatewayTimeout
+		code = "request_timeout"
+		message = "request timed out"
+	case meta.IsNoMatchError(err):
+		status = http.StatusServiceUnavailable
+		code = "dependency_unavailable"
+		message = "service temporarily unavailable"
+	}
+	logger := slog.With(
+		"status", status,
+		"code", code,
+		"path", requestPath(r),
+		"method", requestMethod(r),
+		"requestId", strings.TrimSpace(requestHeader(r, "X-Request-Id")),
+	)
+	logger.Error("request failed", "error", err.Error())
+	writeJSON(w, status, map[string]string{
+		"error": message,
+		"code":  code,
+	})
+}
+
+func requestPath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	return r.URL.Path
+}
+
+func requestMethod(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return r.Method
+}
+
+func requestHeader(r *http.Request, name string) string {
+	if r == nil {
+		return ""
+	}
+	return r.Header.Get(name)
 }
 
 func displayName(value, fallback string) string {

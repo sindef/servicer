@@ -346,10 +346,15 @@ func (a *authRuntime) HandleCallback(ctx context.Context, w http.ResponseWriter,
 	if !ok {
 		returnTo = "/"
 	}
+	writeAuthCallbackSuccessResponse(w, r, encodedSession, returnTo)
+	return nil
+}
+
+func writeAuthCallbackSuccessResponse(w http.ResponseWriter, r *http.Request, encodedSession, returnTo string) {
 	http.SetCookie(w, clearAuthCookie(r, authFlowCookieName))
 	http.SetCookie(w, authCookie(r, authSessionCookieName, encodedSession, 24*time.Hour))
+	ensureCSRFCookieForRequest(w, r)
 	http.Redirect(w, r, returnTo, http.StatusFound) // #nosec G710 -- Return target is constrained to local relative paths.
-	return nil
 }
 
 func (a *authRuntime) CompletePasswordLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, req loginRequest) error {
