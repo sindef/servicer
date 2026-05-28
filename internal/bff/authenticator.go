@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-ldap/ldap/v3"
@@ -103,6 +104,7 @@ type resolvedIdentity struct {
 	ProviderName string
 	ProviderType string
 	Subject      string
+	AltSubjects  []string
 	Name         string
 	Email        string
 	Groups       []string
@@ -274,8 +276,8 @@ func (a *authRuntime) StartLogin(ctx context.Context, w http.ResponseWriter, r *
 	if err != nil {
 		return err
 	}
-	returnTo := strings.TrimSpace(r.URL.Query().Get("returnTo"))
-	if returnTo == "" || !strings.HasPrefix(returnTo, "/") {
+	returnTo, ok := safeLocalReturnPath(r.URL.Query().Get("returnTo"))
+	if !ok {
 		returnTo = "/"
 	}
 	encodedState, err := a.flowCodec.Encode(oidcAuthFlowState{
@@ -340,9 +342,13 @@ func (a *authRuntime) HandleCallback(ctx context.Context, w http.ResponseWriter,
 	if err != nil {
 		return err
 	}
+	returnTo, ok := safeLocalReturnPath(flow.ReturnTo)
+	if !ok {
+		returnTo = "/"
+	}
 	http.SetCookie(w, clearAuthCookie(r, authFlowCookieName))
 	http.SetCookie(w, authCookie(r, authSessionCookieName, encodedSession, 24*time.Hour))
-	http.Redirect(w, r, flow.ReturnTo, http.StatusFound) // #nosec G710 -- Return target is constrained to local relative paths.
+	http.Redirect(w, r, returnTo, http.StatusFound) // #nosec G710 -- Return target is constrained to local relative paths.
 	return nil
 }
 
@@ -377,8 +383,8 @@ func (a *authRuntime) CompletePasswordLogin(ctx context.Context, w http.Response
 }
 
 func (a *authRuntime) LogoutRedirectURL(ctx context.Context, r *http.Request) string {
-	target := strings.TrimSpace(r.URL.Query().Get("returnTo"))
-	if target == "" || !strings.HasPrefix(target, "/") {
+	target, ok := safeLocalReturnPath(r.URL.Query().Get("returnTo"))
+	if !ok {
 		target = "/"
 	}
 	sessionCookie, err := r.Cookie(authSessionCookieName)
@@ -444,6 +450,9 @@ func (a *authRuntime) ldapPasswordLogin(ctx context.Context, provider *platformv
 	}
 	identity, err := a.authenticateLDAP(ctx, provider, username, password)
 	if err != nil {
+		return authSessionState{}, err
+	}
+	if _, err := a.resolveActor(ctx, identity); err != nil {
 		return authSessionState{}, err
 	}
 	return authSessionState{
@@ -637,15 +646,17 @@ func (a *authRuntime) sessionAndActorFromIDToken(ctx context.Context, provider *
 	if err := idToken.Claims(&claims); err != nil {
 		return authSessionState{}, actor{}, fmt.Errorf("decode token claims: %w", err)
 	}
-	subject := firstNonEmpty(stringClaim(claims, provider.usernameClaim), stringClaim(claims, "preferred_username"), stringClaim(claims, provider.emailClaim), stringClaim(claims, "email"), idToken.Subject)
-	if subject == "" {
-		return authSessionState{}, actor{}, errors.New("token did not contain a usable subject claim")
+	rawSubject := strings.TrimSpace(idToken.Subject)
+	if rawSubject == "" {
+		return authSessionState{}, actor{}, errors.New("token did not contain OIDC sub")
 	}
+	subject := oidcSubject(idToken.Issuer, rawSubject)
 	identity := resolvedIdentity{
 		ProviderName: provider.provider.Name,
 		ProviderType: string(provider.provider.Spec.Type),
 		Subject:      subject,
-		Name:         firstNonEmpty(stringClaim(claims, provider.usernameClaim), stringClaim(claims, "preferred_username"), stringClaim(claims, provider.emailClaim), subject),
+		AltSubjects:  []string{rawSubject},
+		Name:         firstNonEmpty(stringClaim(claims, provider.usernameClaim), stringClaim(claims, "preferred_username"), stringClaim(claims, provider.emailClaim), rawSubject),
 		Email:        firstNonEmpty(stringClaim(claims, provider.emailClaim), stringClaim(claims, "email")),
 		Groups:       sortedKeys(setFromClaim(claims[provider.groupsClaim])),
 	}
@@ -690,6 +701,9 @@ func (a *authRuntime) resolveActor(ctx context.Context, identity resolvedIdentit
 	roleExpander := newRoleExpander(roles)
 
 	matchedUser := a.matchUser(users.Items, identity)
+	if identity.ProviderType != string(platformv1alpha1.AuthProviderTypeLocal) && matchedUser == nil {
+		return actor{}, errors.New("external identity is not linked to a Servicer user")
+	}
 	localGroupNames := map[string]struct{}{}
 	externalGroups := map[string]struct{}{}
 	for _, name := range identity.Groups {
@@ -817,21 +831,27 @@ func tenantVisibleLegacy(current actor, matchedUser *platformv1alpha1.User, tena
 }
 
 func (a *authRuntime) matchUser(users []platformv1alpha1.User, identity resolvedIdentity) *platformv1alpha1.User {
+	subjects := map[string]struct{}{}
+	if subject := strings.TrimSpace(identity.Subject); subject != "" {
+		subjects[subject] = struct{}{}
+	}
+	for _, subject := range identity.AltSubjects {
+		if subject = strings.TrimSpace(subject); subject != "" {
+			subjects[subject] = struct{}{}
+		}
+	}
 	for i := range users {
 		user := &users[i]
 		if identity.ProviderType == string(platformv1alpha1.AuthProviderTypeLocal) && user.Name == identity.Subject {
 			return user
 		}
 		for _, external := range user.Spec.ExternalIdentities {
-			if external.ProviderRef.Name == identity.ProviderName && external.Subject == identity.Subject {
+			if external.ProviderRef.Name != identity.ProviderName {
+				continue
+			}
+			if _, ok := subjects[external.Subject]; ok {
 				return user
 			}
-		}
-		if identity.Email != "" && strings.EqualFold(user.Spec.Email, identity.Email) {
-			return user
-		}
-		if user.Name == identity.Subject || user.Name == identity.Name {
-			return user
 		}
 	}
 	return nil
@@ -1070,6 +1090,15 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func oidcSubject(issuer, sub string) string {
+	issuer = strings.TrimSpace(issuer)
+	sub = strings.TrimSpace(sub)
+	if issuer == "" {
+		return sub
+	}
+	return issuer + "|" + sub
+}
+
 func stringClaim(claims map[string]any, key string) string {
 	value, ok := claims[key]
 	if !ok {
@@ -1240,18 +1269,118 @@ func trustedProxyHeadersEnabled() bool {
 }
 
 func absoluteRedirectURL(r *http.Request, path string) string {
+	localPath, ok := safeLocalReturnPath(path)
+	if !ok {
+		localPath = "/"
+	}
+	if externalBase, ok := configuredExternalAuthBaseURL(); ok {
+		return externalBase + localPath
+	}
 	if r == nil {
-		return path
+		return localPath
 	}
 	scheme := "http"
 	if requestIsSecure(r) {
 		scheme = "https"
 	}
-	host := r.Host
-	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
-		host = forwardedHost
+	host, ok := normalizeRedirectHost(r.Host)
+	if !ok {
+		return localPath
 	}
-	return scheme + "://" + host + path
+	if trustedProxyHeadersEnabled() {
+		forwardedHost := firstForwardedHeaderValue(r.Header.Get("X-Forwarded-Host"))
+		if forwardedHost, ok = normalizeRedirectHost(forwardedHost); ok {
+			host = forwardedHost
+		}
+	}
+	return scheme + "://" + host + localPath
+}
+
+func safeLocalReturnPath(raw string) (string, bool) {
+	target := strings.TrimSpace(raw)
+	if target == "" {
+		return "", false
+	}
+	if hasControlChars(target) {
+		return "", false
+	}
+	if !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
+		return "", false
+	}
+	if strings.Contains(target, "\\") || strings.Contains(target, "://") {
+		return "", false
+	}
+	if decoded, err := url.PathUnescape(target); err != nil {
+		return "", false
+	} else if decoded != target {
+		if hasControlChars(decoded) {
+			return "", false
+		}
+		if !strings.HasPrefix(decoded, "/") || strings.HasPrefix(decoded, "//") {
+			return "", false
+		}
+		if strings.Contains(decoded, "\\") || strings.Contains(decoded, "://") {
+			return "", false
+		}
+	}
+	return target, true
+}
+
+func configuredExternalAuthBaseURL() (string, bool) {
+	raw := strings.TrimSpace(os.Getenv("SERVICER_AUTH_EXTERNAL_BASE_URL"))
+	if raw == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", false
+	}
+	if parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
+		return "", false
+	}
+	basePath := strings.TrimSuffix(parsed.EscapedPath(), "/")
+	parsed.Path = basePath
+	parsed.RawPath = basePath
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), true
+}
+
+func normalizeRedirectHost(raw string) (string, bool) {
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		return "", false
+	}
+	if hasControlChars(host) || strings.Contains(host, "\\") || strings.Contains(host, "/") {
+		return "", false
+	}
+	parsed, err := url.Parse("https://" + host)
+	if err != nil {
+		return "", false
+	}
+	if parsed.Host != host || parsed.Hostname() == "" {
+		return "", false
+	}
+	return host, true
+}
+
+func firstForwardedHeaderValue(raw string) string {
+	if idx := strings.Index(raw, ","); idx >= 0 {
+		raw = raw[:idx]
+	}
+	return strings.TrimSpace(raw)
+}
+
+func hasControlChars(value string) bool {
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func randomString(byteCount int) (string, error) {

@@ -1367,6 +1367,7 @@ func testServerWithConfig(t *testing.T, restConfig *rest.Config) *Server {
 		"SERVICER_SESSION_SECRET",
 		"SERVICER_PRODUCTION",
 		"SERVICER_TRUSTED_PROXY_HEADERS",
+		"SERVICER_AUTH_EXTERNAL_BASE_URL",
 		"SERVICER_AUDIT_STDOUT",
 	} {
 		_ = os.Unsetenv(key)

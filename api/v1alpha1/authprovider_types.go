@@ -20,9 +20,9 @@ type OIDCAuthProviderSpec struct {
 	ClientID string `json:"clientId,omitempty"`
 	// ClientSecretRef references the Secret containing the client secret.
 	ClientSecretRef NamespacedObjectReference `json:"clientSecretRef,omitempty"`
-	// UsernameClaim is the preferred user-identity claim.
+	// UsernameClaim is copied into display metadata for authenticated sessions.
 	UsernameClaim string `json:"usernameClaim,omitempty"`
-	// EmailClaim is the email claim used for display or fallback identity mapping.
+	// EmailClaim is copied into display metadata for authenticated sessions.
 	EmailClaim string `json:"emailClaim,omitempty"`
 	// RolesClaim is the claim that contains upstream role names.
 	RolesClaim string `json:"rolesClaim,omitempty"`

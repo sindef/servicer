@@ -6,7 +6,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 type ExternalIdentitySpec struct {
 	// ProviderRef identifies the auth provider that asserts the subject.
 	ProviderRef LocalObjectReference `json:"providerRef"`
-	// Subject is the stable upstream identity subject.
+	// Subject is the stable upstream identity subject (for OIDC, issuer-scoped sub).
 	Subject string `json:"subject"`
 }
 
