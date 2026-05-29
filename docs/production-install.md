@@ -13,6 +13,7 @@ Before applying `deploy/`, replace these values:
 - `deploy/ingress.yaml`: set the production host, `ingressClassName`, TLS Secret, and certificate issuer
 - create `servicer-bff-session` with a randomly generated signing secret
 - create or update `servicer-delivery-repo` with the Git repository URL, known hosts, and deploy key
+- configure login throttling backend settings (`SERVICER_LOGIN_RATE_LIMIT_BACKEND` and `SERVICER_LOGIN_RATE_LIMIT_ACCEPT_IN_MEMORY`)
 
 Example session secret:
 
@@ -34,6 +35,8 @@ kubectl -n servicer-system create secret generic servicer-delivery-repo \
 Restart the manager after changing this Secret so the repository URL environment variable refreshes. When the Secret is absent, Git publishing is disabled and ServiceInstances stay materialized locally instead of failing on a placeholder remote.
 
 The manager clones the configured delivery repository into an ephemeral worktree, commits rendered artifacts with the configured commit identity, and pushes to the configured branch. If the remote is unavailable, the worktree is divergent, or push fails, reconciliation fails and records the Git error in ServiceInstance status instead of silently falling back to local-only delivery.
+
+`SERVICER_LOGIN_RATE_LIMIT_BACKEND=memory` is a per-pod development fallback. In production mode (`SERVICER_PRODUCTION=true`), startup fails unless `SERVICER_LOGIN_RATE_LIMIT_ACCEPT_IN_MEMORY=true` is explicitly set to acknowledge the weaker multi-replica behavior. For ingress deployments, only enable trusted proxy mode when your ingress sanitizes and controls `X-Forwarded-For`; otherwise client IP identity falls back to `RemoteAddr`.
 
 Production network policy defaults deny all traffic in `servicer-system`, then allow:
 

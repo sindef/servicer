@@ -37,7 +37,7 @@ type Server struct {
 	auth       *authRuntime
 	metrics    *serverMetrics
 	auditStore *auditStore
-	loginLimit *loginRateLimiter
+	loginLimit loginLimiter
 	handler    http.Handler
 }
 
@@ -46,12 +46,16 @@ func NewServer(client client.Client) (*Server, error) {
 }
 
 func NewServerWithConfig(client client.Client, restConfig *rest.Config) (*Server, error) {
-	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client), loginLimit: newLoginRateLimiter(5, 15*time.Minute, 15*time.Minute)}
+	server := &Server{client: client, metrics: newServerMetrics(), auditStore: newAuditStoreFromEnv(client)}
 	authRuntime, err := newAuthRuntime(client)
 	if err != nil {
 		return nil, err
 	}
 	server.auth = authRuntime
+	server.loginLimit, err = newLoginLimiterFromEnv(server.metrics)
+	if err != nil {
+		return nil, err
+	}
 	if restConfig != nil {
 		if httpClient, err := rest.HTTPClientFor(restConfig); err == nil {
 			server.kubeHost = strings.TrimRight(restConfig.Host, "/")
@@ -245,6 +249,12 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		rateLimitKey := loginRateLimitKey(r, req.Provider, req.Username)
 		if s.loginLimit != nil && !s.loginLimit.Allow(rateLimitKey) {
+			slog.Warn(
+				"login request throttled",
+				"provider", strings.TrimSpace(req.Provider),
+				"username", strings.TrimSpace(req.Username),
+				"clientIp", verifiedClientIP(r),
+			)
 			s.recordAudit(r.Context(), AuditEventSummary{
 				Time:     time.Now().UTC().Format(time.RFC3339),
 				Type:     "Auth",

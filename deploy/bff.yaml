@@ -40,6 +40,10 @@ spec:
               value: "true"
             - name: SERVICER_AUTH_EXTERNAL_BASE_URL
               value: "https://servicer.example.com"
+            - name: SERVICER_LOGIN_RATE_LIMIT_BACKEND
+              value: "memory"
+            - name: SERVICER_LOGIN_RATE_LIMIT_ACCEPT_IN_MEMORY
+              value: "true"
             - name: SERVICER_AUDIT_STDOUT
               value: "true"
             - name: SERVICER_SESSION_SECRET

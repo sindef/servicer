@@ -10,11 +10,13 @@ import (
 )
 
 type serverMetrics struct {
-	registry              *prometheus.Registry
-	requestsTotal         *prometheus.CounterVec
-	requestDuration       *prometheus.HistogramVec
-	authFailuresTotal     prometheus.Counter
-	upstreamFailuresTotal prometheus.Counter
+	registry                     *prometheus.Registry
+	requestsTotal                *prometheus.CounterVec
+	requestDuration              *prometheus.HistogramVec
+	authFailuresTotal            prometheus.Counter
+	upstreamFailuresTotal        prometheus.Counter
+	loginRateLimitBlocksTotal    prometheus.Counter
+	loginRateLimitEvictionsTotal prometheus.Counter
 }
 
 func newServerMetrics() *serverMetrics {
@@ -56,12 +58,30 @@ func newServerMetrics() *serverMetrics {
 				Help:      "Total number of upstream Kubernetes proxy failures.",
 			},
 		),
+		loginRateLimitBlocksTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: "servicer",
+				Subsystem: "bff",
+				Name:      "login_rate_limit_blocks_total",
+				Help:      "Total number of login requests blocked by rate limiting.",
+			},
+		),
+		loginRateLimitEvictionsTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: "servicer",
+				Subsystem: "bff",
+				Name:      "login_rate_limit_evictions_total",
+				Help:      "Total number of expired login rate limiter entries evicted.",
+			},
+		),
 	}
 	registry.MustRegister(
 		metrics.requestsTotal,
 		metrics.requestDuration,
 		metrics.authFailuresTotal,
 		metrics.upstreamFailuresTotal,
+		metrics.loginRateLimitBlocksTotal,
+		metrics.loginRateLimitEvictionsTotal,
 	)
 	return metrics
 }
