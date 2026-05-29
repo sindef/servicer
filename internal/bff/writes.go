@@ -381,7 +381,7 @@ func (s *Server) handleSubmitAction(w http.ResponseWriter, r *http.Request) {
 				Mode: approvalModeFor(actor, capability),
 			},
 			RequestedBy: platformv1alpha1.RequestedBySpec{
-				Subject: actor.Name,
+				Subject: actorRequestIdentity(actor),
 				Source:  platformv1alpha1.RequestSourceUI,
 			},
 		},
@@ -431,11 +431,11 @@ func (s *Server) handleActionApproval(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "action target is outside your authorized tenancy"})
 		return
 	}
-	if action.Spec.RequestedBy.Subject == actor.Name && !actor.isPlatformAdmin() {
+	if isSelfApprovalRequest(action.Spec.RequestedBy.Subject, actor) && !actor.isPlatformAdmin() {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "requesters may not self-approve their own action requests"})
 		return
 	}
-	if action.Status.Phase != "PendingApproval" && action.Spec.Approval.Mode != platformv1alpha1.ApprovalModeRequired {
+	if action.Status.Phase != "PendingApproval" || action.Spec.Approval.Mode != platformv1alpha1.ApprovalModeRequired {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "action request is not waiting for approval"})
 		return
 	}
@@ -630,4 +630,34 @@ func rawJSONFromMap(values map[string]any) *apiextensionsv1.JSON {
 	}
 	raw, _ := json.Marshal(values)
 	return &apiextensionsv1.JSON{Raw: raw}
+}
+
+func actorRequestIdentity(actor actor) string {
+	provider := strings.TrimSpace(actor.Provider)
+	subject := strings.TrimSpace(actor.Subject)
+	if provider != "" && subject != "" {
+		return provider + ":" + subject
+	}
+	if subject != "" {
+		return subject
+	}
+	return strings.TrimSpace(actor.Name)
+}
+
+func isSelfApprovalRequest(requestedBy string, actor actor) bool {
+	requested := strings.TrimSpace(requestedBy)
+	if requested == "" {
+		return false
+	}
+	identity := actorRequestIdentity(actor)
+	if identity != "" && requested == identity {
+		return true
+	}
+	// Backward-compatible fallback for legacy requests created before immutable identities were persisted.
+	for _, legacy := range []string{strings.TrimSpace(actor.Name), strings.TrimSpace(actor.Subject), strings.TrimSpace(actor.Email), strings.TrimSpace(actor.UserName)} {
+		if legacy != "" && requested == legacy {
+			return true
+		}
+	}
+	return false
 }

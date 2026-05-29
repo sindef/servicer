@@ -38,6 +38,10 @@ type ActionRequestStatus struct {
 	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 	// OperationRef identifies the backing operation object if one exists.
 	OperationRef *TypedObjectReference `json:"operationRef,omitempty"`
+	// OperationID is the controller-issued execution operation identifier.
+	OperationID string `json:"operationId,omitempty"`
+	// OperationState captures execution progress for idempotent reconciliation.
+	OperationState string `json:"operationState,omitempty"`
 	// Result captures the execution outcome.
 	Result ActionResultStatus `json:"result,omitempty"`
 }

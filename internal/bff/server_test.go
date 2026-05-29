@@ -686,6 +686,66 @@ func TestApproveActionRejectsSelfApproval(t *testing.T) {
 	}
 }
 
+func TestApproveActionRequiresPendingPhaseAndRequiredMode(t *testing.T) {
+	server := testServer(t)
+
+	invalidMode := testPendingApprovalAction()
+	invalidMode.Name = "session-cache-failover-invalid-mode"
+	invalidMode.Spec.Approval.Mode = platformv1alpha1.ApprovalModeAuto
+	if err := server.client.Create(context.Background(), invalidMode); err != nil {
+		t.Fatalf("create invalid-mode action: %v", err)
+	}
+
+	invalidPhase := testPendingApprovalAction()
+	invalidPhase.Name = "session-cache-failover-invalid-phase"
+	invalidPhase.Status.Phase = "Running"
+	if err := server.client.Create(context.Background(), invalidPhase); err != nil {
+		t.Fatalf("create invalid-phase action: %v", err)
+	}
+
+	for _, name := range []string{"session-cache-failover-invalid-mode", "session-cache-failover-invalid-phase"} {
+		body := []byte(`{"decision":"approve"}`)
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/actions/"+name+"/approval", bytes.NewReader(body))
+		request.Header.Set("X-Servicer-User", "trent@example.com")
+		request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("expected status 409 for %s, got %d: %s", name, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestApproveActionRejectsSelfApprovalByImmutableIdentity(t *testing.T) {
+	server := testServer(t)
+	action := testPendingApprovalAction()
+	action.Name = "session-cache-failover-immutable-self"
+	action.Spec.RequestedBy.Subject = "corp-oidc:alice-subject"
+	if err := server.client.Create(context.Background(), action); err != nil {
+		t.Fatalf("create action: %v", err)
+	}
+
+	body := []byte(`{"decision":"approve"}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/actions/session-cache-failover-immutable-self/approval", bytes.NewReader(body))
+	request.SetPathValue("name", "session-cache-failover-immutable-self")
+	request = withActor(request, actor{
+		Name:          "alice@example.com",
+		Provider:      "corp-oidc",
+		Subject:       "alice-subject",
+		Authenticated: true,
+		Roles:         map[string]struct{}{roleTenantOperator: {}},
+		TenantRoles:   map[string]map[string]struct{}{"acme": {roleTenantOperator: {}}},
+		Groups:        map[string]struct{}{},
+	})
+
+	server.handleActionApproval(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAuditEndpointReturnsActionsAndEvents(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()

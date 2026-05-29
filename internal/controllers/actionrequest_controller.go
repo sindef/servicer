@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -48,6 +49,12 @@ type actionResolutionError struct {
 	retryable bool
 }
 
+const (
+	actionOperationStatePrepared = "Prepared"
+	actionOperationStateApplied  = "Applied"
+	actionOperationStateComplete = "Complete"
+)
+
 func (e *actionResolutionError) Error() string {
 	return e.message
 }
@@ -61,17 +68,16 @@ func (r *ActionRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	originalStatus := actionRequest.Status
-	actionRequest.Status.ObservedGeneration = actionRequest.Generation
-
 	resolved, err := r.resolveAction(ctx, &actionRequest)
 	if err != nil {
 		if resolutionErr, ok := err.(*actionResolutionError); ok {
-			r.applyFailedStatus(&actionRequest, resolutionErr.reason, resolutionErr.code, resolutionErr.message, resolutionErr.retryable)
-			if !equality.Semantic.DeepEqual(originalStatus, actionRequest.Status) {
-				if updateErr := r.Status().Update(ctx, &actionRequest); updateErr != nil {
-					return ctrl.Result{}, updateErr
-				}
+			if _, _, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+				current.Status.ObservedGeneration = current.Generation
+				r.applyFailedStatus(current, resolutionErr.reason, resolutionErr.code, resolutionErr.message, resolutionErr.retryable)
+				current.Status.OperationID = ""
+				current.Status.OperationState = actionOperationStateComplete
+			}); updateErr != nil {
+				return ctrl.Result{}, updateErr
 			}
 			if resolutionErr.requeue {
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -81,65 +87,169 @@ func (r *ActionRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Accepted", metav1.ConditionTrue, "ValidationSucceeded", "Action request target and adapter contract resolved.")
-	setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Failed", metav1.ConditionFalse, "ValidationSucceeded", "Action request has not failed.")
-
 	if approvalPending(&actionRequest, resolved.capability) {
-		actionRequest.Status.Phase = "PendingApproval"
-		actionRequest.Status.OperationRef = nil
-		actionRequest.Status.Result.Code = "approval-required"
-		actionRequest.Status.Result.Message = fmt.Sprintf("Action %q requires approval before execution.", actionRequest.Spec.Action)
-		actionRequest.Status.Result.Retryable = false
-		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Ready", metav1.ConditionFalse, "ApprovalRequired", "Action request is waiting for approval.")
-	} else if actionRequest.Spec.Approval.Mode == platformv1alpha1.ApprovalModeRejected {
-		actionRequest.Status.Phase = "Failed"
-		actionRequest.Status.OperationRef = nil
-		actionRequest.Status.Result.Code = "approval-rejected"
-		actionRequest.Status.Result.Message = "Action request was rejected before execution."
-		actionRequest.Status.Result.Retryable = false
-		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Ready", metav1.ConditionFalse, "ApprovalRejected", "Action request was rejected.")
-		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Failed", metav1.ConditionTrue, "ApprovalRejected", "Action request was rejected.")
-	} else if approvalApprovedWithoutApprover(&actionRequest, resolved.capability) {
-		actionRequest.Status.Phase = "Failed"
-		actionRequest.Status.OperationRef = nil
-		actionRequest.Status.Result.Code = "approval-invalid"
-		actionRequest.Status.Result.Message = "Action request approval is missing approver identity."
-		actionRequest.Status.Result.Retryable = false
-		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Ready", metav1.ConditionFalse, "ApprovalInvalid", "Action request approval metadata is incomplete.")
-		setStatusCondition(&actionRequest.Status.Conditions, actionRequest.Generation, "Failed", metav1.ConditionTrue, "ApprovalInvalid", "Action request approval metadata is incomplete.")
-	} else {
-		executionResult, execErr := r.executeAction(ctx, resolved, &actionRequest)
-		if execErr != nil {
-			r.applyFailedStatus(&actionRequest, "ActionExecutionFailed", "execution-failed", execErr.Error(), true)
-		} else {
-			r.applyExecutionStatus(&actionRequest, executionResult)
+		if _, _, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+			current.Status.ObservedGeneration = current.Generation
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Accepted", metav1.ConditionTrue, "ValidationSucceeded", "Action request target and adapter contract resolved.")
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Failed", metav1.ConditionFalse, "ValidationSucceeded", "Action request has not failed.")
+			current.Status.Phase = "PendingApproval"
+			current.Status.OperationRef = nil
+			current.Status.OperationID = ""
+			current.Status.OperationState = ""
+			current.Status.Result.Code = "approval-required"
+			current.Status.Result.Message = fmt.Sprintf("Action %q requires approval before execution.", current.Spec.Action)
+			current.Status.Result.Retryable = false
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Ready", metav1.ConditionFalse, "ApprovalRequired", "Action request is waiting for approval.")
+		}); updateErr != nil {
+			return ctrl.Result{}, updateErr
 		}
-	}
+	} else if actionRequest.Spec.Approval.Mode == platformv1alpha1.ApprovalModeRejected {
+		if _, _, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+			current.Status.ObservedGeneration = current.Generation
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Accepted", metav1.ConditionTrue, "ValidationSucceeded", "Action request target and adapter contract resolved.")
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Failed", metav1.ConditionFalse, "ValidationSucceeded", "Action request has not failed.")
+			current.Status.Phase = "Failed"
+			current.Status.OperationRef = nil
+			current.Status.OperationID = ""
+			current.Status.OperationState = actionOperationStateComplete
+			current.Status.Result.Code = "approval-rejected"
+			current.Status.Result.Message = "Action request was rejected before execution."
+			current.Status.Result.Retryable = false
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Ready", metav1.ConditionFalse, "ApprovalRejected", "Action request was rejected.")
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Failed", metav1.ConditionTrue, "ApprovalRejected", "Action request was rejected.")
+		}); updateErr != nil {
+			return ctrl.Result{}, updateErr
+		}
+	} else if approvalApprovedWithoutApprover(&actionRequest, resolved.capability) {
+		if _, _, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+			current.Status.ObservedGeneration = current.Generation
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Accepted", metav1.ConditionTrue, "ValidationSucceeded", "Action request target and adapter contract resolved.")
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Failed", metav1.ConditionFalse, "ValidationSucceeded", "Action request has not failed.")
+			current.Status.Phase = "Failed"
+			current.Status.OperationRef = nil
+			current.Status.OperationID = ""
+			current.Status.OperationState = actionOperationStateComplete
+			current.Status.Result.Code = "approval-invalid"
+			current.Status.Result.Message = "Action request approval is missing approver identity."
+			current.Status.Result.Retryable = false
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Ready", metav1.ConditionFalse, "ApprovalInvalid", "Action request approval metadata is incomplete.")
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Failed", metav1.ConditionTrue, "ApprovalInvalid", "Action request approval metadata is incomplete.")
+		}); updateErr != nil {
+			return ctrl.Result{}, updateErr
+		}
+	} else {
+		preparedAction, changed, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+			newGeneration := current.Status.ObservedGeneration != current.Generation
+			current.Status.ObservedGeneration = current.Generation
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Accepted", metav1.ConditionTrue, "ValidationSucceeded", "Action request target and adapter contract resolved.")
+			setStatusCondition(&current.Status.Conditions, current.Generation, "Failed", metav1.ConditionFalse, "ValidationSucceeded", "Action request has not failed.")
+			// Reset in-flight state after a spec update so each generation gets a distinct operation ID.
+			if newGeneration {
+				current.Status.OperationID = ""
+				current.Status.OperationState = ""
+			}
+			if strings.TrimSpace(current.Status.OperationID) == "" {
+				current.Status.OperationID = actionOperationID(current)
+			}
+			if current.Status.OperationState == "" {
+				current.Status.OperationState = actionOperationStatePrepared
+			}
+			if current.Status.OperationState == actionOperationStatePrepared {
+				current.Status.Phase = "Running"
+				now := metav1.Now()
+				if current.Status.StartedAt == nil {
+					current.Status.StartedAt = &now
+				}
+				current.Status.Result.Code = "running"
+				current.Status.Result.Message = "Action request is running."
+				current.Status.Result.Retryable = true
+				setStatusCondition(&current.Status.Conditions, current.Generation, "Ready", metav1.ConditionFalse, "ActionRunning", "Action request is running.")
+				setStatusCondition(&current.Status.Conditions, current.Generation, "Failed", metav1.ConditionFalse, "ActionRunning", "Action request is running.")
+			}
+		})
+		if updateErr != nil {
+			return ctrl.Result{}, updateErr
+		}
+		if changed {
+			// Operation identity/state is now persisted and it is safe to execute side effects.
+		}
+		if preparedAction.Status.OperationState == actionOperationStateApplied {
+			return ctrl.Result{}, nil
+		}
+		if preparedAction.Status.OperationState != actionOperationStatePrepared {
+			return ctrl.Result{}, nil
+		}
 
-	if !equality.Semantic.DeepEqual(originalStatus, actionRequest.Status) {
-		if err := r.Status().Update(ctx, &actionRequest); err != nil {
-			return ctrl.Result{}, err
+		executionResult, execErr := r.executeAction(ctx, resolved, &preparedAction, preparedAction.Status.OperationID)
+		if execErr != nil {
+			_, _, err := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+				current.Status.ObservedGeneration = current.Generation
+				r.applyFailedStatus(current, "ActionExecutionFailed", "execution-failed", execErr.Error(), true)
+				current.Status.OperationState = actionOperationStateComplete
+			})
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+		} else {
+			_, _, err := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+				current.Status.ObservedGeneration = current.Generation
+				r.applyExecutionStatus(current, executionResult)
+				switch current.Status.Phase {
+				case "Succeeded", "Failed", "Cancelled":
+					current.Status.OperationState = actionOperationStateComplete
+				default:
+					current.Status.OperationState = actionOperationStateApplied
+				}
+			})
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *ActionRequestReconciler) executeAction(ctx context.Context, resolved resolvedActionRequest, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) patchActionRequestStatus(ctx context.Context, key types.NamespacedName, mutate func(*platformv1alpha1.ActionRequest)) (platformv1alpha1.ActionRequest, bool, error) {
+	var patched platformv1alpha1.ActionRequest
+	changed := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current platformv1alpha1.ActionRequest
+		if err := r.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		before := current.DeepCopy()
+		mutate(&current)
+		if equality.Semantic.DeepEqual(before.Status, current.Status) {
+			patched = current
+			changed = false
+			return nil
+		}
+		if err := r.Status().Patch(ctx, &current, client.MergeFrom(before)); err != nil {
+			return err
+		}
+		patched = current
+		changed = true
+		return nil
+	})
+	return patched, changed, err
+}
+
+func (r *ActionRequestReconciler) executeAction(ctx context.Context, resolved resolvedActionRequest, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
 	if resolved.adapter.Contract().RuntimeDriver == "servicer-valkey" {
-		return r.executeValkeyAction(ctx, resolved.serviceContext, actionRequest)
+		return r.executeValkeyAction(ctx, resolved.serviceContext, actionRequest, operationID)
 	}
 	if resolved.adapter.Contract().RuntimeDriver == "servicer-nats" {
-		return r.executeNATSAction(ctx, resolved.serviceContext, actionRequest)
+		return r.executeNATSAction(ctx, resolved.serviceContext, actionRequest, operationID)
 	}
 	if resolved.adapter.Contract().RuntimeDriver == "servicer-mysql" {
-		return r.executeMySQLAction(ctx, resolved.serviceContext, actionRequest)
+		return r.executeMySQLAction(ctx, resolved.serviceContext, actionRequest, operationID)
 	}
 	if resolved.adapter.Contract().RuntimeDriver == "cnpg" {
-		return r.executeCNPGAction(ctx, resolved.serviceContext, actionRequest)
+		return r.executeCNPGAction(ctx, resolved.serviceContext, actionRequest, operationID)
 	}
 	if resolved.adapter.Contract().RuntimeDriver == "kubernetes-namespace" {
-		return r.executeNamespaceAction(ctx, resolved.serviceContext, actionRequest)
+		return r.executeNamespaceAction(ctx, resolved.serviceContext, actionRequest, operationID)
 	}
 	return resolved.adapter.ExecuteAction(ctx, adapters.ExecuteActionRequest{
 		Context: resolved.serviceContext,
@@ -147,7 +257,8 @@ func (r *ActionRequestReconciler) executeAction(ctx context.Context, resolved re
 	})
 }
 
-func (r *ActionRequestReconciler) executeCNPGAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) executeCNPGAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
+	_ = operationID
 	if actionRequest.Spec.Action != string(adapters.ActionBackup) {
 		return adapters.ActionExecutionResult{}, fmt.Errorf("unsupported PostgreSQL action %q", actionRequest.Spec.Action)
 	}
@@ -184,12 +295,12 @@ func (r *ActionRequestReconciler) executeCNPGAction(ctx context.Context, service
 	}, nil
 }
 
-func (r *ActionRequestReconciler) executeNATSAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) executeNATSAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
 	switch actionRequest.Spec.Action {
 	case string(adapters.ActionScale), string(adapters.ActionRestart):
-		return r.executeStatefulSetBackedAction(ctx, serviceContext, actionRequest, "NATS")
+		return r.executeStatefulSetBackedAction(ctx, serviceContext, actionRequest, operationID, "NATS")
 	case string(adapters.ActionRotateCredentials):
-		return r.rotateNATSCredentials(ctx, serviceContext, actionRequest)
+		return r.rotateNATSCredentials(ctx, serviceContext, actionRequest, operationID)
 	case string(adapters.ActionDeleteStream):
 		params, err := natsStreamActionParameters(actionRequest)
 		if err != nil {
@@ -213,7 +324,7 @@ func (r *ActionRequestReconciler) executeNATSAction(ctx context.Context, service
 	}
 }
 
-func (r *ActionRequestReconciler) executeStatefulSetBackedAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, productName string) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) executeStatefulSetBackedAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID, productName string) (adapters.ActionExecutionResult, error) {
 	if serviceContext.Instance == nil {
 		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
 	}
@@ -226,7 +337,7 @@ func (r *ActionRequestReconciler) executeStatefulSetBackedAction(ctx context.Con
 	}
 
 	var statefulSet appsv1.StatefulSet
-	if valkeyActionNeedsRuntimeWorkload(actionRequest.Spec.Action) {
+	if statefulSetActionNeedsRuntimeWorkload(actionRequest.Spec.Action) {
 		if err := r.Get(ctx, types.NamespacedName{Name: serviceContext.Instance.Name, Namespace: namespace}, &statefulSet); err != nil {
 			if apierrors.IsNotFound(err) {
 				return adapters.ActionExecutionResult{}, fmt.Errorf("%s StatefulSet %s/%s is not available yet", productName, namespace, serviceContext.Instance.Name)
@@ -241,6 +352,9 @@ func (r *ActionRequestReconciler) executeStatefulSetBackedAction(ctx context.Con
 		if err != nil {
 			return adapters.ActionExecutionResult{}, err
 		}
+		if statefulSet.Spec.Replicas != nil && *statefulSet.Spec.Replicas == replicas {
+			return adapters.ActionExecutionResult{Phase: "Succeeded", OperationRef: operationRef, Message: fmt.Sprintf("%s scale already applied: desired replicas already set to %d.", productName, replicas), Retryable: true}, nil
+		}
 		statefulSet.Spec.Replicas = &replicas
 		if err := r.Update(ctx, &statefulSet); err != nil {
 			return adapters.ActionExecutionResult{}, err
@@ -250,8 +364,12 @@ func (r *ActionRequestReconciler) executeStatefulSetBackedAction(ctx context.Con
 		if statefulSet.Spec.Template.Annotations == nil {
 			statefulSet.Spec.Template.Annotations = map[string]string{}
 		}
+		if statefulSet.Spec.Template.Annotations["servicer.io/restart-operation-id"] == operationID {
+			return adapters.ActionExecutionResult{Phase: "Succeeded", OperationRef: operationRef, Message: fmt.Sprintf("%s restart already recorded for this operation.", productName), Retryable: true}, nil
+		}
 		statefulSet.Spec.Template.Annotations["servicer.io/restarted-at"] = metav1.Now().Format(time.RFC3339)
 		statefulSet.Spec.Template.Annotations["servicer.io/restart-request"] = actionRequest.Name
+		statefulSet.Spec.Template.Annotations["servicer.io/restart-operation-id"] = operationID
 		if err := r.Update(ctx, &statefulSet); err != nil {
 			return adapters.ActionExecutionResult{}, err
 		}
@@ -265,28 +383,39 @@ func (r *ActionRequestReconciler) executeStatefulSetBackedAction(ctx context.Con
 			}
 			return adapters.ActionExecutionResult{}, err
 		}
-		password, err := randomPassword()
-		if err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		if secret.Data == nil {
-			secret.Data = map[string][]byte{}
-		}
-		secret.Data["password"] = []byte(password)
 		if secret.Annotations == nil {
 			secret.Annotations = map[string]string{}
 		}
-		rotatedAt := metav1.Now().Format(time.RFC3339)
-		secret.Annotations["servicer.io/rotated-at"] = rotatedAt
-		secret.Annotations["servicer.io/rotation-request"] = actionRequest.Name
-		if err := r.Update(ctx, &secret); err != nil {
-			return adapters.ActionExecutionResult{}, err
+		rotatedAt := secret.Annotations["servicer.io/rotated-at"]
+		if secret.Annotations["servicer.io/rotation-operation-id"] != operationID {
+			password, err := randomPassword()
+			if err != nil {
+				return adapters.ActionExecutionResult{}, err
+			}
+			if secret.Data == nil {
+				secret.Data = map[string][]byte{}
+			}
+			secret.Data["password"] = []byte(password)
+			rotatedAt = metav1.Now().Format(time.RFC3339)
+			secret.Annotations["servicer.io/rotated-at"] = rotatedAt
+			secret.Annotations["servicer.io/rotation-request"] = actionRequest.Name
+			secret.Annotations["servicer.io/rotation-operation-id"] = operationID
+			if err := r.Update(ctx, &secret); err != nil {
+				return adapters.ActionExecutionResult{}, err
+			}
+		}
+		if rotatedAt == "" {
+			rotatedAt = metav1.Now().Format(time.RFC3339)
 		}
 		if statefulSet.Spec.Template.Annotations == nil {
 			statefulSet.Spec.Template.Annotations = map[string]string{}
 		}
+		if statefulSet.Spec.Template.Annotations["servicer.io/credential-rotation-operation-id"] == operationID {
+			return adapters.ActionExecutionResult{Phase: "Succeeded", OperationRef: &platformv1alpha1.TypedObjectReference{APIVersion: "v1", Kind: "Secret", Name: secretName, Namespace: namespace}, Message: fmt.Sprintf("%s credential Secret rotation already applied for this operation.", productName), Retryable: true}, nil
+		}
 		statefulSet.Spec.Template.Annotations["servicer.io/credential-rotated-at"] = rotatedAt
 		statefulSet.Spec.Template.Annotations["servicer.io/credential-rotation-request"] = actionRequest.Name
+		statefulSet.Spec.Template.Annotations["servicer.io/credential-rotation-operation-id"] = operationID
 		if err := r.Update(ctx, &statefulSet); err != nil {
 			return adapters.ActionExecutionResult{}, err
 		}
@@ -296,7 +425,8 @@ func (r *ActionRequestReconciler) executeStatefulSetBackedAction(ctx context.Con
 	}
 }
 
-func (r *ActionRequestReconciler) executeNamespaceAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) executeNamespaceAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
+	_ = operationID
 	if serviceContext.Instance == nil {
 		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
 	}
@@ -355,10 +485,10 @@ func (r *ActionRequestReconciler) executeNamespaceAction(ctx context.Context, se
 	}
 }
 
-func (r *ActionRequestReconciler) executeMySQLAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) executeMySQLAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
 	switch actionRequest.Spec.Action {
 	case string(adapters.ActionScale), string(adapters.ActionRestart), string(adapters.ActionRotateCredentials):
-		return r.executeStatefulSetBackedAction(ctx, serviceContext, actionRequest, "MySQL")
+		return r.executeStatefulSetBackedAction(ctx, serviceContext, actionRequest, operationID, "MySQL")
 	case string(adapters.ActionFailover):
 		return r.failoverMySQLPrimary(ctx, serviceContext, actionRequest)
 	case string(adapters.ActionRollbackFailover):
@@ -484,7 +614,7 @@ func (r *ActionRequestReconciler) persistMySQLActionParameters(ctx context.Conte
 	}, nil
 }
 
-func (r *ActionRequestReconciler) rotateNATSCredentials(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) rotateNATSCredentials(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
 	if serviceContext.Instance == nil {
 		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
 	}
@@ -519,22 +649,29 @@ func (r *ActionRequestReconciler) rotateNATSCredentials(ctx context.Context, ser
 		}
 		return adapters.ActionExecutionResult{}, err
 	}
-	password, err := randomPassword()
-	if err != nil {
-		return adapters.ActionExecutionResult{}, err
-	}
-	if secret.Data == nil {
-		secret.Data = map[string][]byte{}
-	}
-	secret.Data["password"] = []byte(password)
 	if secret.Annotations == nil {
 		secret.Annotations = map[string]string{}
 	}
-	rotatedAt := metav1.Now().Format(time.RFC3339)
-	secret.Annotations["servicer.io/rotated-at"] = rotatedAt
-	secret.Annotations["servicer.io/rotation-request"] = actionRequest.Name
-	if err := r.Update(ctx, &secret); err != nil {
-		return adapters.ActionExecutionResult{}, err
+	rotatedAt := secret.Annotations["servicer.io/rotated-at"]
+	if secret.Annotations["servicer.io/rotation-operation-id"] != operationID {
+		password, err := randomPassword()
+		if err != nil {
+			return adapters.ActionExecutionResult{}, err
+		}
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		secret.Data["password"] = []byte(password)
+		rotatedAt = metav1.Now().Format(time.RFC3339)
+		secret.Annotations["servicer.io/rotated-at"] = rotatedAt
+		secret.Annotations["servicer.io/rotation-request"] = actionRequest.Name
+		secret.Annotations["servicer.io/rotation-operation-id"] = operationID
+		if err := r.Update(ctx, &secret); err != nil {
+			return adapters.ActionExecutionResult{}, err
+		}
+	}
+	if rotatedAt == "" {
+		rotatedAt = metav1.Now().Format(time.RFC3339)
 	}
 
 	if err := r.syncNATSAuthConfigSecret(ctx, serviceContext.Instance, namespace); err != nil {
@@ -551,8 +688,21 @@ func (r *ActionRequestReconciler) rotateNATSCredentials(ctx context.Context, ser
 	if statefulSet.Spec.Template.Annotations == nil {
 		statefulSet.Spec.Template.Annotations = map[string]string{}
 	}
+	if statefulSet.Spec.Template.Annotations["servicer.io/credential-rotation-operation-id"] == operationID {
+		message := "NATS credential Secret rotation already applied for this operation."
+		if params.CredentialName != "" {
+			message = fmt.Sprintf("NATS credential %q rotation already applied for this operation.", params.CredentialName)
+		}
+		return adapters.ActionExecutionResult{
+			Phase:        "Succeeded",
+			OperationRef: &platformv1alpha1.TypedObjectReference{APIVersion: "v1", Kind: "Secret", Name: secretName, Namespace: namespace},
+			Message:      message,
+			Retryable:    true,
+		}, nil
+	}
 	statefulSet.Spec.Template.Annotations["servicer.io/credential-rotated-at"] = rotatedAt
 	statefulSet.Spec.Template.Annotations["servicer.io/credential-rotation-request"] = actionRequest.Name
+	statefulSet.Spec.Template.Annotations["servicer.io/credential-rotation-operation-id"] = operationID
 	if err := r.Update(ctx, &statefulSet); err != nil {
 		return adapters.ActionExecutionResult{}, err
 	}
@@ -643,95 +793,30 @@ func (r *ActionRequestReconciler) createNATSAdminJob(ctx context.Context, servic
 			},
 		},
 	}
-	if err := r.Create(ctx, job); err != nil {
-		return adapters.ActionExecutionResult{}, err
+	createErr := r.Create(ctx, job)
+	if createErr != nil && !apierrors.IsAlreadyExists(createErr) {
+		return adapters.ActionExecutionResult{}, createErr
+	}
+	message := fmt.Sprintf("NATS %s job %s/%s created.", actionKind, namespace, jobName)
+	if apierrors.IsAlreadyExists(createErr) {
+		message = fmt.Sprintf("NATS %s job %s/%s already exists for this action request.", actionKind, namespace, jobName)
 	}
 	return adapters.ActionExecutionResult{
 		Phase:        "Succeeded",
 		OperationRef: &platformv1alpha1.TypedObjectReference{APIVersion: "batch/v1", Kind: "Job", Name: jobName, Namespace: namespace},
-		Message:      fmt.Sprintf("NATS %s job %s/%s created.", actionKind, namespace, jobName),
+		Message:      message,
 		Retryable:    true,
 	}, nil
 }
 
-func (r *ActionRequestReconciler) executeValkeyAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) executeValkeyAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
 	if serviceContext.Instance == nil {
 		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
 	}
-	namespace := actionRuntimeNamespace(serviceContext)
-	operationRef := &platformv1alpha1.TypedObjectReference{
-		APIVersion: "apps/v1",
-		Kind:       "StatefulSet",
-		Name:       serviceContext.Instance.Name,
-		Namespace:  namespace,
-	}
-
-	var statefulSet appsv1.StatefulSet
-	if valkeyActionNeedsRuntimeWorkload(actionRequest.Spec.Action) {
-		if err := r.Get(ctx, types.NamespacedName{Name: serviceContext.Instance.Name, Namespace: namespace}, &statefulSet); err != nil {
-			if apierrors.IsNotFound(err) {
-				return adapters.ActionExecutionResult{}, fmt.Errorf("Valkey StatefulSet %s/%s is not available yet", namespace, serviceContext.Instance.Name)
-			}
-			return adapters.ActionExecutionResult{}, err
-		}
-	}
 
 	switch actionRequest.Spec.Action {
-	case string(adapters.ActionScale):
-		replicas, err := scaleReplicas(actionRequest)
-		if err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		statefulSet.Spec.Replicas = &replicas
-		if err := r.Update(ctx, &statefulSet); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		return adapters.ActionExecutionResult{Phase: "Succeeded", OperationRef: operationRef, Message: fmt.Sprintf("Valkey scale applied: desired replicas set to %d.", replicas), Retryable: true}, nil
-	case string(adapters.ActionRestart):
-		if statefulSet.Spec.Template.Annotations == nil {
-			statefulSet.Spec.Template.Annotations = map[string]string{}
-		}
-		statefulSet.Spec.Template.Annotations["servicer.io/restarted-at"] = metav1.Now().Format(time.RFC3339)
-		statefulSet.Spec.Template.Annotations["servicer.io/restart-request"] = actionRequest.Name
-		if err := r.Update(ctx, &statefulSet); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		return adapters.ActionExecutionResult{Phase: "Succeeded", OperationRef: operationRef, Message: "Valkey restart annotation applied to the StatefulSet pod template.", Retryable: true}, nil
-	case string(adapters.ActionRotateCredentials):
-		secretName := fmt.Sprintf("%s-auth", serviceContext.Instance.Name)
-		var secret corev1.Secret
-		if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &secret); err != nil {
-			if apierrors.IsNotFound(err) {
-				return adapters.ActionExecutionResult{}, fmt.Errorf("Valkey credential Secret %s/%s is not available yet", namespace, secretName)
-			}
-			return adapters.ActionExecutionResult{}, err
-		}
-		password, err := randomPassword()
-		if err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		if secret.Data == nil {
-			secret.Data = map[string][]byte{}
-		}
-		secret.Data["password"] = []byte(password)
-		if secret.Annotations == nil {
-			secret.Annotations = map[string]string{}
-		}
-		rotatedAt := metav1.Now().Format(time.RFC3339)
-		secret.Annotations["servicer.io/rotated-at"] = rotatedAt
-		secret.Annotations["servicer.io/rotation-request"] = actionRequest.Name
-		if err := r.Update(ctx, &secret); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		if statefulSet.Spec.Template.Annotations == nil {
-			statefulSet.Spec.Template.Annotations = map[string]string{}
-		}
-		statefulSet.Spec.Template.Annotations["servicer.io/credential-rotated-at"] = rotatedAt
-		statefulSet.Spec.Template.Annotations["servicer.io/credential-rotation-request"] = actionRequest.Name
-		if err := r.Update(ctx, &statefulSet); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		return adapters.ActionExecutionResult{Phase: "Succeeded", OperationRef: &platformv1alpha1.TypedObjectReference{APIVersion: "v1", Kind: "Secret", Name: secretName, Namespace: namespace}, Message: "Valkey credential Secret rotated and StatefulSet rollout annotation applied.", Retryable: true}, nil
+	case string(adapters.ActionScale), string(adapters.ActionRestart), string(adapters.ActionRotateCredentials):
+		return r.executeStatefulSetBackedAction(ctx, serviceContext, actionRequest, operationID, "Valkey")
 	case string(adapters.ActionFailover):
 		candidate, err := failoverCandidate(actionRequest)
 		if err != nil {
@@ -812,7 +897,15 @@ func actionRuntimeNamespace(serviceContext adapters.ServiceContext) string {
 	return ""
 }
 
-func valkeyActionNeedsRuntimeWorkload(action string) bool {
+func actionOperationID(actionRequest *platformv1alpha1.ActionRequest) string {
+	seed := string(actionRequest.UID)
+	if strings.TrimSpace(seed) == "" {
+		seed = actionRequest.Name
+	}
+	return fmt.Sprintf("%s-%d", seed, actionRequest.Generation)
+}
+
+func statefulSetActionNeedsRuntimeWorkload(action string) bool {
 	switch action {
 	case string(adapters.ActionScale), string(adapters.ActionRestart), string(adapters.ActionRotateCredentials):
 		return true
@@ -1034,7 +1127,7 @@ func actionAlreadySubmitted(status platformv1alpha1.ActionRequestStatus, generat
 		return false
 	}
 	switch status.Phase {
-	case "Queued", "Running", "Succeeded", "Cancelled":
+	case "Succeeded", "Failed", "Cancelled":
 		return true
 	default:
 		return false
