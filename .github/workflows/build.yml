@@ -2,10 +2,8 @@ name: Build
 
 on:
   push:
-    branches: ["**"]
+    branches: ["master"]
     tags: ["v*"]
-  pull_request:
-    branches: ["**"]
 
 env:
   REGISTRY: ghcr.io
