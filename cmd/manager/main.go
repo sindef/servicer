@@ -49,6 +49,7 @@ func main() {
 	var systemNamespace string
 	var webhookServiceName string
 	var webhookCertSecretName string
+	productionMode := truthyEnv("SERVICER_PRODUCTION")
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -68,6 +69,7 @@ func main() {
 	flag.StringVar(&argoCDProject, "argocd-project", "default", "Argo CD project used for Servicer-managed Applications.")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", false, "Enable admission webhooks for Servicer APIs.")
 	flag.BoolVar(&webhookBootstrapOnly, "webhook-bootstrap-only", false, "Generate webhook serving certificates and patch webhook configurations, then exit.")
+	flag.BoolVar(&productionMode, "production", productionMode, "Require production delivery guarantees during reconciliation.")
 	flag.StringVar(&systemNamespace, "system-namespace", "servicer-system", "Namespace where Servicer control-plane components run.")
 	flag.StringVar(&webhookServiceName, "webhook-service-name", "servicer-webhook-service", "Service name used by admission webhook configurations.")
 	flag.StringVar(&webhookCertSecretName, "webhook-cert-secret-name", "servicer-webhook-server-cert", "Secret name that stores webhook serving certificates.")
@@ -160,7 +162,7 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "unable to create virtual machine claim controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ServiceInstanceReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry, Materializer: materializer.New(deliveryRoot), Publisher: deliveryrepo.NewWithRepoURL(deliveryRepoWorktree, deliveryRepoPath, deliveryRepoAutoCommit, deliveryRepoAutoPush, deliveryRepoURL, deliveryRepoRemote, deliveryRepoBranch, deliveryRepoCommitName, deliveryRepoCommitEmail), Recorder: mgr.GetEventRecorderFor("servicer"), ArgoCDNamespace: argoCDNamespace, ArgoCDProject: argoCDProject, DeliveryRepoURL: deliveryRepoURL, DeliveryRepoRef: deliveryRepoRef, DeliveryRepoPath: deliveryRepoPath}).SetupWithManager(mgr); err != nil {
+	if err := (&controllers.ServiceInstanceReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry, Materializer: materializer.New(deliveryRoot), Publisher: deliveryrepo.NewWithRepoURL(deliveryRepoWorktree, deliveryRepoPath, deliveryRepoAutoCommit, deliveryRepoAutoPush, deliveryRepoURL, deliveryRepoRemote, deliveryRepoBranch, deliveryRepoCommitName, deliveryRepoCommitEmail), Recorder: mgr.GetEventRecorderFor("servicer"), ArgoCDNamespace: argoCDNamespace, ArgoCDProject: argoCDProject, DeliveryRepoURL: deliveryRepoURL, DeliveryRepoRef: deliveryRepoRef, DeliveryRepoPath: deliveryRepoPath, ProductionMode: productionMode}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to create service instance controller")
 		os.Exit(1)
 	}
@@ -257,4 +259,9 @@ func emptyIfUnresolvedEnv(value string) string {
 		return ""
 	}
 	return value
+}
+
+func truthyEnv(key string) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
 }

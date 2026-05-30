@@ -32,7 +32,7 @@ kubectl -n servicer-system create secret generic servicer-delivery-repo \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Restart the manager after changing this Secret so the repository URL environment variable refreshes. When the Secret is absent, Git publishing is disabled and ServiceInstances stay materialized locally instead of failing on a placeholder remote.
+Restart the manager after changing this Secret so the repository URL environment variable refreshes. Production installs run the manager with `SERVICER_PRODUCTION=true`; when the Secret is absent, publishing is not auto-committing, or publishing is not auto-pushing, ServiceInstances that render delivery artifacts are marked `Degraded` with `DeliveryRepoRequired` and are not materialized locally as if delivery succeeded.
 
 The manager clones the configured delivery repository into an ephemeral worktree, commits rendered artifacts with the configured commit identity, and pushes to the configured branch. If the remote is unavailable, the worktree is divergent, or push fails, reconciliation fails and records the Git error in ServiceInstance status instead of silently falling back to local-only delivery.
 

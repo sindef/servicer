@@ -14,6 +14,7 @@ import (
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestCatalogReturnsProductShapedEntries(t *testing.T) {
@@ -711,11 +713,24 @@ func TestProjectRepositoryLifecycle(t *testing.T) {
 	}
 
 	var argoSecret corev1.Secret
-	if err := server.client.Get(createRequest.Context(), client.ObjectKey{Name: "argocd-repo-github-com-acme-storefront-git", Namespace: "argocd"}, &argoSecret); err != nil {
+	argoSecretName := repositoryMirrorNameForTest(t, CreateRepositoryRequest{
+		Name:        "storefront-app",
+		DisplayName: "Storefront App",
+		Scope:       "project",
+		ProjectName: "acme-prod",
+		URL:         "https://github.com/acme/storefront.git",
+		AuthType:    "http",
+		Username:    "git",
+		Password:    "token",
+	})
+	if err := server.client.Get(createRequest.Context(), client.ObjectKey{Name: argoSecretName, Namespace: "argocd"}, &argoSecret); err != nil {
 		t.Fatalf("expected mirrored Argo CD repository secret: %v", err)
 	}
 	if got := string(argoSecret.Data["url"]); got != "https://github.com/acme/storefront.git" {
 		t.Fatalf("expected Argo CD secret url to match, got %q", got)
+	}
+	if argoSecret.Labels[repositoryMirrorLabel] != "true" || argoSecret.Labels[repoSecretProjectKey] != "acme-prod" {
+		t.Fatalf("expected scoped Argo CD mirror labels, got %#v", argoSecret.Labels)
 	}
 
 	deleteResponse := httptest.NewRecorder()
@@ -725,6 +740,9 @@ func TestProjectRepositoryLifecycle(t *testing.T) {
 	server.Handler().ServeHTTP(deleteResponse, deleteRequest)
 	if deleteResponse.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	if err := server.client.Get(deleteRequest.Context(), client.ObjectKey{Name: argoSecretName, Namespace: "argocd"}, &argoSecret); !apierrors.IsNotFound(err) {
+		t.Fatalf("expected mirrored Argo CD repository secret to be removed, got %v", err)
 	}
 }
 
@@ -843,6 +861,173 @@ func TestCreateProjectRepositoryRejectsInvalidName(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d: %s", response.Code, response.Body.String())
 	}
+}
+
+func TestCreateProjectRepositoryRejectsBadURL(t *testing.T) {
+	server := testServer(t)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/acme-prod/repositories", strings.NewReader(`{
+		"name":"broken-repo",
+		"displayName":"Broken Repo",
+		"url":"http://github.com/acme/broken.git",
+		"authType":"http",
+		"username":"git",
+		"password":"token"
+	}`))
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "plain http is not allowed") {
+		t.Fatalf("expected clear URL validation error, got %s", response.Body.String())
+	}
+}
+
+func TestCreateProjectRepositoryRollsBackWhenArgoMirrorFails(t *testing.T) {
+	server := testServer(t)
+	baseClient, ok := server.client.(client.WithWatch)
+	if !ok {
+		t.Fatalf("test client does not implement client.WithWatch")
+	}
+	server.client = interceptor.NewClient(baseClient, interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			secret, ok := obj.(*corev1.Secret)
+			if ok && secret.Namespace == argocdNamespace && secret.Labels["argocd.argoproj.io/secret-type"] == "repository" {
+				return errors.New("argocd mirror unavailable")
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/acme-prod/repositories", strings.NewReader(`{
+		"name":"storefront-app",
+		"displayName":"Storefront App",
+		"url":"https://github.com/acme/storefront.git",
+		"authType":"none"
+	}`))
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var repoSecret corev1.Secret
+	err := server.client.Get(request.Context(), client.ObjectKey{Name: projectRepoSecretName("storefront-app"), Namespace: repoSecretNamespace}, &repoSecret)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected repository Secret rollback after mirror failure, got %v", err)
+	}
+}
+
+func TestDeleteProjectRepositoryRejectsActiveReferences(t *testing.T) {
+	server := testServer(t)
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/projects/acme-prod/repositories", strings.NewReader(`{
+		"name":"storefront-app",
+		"displayName":"Storefront App",
+		"url":"https://github.com/acme/storefront.git",
+		"authType":"none"
+	}`))
+	createRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	createRequest.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	instance := &platformv1alpha1.ServiceInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "storefront-managed-app"},
+		Spec: platformv1alpha1.ServiceInstanceSpec{
+			ProjectRef:      platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+			ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "argo-application"},
+			ServicePlanRef:  platformv1alpha1.LocalObjectReference{Name: "argo-application"},
+			Parameters: &apiextensionsv1.JSON{Raw: []byte(`{
+				"repoRef":"storefront-app",
+				"repoURL":"https://github.com/acme/storefront.git"
+			}`)},
+		},
+	}
+	if err := server.client.Create(context.Background(), instance); err != nil {
+		t.Fatalf("create referencing service instance: %v", err)
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/projects/acme-prod/repositories/storefront-app", nil)
+	deleteRequest.Header.Set("X-Servicer-User", "alice@example.com")
+	deleteRequest.Header.Set("X-Servicer-Roles", "tenant-operator")
+	server.Handler().ServeHTTP(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	var conflict repositoryDependencyConflictResponse
+	if err := json.Unmarshal(deleteResponse.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("decode conflict response: %v", err)
+	}
+	if conflict.Code != "repository_in_use" || strings.Join(conflict.Dependencies, ",") != "managedapplications/storefront-managed-app" {
+		t.Fatalf("unexpected dependency conflict %#v", conflict)
+	}
+
+	var repoSecret corev1.Secret
+	if err := server.client.Get(deleteRequest.Context(), client.ObjectKey{Name: projectRepoSecretName("storefront-app"), Namespace: repoSecretNamespace}, &repoSecret); err != nil {
+		t.Fatalf("expected referenced repository Secret to remain: %v", err)
+	}
+}
+
+func TestCreateProjectRepositoriesUseHashSuffixForLongURLCollisions(t *testing.T) {
+	server := testServer(t)
+	longPrefix := "https://github.com/acme/" + strings.Repeat("very-long-shared-path-segment-", 4)
+	urlOne := longPrefix + "one.git"
+	urlTwo := longPrefix + "two.git"
+
+	for _, tc := range []struct {
+		name       string
+		display    string
+		repository string
+	}{
+		{name: "long-one", display: "Long One", repository: urlOne},
+		{name: "long-two", display: "Long Two", repository: urlTwo},
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/projects/acme-prod/repositories", strings.NewReader(`{
+			"name":"`+tc.name+`",
+			"displayName":"`+tc.display+`",
+			"url":"`+tc.repository+`",
+			"authType":"none"
+		}`))
+		request.Header.Set("X-Servicer-User", "alice@example.com")
+		request.Header.Set("X-Servicer-Roles", "tenant-operator")
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("expected status 201 for %s, got %d: %s", tc.name, response.Code, response.Body.String())
+		}
+	}
+
+	nameOne := repositoryMirrorNameForTest(t, CreateRepositoryRequest{Name: "long-one", DisplayName: "Long One", Scope: "project", ProjectName: "acme-prod", URL: urlOne, AuthType: "none"})
+	nameTwo := repositoryMirrorNameForTest(t, CreateRepositoryRequest{Name: "long-two", DisplayName: "Long Two", Scope: "project", ProjectName: "acme-prod", URL: urlTwo, AuthType: "none"})
+	if nameOne == nameTwo {
+		t.Fatalf("expected different Argo Secret names for long URLs, got %q", nameOne)
+	}
+	if len(nameOne) > 63 || len(nameTwo) > 63 {
+		t.Fatalf("expected Kubernetes-safe Secret names, got %q (%d), %q (%d)", nameOne, len(nameOne), nameTwo, len(nameTwo))
+	}
+	for _, name := range []string{nameOne, nameTwo} {
+		var argoSecret corev1.Secret
+		if err := server.client.Get(context.Background(), client.ObjectKey{Name: name, Namespace: argocdNamespace}, &argoSecret); err != nil {
+			t.Fatalf("expected mirrored Argo CD Secret %q: %v", name, err)
+		}
+	}
+}
+
+func repositoryMirrorNameForTest(t *testing.T, req CreateRepositoryRequest) string {
+	t.Helper()
+	if err := validateRepositoryRequest(&req); err != nil {
+		t.Fatalf("validate repository request: %v", err)
+	}
+	return argoRepoSecretName(req)
 }
 
 func TestSubmitSensitiveActionRequiresApproverRole(t *testing.T) {

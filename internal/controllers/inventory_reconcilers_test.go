@@ -820,6 +820,51 @@ func TestServiceInstanceReconcilerRejectsInheritedQuotaExceeded(t *testing.T) {
 	}
 }
 
+func TestServiceInstanceReconcilerRequiresDeliveryRepoInProductionMode(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	registry, err := adapters.NewRegistry(adapters.NewValkeyAdapter())
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fixture := valkeyInventoryFixture()
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&platformv1alpha1.ServiceInstance{}).
+			WithObjects(fixture.tenant, fixture.project, fixture.serviceClass, fixture.servicePlan, fixture.clusterTarget, fixture.instance).
+			Build(),
+		Scheme:         scheme,
+		Adapters:       registry,
+		Materializer:   materializer.New(t.TempDir()),
+		ProductionMode: true,
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "session-cache"}}); err != nil {
+			t.Fatalf("reconcile %d returned error: %v", i+1, err)
+		}
+	}
+
+	var updated platformv1alpha1.ServiceInstance
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "session-cache"}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "Degraded" {
+		t.Fatalf("expected phase Degraded, got %q", updated.Status.Phase)
+	}
+	degraded := statusConditionByType(updated.Status.Conditions, "Degraded")
+	if degraded == nil || degraded.Status != metav1.ConditionTrue || degraded.Reason != "DeliveryRepoRequired" {
+		t.Fatalf("expected DeliveryRepoRequired Degraded condition, got %#v", updated.Status.Conditions)
+	}
+	ready := statusConditionByType(updated.Status.Conditions, "Ready")
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "DeliveryRepoRequired" {
+		t.Fatalf("expected Ready=false DeliveryRepoRequired, got %#v", updated.Status.Conditions)
+	}
+	if updated.Status.Artifact.Path != "" {
+		t.Fatalf("expected no local artifact materialization before production delivery is configured, got %#v", updated.Status.Artifact)
+	}
+}
+
 func TestServiceInstanceReconcilerRejectsUnpublishedServicePlan(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	registry, err := adapters.NewRegistry(adapters.NewCNPGAdapter())

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -83,28 +84,41 @@ func (p *Publisher) Publish(ctx context.Context, request Request) (Result, error
 		return Result{}, err
 	}
 
-	root := strings.Trim(filepath.ToSlash(strings.TrimSpace(p.Root)), "/")
-	publishedPath := request.PackagePath
-	if root != "" && root != "." {
-		publishedPath = filepath.ToSlash(filepath.Join(root, filepath.FromSlash(request.PackagePath)))
+	root, err := cleanRepoRelativePath(p.Root, "delivery repo root", true)
+	if err != nil {
+		return Result{}, err
 	}
+	packagePath, err := cleanRepoRelativePath(request.PackagePath, "package path", false)
+	if err != nil {
+		return Result{}, err
+	}
+	publishedPath := joinRepoPath(root, packagePath)
 
-	for _, packagePath := range uniquePackagePaths(request.PackagePath, request.PackagePaths) {
-		target := packagePath
-		if root != "" && root != "." {
-			target = filepath.ToSlash(filepath.Join(root, filepath.FromSlash(packagePath)))
+	for _, packagePath := range uniquePackagePaths(packagePath, request.PackagePaths) {
+		cleanPackagePath, cleanErr := cleanRepoRelativePath(packagePath, "package path", false)
+		if cleanErr != nil {
+			return Result{}, cleanErr
 		}
-		if err := os.RemoveAll(filepath.Join(p.Worktree, filepath.FromSlash(target))); err != nil {
+		target := joinRepoPath(root, cleanPackagePath)
+		fullTarget, pathErr := p.worktreePath(target)
+		if pathErr != nil {
+			return Result{}, pathErr
+		}
+		if err := os.RemoveAll(fullTarget); err != nil {
 			return Result{}, fmt.Errorf("clean published package %q: %w", target, err)
 		}
 	}
 
 	for _, artifact := range request.Artifacts {
-		relativePath := artifact.Path
-		if root != "" && root != "." {
-			relativePath = filepath.ToSlash(filepath.Join(root, filepath.FromSlash(artifact.Path)))
+		artifactPath, cleanErr := cleanRepoRelativePath(artifact.Path, "artifact path", false)
+		if cleanErr != nil {
+			return Result{}, cleanErr
 		}
-		fullPath := filepath.Join(p.Worktree, filepath.FromSlash(relativePath))
+		relativePath := joinRepoPath(root, artifactPath)
+		fullPath, pathErr := p.worktreePath(relativePath)
+		if pathErr != nil {
+			return Result{}, pathErr
+		}
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
 			return Result{}, fmt.Errorf("create publish directory: %w", err)
 		}
@@ -305,6 +319,60 @@ func uniquePackagePaths(primary string, extra []string) []string {
 		appendPath(path)
 	}
 	return paths
+}
+
+func cleanRepoRelativePath(value, field string, allowEmpty bool) (string, error) {
+	normalized := strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	if strings.HasPrefix(normalized, "/") {
+		return "", fmt.Errorf("%s must be a repository-relative path", field)
+	}
+	normalized = strings.Trim(normalized, "/")
+	if normalized == "" || normalized == "." {
+		if allowEmpty {
+			return "", nil
+		}
+		return "", fmt.Errorf("%s is required", field)
+	}
+	cleaned := path.Clean(normalized)
+	if cleaned == "." {
+		if allowEmpty {
+			return "", nil
+		}
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if path.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("%s must be a repository-relative path", field)
+	}
+	return cleaned, nil
+}
+
+func joinRepoPath(root, relative string) string {
+	if root == "" || root == "." {
+		return relative
+	}
+	if relative == "" || relative == "." {
+		return root
+	}
+	return path.Join(root, relative)
+}
+
+func (p *Publisher) worktreePath(relativePath string) (string, error) {
+	worktree, err := filepath.Abs(p.Worktree)
+	if err != nil {
+		return "", fmt.Errorf("resolve delivery repo worktree: %w", err)
+	}
+	target, err := filepath.Abs(filepath.Join(p.Worktree, filepath.FromSlash(relativePath)))
+	if err != nil {
+		return "", fmt.Errorf("resolve publish path %q: %w", relativePath, err)
+	}
+	rel, err := filepath.Rel(worktree, target)
+	if err != nil {
+		return "", fmt.Errorf("validate publish path %q: %w", relativePath, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("publish path %q must remain inside the delivery repo worktree", relativePath)
+	}
+	return target, nil
 }
 
 func firstNonEmptyTrimmed(values ...string) string {

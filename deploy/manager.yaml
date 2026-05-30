@@ -78,6 +78,8 @@ spec:
                   key: commitEmail
             - name: GIT_SSH_COMMAND
               value: ssh -i /home/nonroot/.ssh/ssh-privatekey -o UserKnownHostsFile=/home/nonroot/.ssh/known_hosts -o IdentitiesOnly=yes
+            - name: SERVICER_PRODUCTION
+              value: "true"
           ports:
             - containerPort: 9443
               name: webhook-server

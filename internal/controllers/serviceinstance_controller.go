@@ -45,6 +45,7 @@ type ServiceInstanceReconciler struct {
 	DeliveryRepoURL  string
 	DeliveryRepoRef  string
 	DeliveryRepoPath string
+	ProductionMode   bool
 	targetClients    sync.Map // keyed by ClusterTarget name → client.Client
 }
 
@@ -80,10 +81,10 @@ func (r *ServiceInstanceReconciler) getTargetClient(ctx context.Context, target 
 }
 
 const (
-	instanceFinalizer                 = "servicer.io/instance-cleanup"
-	kubeVirtServiceClassDriver        = "kubevirt"
-	kubeVirtVirtualMachineCRDName     = "virtualmachines.kubevirt.io"
-	kubeVirtDataVolumeCRDName         = "datavolumes.cdi.kubevirt.io"
+	instanceFinalizer             = "servicer.io/instance-cleanup"
+	kubeVirtServiceClassDriver    = "kubevirt"
+	kubeVirtVirtualMachineCRDName = "virtualmachines.kubevirt.io"
+	kubeVirtDataVolumeCRDName     = "datavolumes.cdi.kubevirt.io"
 )
 
 func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -331,6 +332,15 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return ctrl.Result{}, nil
 	}
+	if r.productionDeliveryRequired(renderResult) && !r.deliveryPublishingConfigured() {
+		markDeliveryRepoRequired(&instance, "DeliveryRepoRequired", "Production mode requires delivery repository publishing with auto-commit and auto-push before service instances can be provisioned.")
+		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
+				return ctrl.Result{}, updateErr
+			}
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
 	if targetClient == nil {
 		targetClient, err = r.getTargetClient(ctx, clusterTarget)
 		if err != nil {
@@ -437,6 +447,15 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		publishedBranch = publishResult.Branch
 		publishedPushed = publishResult.Pushed
 	}
+	if r.productionDeliveryRequired(renderResult) && !publishedPushed {
+		markDeliveryRepoRequired(&instance, "DeliveryPushRequired", "Production mode requires delivery artifacts to be pushed to the configured Git repository before service instances can be provisioned.")
+		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
+			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
+				return ctrl.Result{}, updateErr
+			}
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
 
 	instance.Status.Phase = "Materialized"
 	instance.Status.Runtime.Driver = renderResult.RuntimeDriver
@@ -494,7 +513,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if r.Recorder != nil && originalStatus.Phase != instance.Status.Phase {
 		eventType := corev1.EventTypeNormal
-		if instance.Status.Phase == "Failed" || instance.Status.Phase == "Blocked" {
+		if instance.Status.Phase == "Failed" || instance.Status.Phase == "Blocked" || instance.Status.Phase == "Degraded" {
 			eventType = corev1.EventTypeWarning
 		}
 		r.Recorder.Event(&instance, eventType, instance.Status.Phase, instance.Status.Health.Summary)
@@ -759,6 +778,33 @@ func markCredentialProjectionPending(instance *platformv1alpha1.ServiceInstance)
 	}
 	instance.Status.Phase = "Provisioning"
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionPending", "Credential projection is waiting for the delivered runtime namespace.")
+}
+
+func (r *ServiceInstanceReconciler) productionDeliveryRequired(renderResult adapters.RenderResult) bool {
+	return r.ProductionMode && len(renderResult.Artifacts) > 0
+}
+
+func (r *ServiceInstanceReconciler) deliveryPublishingConfigured() bool {
+	return strings.TrimSpace(r.DeliveryRepoURL) != "" &&
+		r.Publisher != nil &&
+		r.Publisher.Enabled() &&
+		r.Publisher.AutoCommit &&
+		r.Publisher.AutoPush
+}
+
+func markDeliveryRepoRequired(instance *platformv1alpha1.ServiceInstance, reason, message string) {
+	if instance == nil {
+		return
+	}
+	instance.Status.Phase = "Degraded"
+	instance.Status.Sync.Phase = string(adapters.SyncPhasePending)
+	instance.Status.Sync.Message = message
+	instance.Status.Health.Summary = message
+	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, reason, "Delivery artifacts were not materialized because production GitOps publishing is not ready.")
+	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, reason, message)
+	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, reason, message)
+	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Degraded", metav1.ConditionTrue, reason, message)
+	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, reason, "Service instance is blocked by delivery configuration, not failed.")
 }
 
 func (r *ServiceInstanceReconciler) ensureCredentialSecrets(ctx context.Context, instance *platformv1alpha1.ServiceInstance, renderResult adapters.RenderResult, targetClient client.Client) error {
@@ -1156,6 +1202,9 @@ func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, p
 		return nil
 	}
 	if strings.TrimSpace(r.DeliveryRepoURL) == "" {
+		if r.ProductionMode {
+			return fmt.Errorf("delivery repository URL is required in production mode")
+		}
 		instance.Status.Sync.Message = "Delivery artifacts are materialized, but Argo CD application creation is disabled until delivery repo settings are configured."
 		return nil
 	}
@@ -1164,6 +1213,9 @@ func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, p
 	crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
 	if err := r.Get(ctx, types.NamespacedName{Name: "applications.argoproj.io"}, &crd); err != nil {
 		if apierrors.IsNotFound(err) {
+			if r.ProductionMode {
+				return fmt.Errorf("Argo CD Application CRD is required in production mode")
+			}
 			instance.Status.Sync.Message = "Delivery artifacts are materialized, but Argo CD is not installed in the management cluster."
 			return nil
 		}
@@ -1211,9 +1263,9 @@ func (r *ServiceInstanceReconciler) ensureArgoApplication(ctx context.Context, p
 				"prune":    true,
 				"selfHeal": true,
 			},
-				"syncOptions": []any{
-					"CreateNamespace=true",
-				},
+			"syncOptions": []any{
+				"CreateNamespace=true",
+			},
 		},
 	}
 

@@ -167,6 +167,42 @@ func TestPublisherRejectsNonGitNonEmptyWorktree(t *testing.T) {
 	}
 }
 
+func TestPublisherRejectsTraversalArtifactPath(t *testing.T) {
+	worktree := initGitRepo(t)
+	publisher := New(worktree, "published", false, false, "", "")
+	outside := filepath.Join(filepath.Dir(worktree), "outside.yaml")
+
+	_, err := publisher.Publish(context.Background(), Request{
+		PackagePath: "clusters/local-dev/services/orders-db",
+		Artifacts: []adapters.RenderedArtifact{{
+			Path:    "../outside.yaml",
+			Content: []byte("kind: ConfigMap\n"),
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "artifact path must be a repository-relative path") {
+		t.Fatalf("expected traversal error, got %v", err)
+	}
+	if _, statErr := os.Stat(outside); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no file outside worktree, got %v", statErr)
+	}
+}
+
+func TestPublisherRejectsTraversalPackagePath(t *testing.T) {
+	worktree := initGitRepo(t)
+	publisher := New(worktree, "published", false, false, "", "")
+
+	_, err := publisher.Publish(context.Background(), Request{
+		PackagePath: "../orders-db",
+		Artifacts: []adapters.RenderedArtifact{{
+			Path:    "clusters/local-dev/services/orders-db/service.yaml",
+			Content: []byte("kind: Service\n"),
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "package path must be a repository-relative path") {
+		t.Fatalf("expected traversal error, got %v", err)
+	}
+}
+
 func TestPublisherReportsUnavailableRemote(t *testing.T) {
 	worktree := filepath.Join(t.TempDir(), "worktree")
 	missingRemote := filepath.Join(t.TempDir(), "missing.git")
