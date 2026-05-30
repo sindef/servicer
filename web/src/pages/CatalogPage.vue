@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { load as parseYAML } from 'js-yaml'
 import { api, type CatalogEntry, type RepositorySummary } from '../api'
+import AccessibleDialog from '../components/AccessibleDialog.vue'
 import { useApi } from '../composables/useApi'
 import StatusPill from '../components/StatusPill.vue'
 import {
@@ -555,15 +556,20 @@ async function submitRequest() {
     </div>
   </section>
 
-  <Teleport to="body">
-    <div v-if="requestOpen" class="modal-backdrop">
-      <form class="modal-panel" @submit.prevent="submitRequest">
+  <AccessibleDialog
+    :open="requestOpen"
+    title-id="catalog-request-title"
+    description-id="catalog-request-description"
+    @close="closeRequest"
+  >
+      <form @submit.prevent="submitRequest">
         <div class="modal-head">
           <div>
             <p class="eyebrow">Product request</p>
-            <h2>{{ selectedEntry?.displayName || 'New product' }}</h2>
+            <h2 id="catalog-request-title">{{ selectedEntry?.displayName || 'New product' }}</h2>
+            <p id="catalog-request-description" class="muted">Configure fields and submit a product request.</p>
           </div>
-          <button class="button secondary icon-button" type="button" @click="closeRequest">x</button>
+          <button class="button secondary icon-button" type="button" aria-label="Close product request dialog" @click="closeRequest">x</button>
         </div>
 
         <div class="form-grid modal-form-grid">
@@ -615,7 +621,14 @@ async function submitRequest() {
         </div>
 
         <section v-if="requestForm.serviceClass" class="modal-section">
-          <div style="cursor: pointer; user-select: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px" @click="showCapabilities = !showCapabilities">
+          <button
+            type="button"
+            :aria-expanded="showCapabilities ? 'true' : 'false'"
+            aria-controls="catalog-capabilities-panel"
+            class="button secondary"
+            style="cursor: pointer; user-select: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; width: 100%; text-align: left"
+            @click="showCapabilities = !showCapabilities"
+          >
             <div>
               <h3>Capabilities</h3>
               <p class="muted">
@@ -628,9 +641,9 @@ async function submitRequest() {
               </p>
             </div>
             <span class="collapsible-chevron">{{ showCapabilities ? '▾' : '▸' }}</span>
-          </div>
+          </button>
 
-          <div v-show="showCapabilities">
+          <div id="catalog-capabilities-panel" v-show="showCapabilities">
           <div v-if="requestForm.serviceClass === 'namespace'" class="form-grid modal-form-grid">
             <label>
               CPU quota
@@ -679,15 +692,22 @@ async function submitRequest() {
               External DNS hostname
               <input v-model="parameterForm.externalDnsHostname" placeholder="service.apps.company.tld" />
             </label>
-            <div class="form-section-heading" style="grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; cursor: pointer; user-select: none" @click.stop="showBackup = !showBackup">
+            <button
+              type="button"
+              class="form-section-heading"
+              :aria-expanded="showBackup ? 'true' : 'false'"
+              aria-controls="catalog-postgresql-backup"
+              style="grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; width: 100%; text-align: left"
+              @click.stop="showBackup = !showBackup"
+            >
               <div>
                 <span>Backup (optional)</span>
                 <small class="muted" style="display: block; margin-top: 2px">Requires a pre-existing K8s Secret with <code>ACCESS_KEY_ID</code> and <code>ACCESS_SECRET_KEY</code> keys.</small>
               </div>
               <span class="collapsible-chevron">{{ showBackup ? '▾' : '▸' }}</span>
-            </div>
+            </button>
             <template v-if="showBackup">
-            <label>
+            <label id="catalog-postgresql-backup">
               Credentials secret
               <input v-model="parameterForm.backupCredentialsSecret" placeholder="my-s3-creds" />
             </label>
@@ -1243,9 +1263,8 @@ async function submitRequest() {
             {{ submitting ? 'Submitting...' : 'Submit request' }}
           </button>
           <button class="button secondary" type="button" :disabled="submitting" @click="closeRequest">Cancel</button>
-          <span v-if="submitError" class="error-text">{{ submitError }}</span>
+          <span v-if="submitError" class="error-text" role="alert" aria-live="assertive">{{ submitError }}</span>
         </div>
       </form>
-    </div>
-  </Teleport>
+  </AccessibleDialog>
 </template>

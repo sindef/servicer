@@ -4,6 +4,7 @@ import { dump, load } from 'js-yaml'
 import { api, type CredentialDetail, type ProductRequest } from '../api'
 import { authConfig, beginOIDCLogin } from '../auth'
 import { useApi } from '../composables/useApi'
+import AccessibleDialog from '../components/AccessibleDialog.vue'
 import StatusPill from '../components/StatusPill.vue'
 import {
   buildProductParameters,
@@ -1118,18 +1119,22 @@ onBeforeUnmount(() => {
     </section>
   </template>
 
-  <Teleport to="body">
-    <div v-if="credentialConfirmOpen && pendingCredential" class="modal-backdrop">
-      <div class="modal-panel">
+  <AccessibleDialog
+    :open="credentialConfirmOpen && !!pendingCredential"
+    title-id="credential-confirm-title"
+    description-id="credential-confirm-description"
+    @close="credentialConfirmOpen = false"
+  >
+      <div v-if="pendingCredential">
         <div class="modal-head">
           <div>
             <p class="eyebrow">Sensitive access</p>
-            <h2>Reveal credential</h2>
-            <p class="muted">{{ pendingCredential.name }}</p>
+            <h2 id="credential-confirm-title">Reveal credential</h2>
+            <p class="muted">{{ pendingCredential?.name }}</p>
           </div>
-          <button class="button secondary icon-button" type="button" @click="credentialConfirmOpen = false">x</button>
+          <button class="button secondary icon-button" type="button" aria-label="Close reveal credential dialog" @click="credentialConfirmOpen = false">x</button>
         </div>
-        <p class="muted">
+        <p id="credential-confirm-description" class="muted">
           Revealing credentials can expose secrets through screen capture, browser tooling, and local history.
         </p>
         <label class="checkbox-label">
@@ -1150,24 +1155,32 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-    </div>
-  </Teleport>
+  </AccessibleDialog>
 
-  <Teleport to="body">
-    <div v-if="credentialsOpen && credentialDetail" class="modal-backdrop">
-      <div class="modal-panel">
+  <AccessibleDialog
+    :open="credentialsOpen && !!credentialDetail"
+    title-id="credential-values-title"
+    description-id="credential-values-description"
+    @close="closeCredentialModal"
+  >
+      <div>
         <div class="modal-head">
           <div>
             <p class="eyebrow">Credential secret</p>
-            <h2>{{ credentialDetail.name }}</h2>
-            <p class="muted">{{ credentialDetail.namespace }}</p>
+            <h2 id="credential-values-title">{{ credentialDetail?.name }}</h2>
+            <p id="credential-values-description" class="muted">{{ credentialDetail?.namespace }}</p>
           </div>
-          <button class="button secondary icon-button" type="button" @click="closeCredentialModal">x</button>
+          <button class="button secondary icon-button" type="button" aria-label="Close credential values dialog" @click="closeCredentialModal">x</button>
         </div>
         <div class="credential-values">
-          <div v-for="(value, key) in credentialDetail.data" :key="key" class="credential-value">
+          <div v-for="(value, key) in credentialDetail?.data || {}" :key="key" class="credential-value">
             <span>{{ key }}</span>
-            <textarea :value="credentialFieldRevealed(key) ? value : maskCredentialValue(value)" readonly :rows="credentialRows(value)" />
+            <textarea
+              :aria-label="`Credential field ${key}`"
+              :value="credentialFieldRevealed(key) ? value : maskCredentialValue(value)"
+              readonly
+              :rows="credentialRows(value)"
+            />
             <button class="button secondary compact-button" type="button" @click="toggleCredentialField(key)">
               {{ credentialFieldRevealed(key) ? 'Mask' : 'Reveal field' }}
             </button>
@@ -1178,18 +1191,20 @@ onBeforeUnmount(() => {
           <button class="button secondary compact-button" type="button" @click="closeCredentialModal">Done</button>
         </div>
       </div>
-    </div>
-  </Teleport>
+  </AccessibleDialog>
 
-  <Teleport to="body">
-    <div v-if="editOpen && data" class="modal-backdrop">
-      <form class="modal-panel" @submit.prevent="submitUpdate">
+  <AccessibleDialog
+    :open="editOpen && !!data"
+    title-id="instance-edit-title"
+    @close="editOpen = false"
+  >
+      <form v-if="data" @submit.prevent="submitUpdate">
         <div class="modal-head">
           <div>
             <p class="eyebrow">Edit instance</p>
-            <h2>{{ data.name }}</h2>
+            <h2 id="instance-edit-title">{{ data?.name }}</h2>
           </div>
-          <button class="button secondary icon-button" type="button" @click="editOpen = false">x</button>
+          <button class="button secondary icon-button" type="button" aria-label="Close edit instance dialog" @click="editOpen = false">x</button>
         </div>
 
         <div class="form-grid modal-form-grid">
@@ -1458,24 +1473,28 @@ onBeforeUnmount(() => {
             {{ updating ? 'Updating...' : 'Save changes' }}
           </button>
           <button class="button secondary" type="button" :disabled="updating" @click="editOpen = false">Cancel</button>
-          <span v-if="formError" class="error-text">{{ formError }}</span>
+          <span v-if="formError" class="error-text" role="alert" aria-live="assertive">{{ formError }}</span>
         </div>
       </form>
-    </div>
-  </Teleport>
+  </AccessibleDialog>
 
-  <Teleport to="body">
-    <div v-if="deleteOpen && data" class="modal-backdrop">
-      <form class="modal-panel delete-modal" @submit.prevent="deleteInstance">
+  <AccessibleDialog
+    :open="deleteOpen && !!data"
+    title-id="instance-delete-title"
+    description-id="instance-delete-description"
+    panel-class="delete-modal"
+    @close="deleteOpen = false"
+  >
+      <form v-if="data" @submit.prevent="deleteInstance">
         <div class="modal-head">
           <div>
             <p class="eyebrow">Delete instance</p>
-            <h2>{{ data.name }}</h2>
+            <h2 id="instance-delete-title">{{ data?.name }}</h2>
           </div>
-          <button class="button secondary icon-button" type="button" @click="deleteOpen = false">x</button>
+          <button class="button secondary icon-button" type="button" aria-label="Close delete instance dialog" @click="deleteOpen = false">x</button>
         </div>
-        <p class="muted">
-          Delete request removes Servicer instance object. Type <strong>{{ data.name }}</strong> to confirm.
+        <p id="instance-delete-description" class="muted">
+          Delete request removes Servicer instance object. Type <strong>{{ data?.name }}</strong> to confirm.
         </p>
         <label>
           Instance name
@@ -1486,39 +1505,44 @@ onBeforeUnmount(() => {
             {{ deleting ? 'Deleting...' : 'Delete instance' }}
           </button>
           <button class="button secondary" type="button" :disabled="deleting" @click="deleteOpen = false">Cancel</button>
-          <span v-if="formError" class="error-text">{{ formError }}</span>
+          <span v-if="formError" class="error-text" role="alert" aria-live="assertive">{{ formError }}</span>
         </div>
       </form>
-    </div>
-  </Teleport>
+  </AccessibleDialog>
 
-  <Teleport to="body">
-    <div v-if="yamlOpen" class="modal-backdrop">
-      <div class="modal-panel" style="width: min(920px, 100%)">
+  <AccessibleDialog
+    :open="yamlOpen"
+    title-id="yaml-editor-title"
+    @close="yamlOpen = false"
+  >
+      <div style="width: min(920px, 100%)">
         <div class="modal-head">
-          <h2>Edit YAML</h2>
-          <button class="button secondary icon-button" type="button" @click="yamlOpen = false">x</button>
+          <h2 id="yaml-editor-title">Edit YAML</h2>
+          <button class="button secondary icon-button" type="button" aria-label="Close YAML editor dialog" @click="yamlOpen = false">x</button>
         </div>
-        <YamlEditor v-model="yamlContent" />
+        <YamlEditor v-model="yamlContent" aria-label="Product request YAML editor" />
         <div class="form-actions" style="margin-top: 12px">
           <button class="button primary" :disabled="yamlSaving" @click="saveYaml">
             {{ yamlSaving ? 'Saving...' : 'Save' }}
           </button>
           <button class="button secondary" :disabled="yamlSaving" @click="yamlOpen = false">Cancel</button>
-          <span v-if="yamlError" class="error-text">{{ yamlError }}</span>
+          <span v-if="yamlError" class="error-text" role="alert" aria-live="assertive">{{ yamlError }}</span>
         </div>
       </div>
-    </div>
-  </Teleport>
+  </AccessibleDialog>
 
-  <Teleport to="body">
-    <div v-if="backupConfigOpen && data" class="modal-backdrop">
-      <form class="modal-panel" style="width: min(700px, 100%)" @submit.prevent="saveBackupConfig">
+  <AccessibleDialog
+    :open="backupConfigOpen && !!data"
+    title-id="backup-config-title"
+    description-id="backup-config-description"
+    @close="backupConfigOpen = false"
+  >
+      <form style="width: min(700px, 100%)" @submit.prevent="saveBackupConfig">
         <div class="modal-head">
-          <h2>Configure Backups</h2>
-          <button class="button secondary icon-button" type="button" @click="backupConfigOpen = false">x</button>
+          <h2 id="backup-config-title">Configure Backups</h2>
+          <button class="button secondary icon-button" type="button" aria-label="Close backup configuration dialog" @click="backupConfigOpen = false">x</button>
         </div>
-        <p class="muted" style="margin-bottom: 12px">
+        <p id="backup-config-description" class="muted" style="margin-bottom: 12px">
           Backups use CNPG's barman object store integration with S3-compatible storage.
           A Kubernetes Secret with <code>ACCESS_KEY_ID</code> and <code>ACCESS_SECRET_KEY</code> keys
           must already exist in the instance namespace. Leave bucket or secret empty to disable backup.
@@ -1561,9 +1585,8 @@ onBeforeUnmount(() => {
         <div class="form-actions">
           <button class="button primary" type="submit" :disabled="updating">{{ updating ? 'Saving...' : 'Save' }}</button>
           <button class="button secondary" type="button" @click="backupConfigOpen = false">Cancel</button>
-          <span v-if="formError" class="error-text">{{ formError }}</span>
+          <span v-if="formError" class="error-text" role="alert" aria-live="assertive">{{ formError }}</span>
         </div>
       </form>
-    </div>
-  </Teleport>
+  </AccessibleDialog>
 </template>

@@ -7,7 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node ./node_modules/vitest/vitest.mjs run"
+    "test": "node ./node_modules/vitest/vitest.mjs run",
+    "test:a11y": "node ./node_modules/@playwright/test/cli.js test tests/a11y.spec.ts"
   },
   "dependencies": {
     "@codemirror/lang-yaml": "^6.1.3",
@@ -22,6 +23,8 @@
     "vue-tsc": "^3.3.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.55.0",
     "@types/js-yaml": "^4.0.9",
     "vitest": "^4.0.8"
   }

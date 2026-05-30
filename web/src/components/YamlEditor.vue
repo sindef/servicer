@@ -2,14 +2,39 @@
 import { onMounted, onUnmounted, watch, ref } from 'vue'
 import { EditorView, basicSetup } from 'codemirror'
 import { yaml } from '@codemirror/lang-yaml'
-import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorState } from '@codemirror/state'
 
-const props = defineProps<{ modelValue: string }>()
+const props = withDefaults(defineProps<{ modelValue: string; ariaLabel?: string }>(), {
+  ariaLabel: 'YAML editor'
+})
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const container = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
+
+const highContrastTheme = EditorView.theme({
+  '&': {
+    backgroundColor: '#ffffff',
+    color: '#111827'
+  },
+  '.cm-content': {
+    caretColor: '#111827'
+  },
+  '.cm-cursor, .cm-dropCursor': {
+    borderLeftColor: '#111827'
+  },
+  '.cm-gutters': {
+    backgroundColor: '#f3f4f6',
+    color: '#374151',
+    border: 'none'
+  },
+  '.cm-activeLine': {
+    backgroundColor: '#eff6ff'
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: '#dbeafe'
+  }
+})
 
 onMounted(() => {
   view = new EditorView({
@@ -18,7 +43,10 @@ onMounted(() => {
       extensions: [
         basicSetup,
         yaml(),
-        oneDark,
+        highContrastTheme,
+        EditorView.contentAttributes.of({
+          'aria-label': props.ariaLabel
+        }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) emit('update:modelValue', update.state.doc.toString())
         }),
@@ -38,5 +66,5 @@ onUnmounted(() => { view?.destroy() })
 </script>
 
 <template>
-  <div ref="container" class="yaml-editor" />
+  <div ref="container" class="yaml-editor" role="region" :aria-label="props.ariaLabel" />
 </template>

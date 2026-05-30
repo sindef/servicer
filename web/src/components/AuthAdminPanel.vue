@@ -13,6 +13,7 @@ import {
   type RoleBindingSummary,
   type RoleBindingRequest
 } from '../api'
+import AccessibleDialog from './AccessibleDialog.vue'
 import { useApi } from '../composables/useApi'
 
 type AuthSection = 'users' | 'groups' | 'roles' | 'bindings' | 'providers'
@@ -1146,8 +1147,8 @@ resetBindingForm()
         </div>
       </div>
 
-      <p v-if="error" class="error-text" style="margin-bottom: 12px">{{ error }}</p>
-      <p v-if="success" class="success-text" style="margin-bottom: 12px">{{ success }}</p>
+      <p v-if="error" class="error-text" role="alert" aria-live="assertive" style="margin-bottom: 12px">{{ error }}</p>
+      <p v-if="success" class="success-text" role="status" aria-live="polite" style="margin-bottom: 12px">{{ success }}</p>
 
       <div class="auth-list-pane">
         <div class="auth-pane-header">
@@ -1415,15 +1416,21 @@ resetBindingForm()
       </div>
     </section>
 
-    <div v-if="modalSection" class="modal-backdrop">
-      <div class="modal-panel auth-modal-panel">
+    <AccessibleDialog
+      :open="!!modalSection"
+      title-id="auth-admin-modal-title"
+      description-id="auth-admin-modal-description"
+      panel-class="auth-modal-panel"
+      @close="closeModal"
+    >
+      <div>
         <div class="modal-head">
           <div>
             <p class="eyebrow">{{ modalMode === 'create' ? 'Create' : 'Edit' }}</p>
-            <h2>{{ modalTitle(modalSection) }}</h2>
-            <p class="muted">{{ sectionMeta(modalSection).description }}</p>
+            <h2 id="auth-admin-modal-title">{{ modalTitle(modalSection || 'users') }}</h2>
+            <p id="auth-admin-modal-description" class="muted">{{ sectionMeta(modalSection || 'users').description }}</p>
           </div>
-          <button class="button secondary" :disabled="busy" @click="closeModal">Close</button>
+          <button class="button secondary" type="button" aria-label="Close auth administration dialog" :disabled="busy" @click="closeModal">Close</button>
         </div>
 
         <template v-if="modalSection === 'providers'">
@@ -1871,6 +1878,6 @@ resetBindingForm()
           </div>
         </template>
       </div>
-    </div>
+    </AccessibleDialog>
   </div>
 </template>
