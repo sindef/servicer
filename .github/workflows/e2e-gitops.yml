@@ -1,6 +1,10 @@
 name: GitOps E2E
 
 on:
+  pull_request:
+    branches: ["master", "release/**"]
+  push:
+    branches: ["release/**"]
   workflow_dispatch:
 
 jobs:
@@ -26,6 +30,9 @@ jobs:
         uses: helm/kind-action@v1
         with:
           install_only: true
+
+      - name: NetworkPolicy smoke
+        run: ./hack/networkpolicy-smoke.sh
 
       - name: Run GitOps e2e
         run: ./hack/e2e-gitops.sh

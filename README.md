@@ -210,18 +210,24 @@ provider: Local
 
 ## Local build and verification
 
-### Go tests
+### Go test gates
 
 ```bash
-go test ./...
+go test -race -coverprofile=coverage.out ./...
+go test ./api/v1alpha1 -run 'Webhook|Validate'
+go test ./internal/controllers -run 'Reconciler|Controller'
 ```
 
-### Frontend build
+### Frontend PR gates
 
 ```bash
 cd web
 npm ci
+npm run lint
+npm run test:unit
 npm run build
+npm run build:budget
+npm run test:a11y
 ```
 
 ### Frontend dependency audit
@@ -245,6 +251,8 @@ npm audit --omit=dev --audit-level=high
 kubectl kustomize config/deploy > /dev/null
 kubectl kustomize deploy > /dev/null
 kubectl kustomize config/samples > /dev/null
+./hack/manifest-policy.sh deploy
+./hack/networkpolicy-smoke.sh
 ```
 
 ### Container builds

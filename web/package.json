@@ -5,9 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "npm run typecheck",
     "build": "vue-tsc --noEmit && vite build",
+    "build:budget": "node ./scripts/check-bundle-budget.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node ./node_modules/vitest/vitest.mjs run",
+    "test": "node ./node_modules/vitest/vitest.mjs run src/**/*.test.ts",
+    "test:unit": "node ./node_modules/vitest/vitest.mjs run src/**/*.test.ts",
     "test:a11y": "node ./node_modules/@playwright/test/cli.js test tests/a11y.spec.ts"
   },
   "dependencies": {

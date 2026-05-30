@@ -4,10 +4,14 @@ on:
   push:
     branches: ["master"]
     tags: ["v*"]
+  pull_request:
+    branches: ["master", "release/**"]
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/servicer
+  GOVULNCHECK_VERSION: v1.1.4
+  GOSEC_VERSION: v2.22.5
 
 jobs:
   validate:
@@ -41,11 +45,17 @@ jobs:
       - name: Go test
         run: go test -race -coverprofile=coverage.out ./...
 
+      - name: Webhook validation tests
+        run: go test ./api/v1alpha1 -run 'Webhook|Validate'
+
+      - name: Controller integration tests
+        run: go test ./internal/controllers -run 'Reconciler|Controller'
+
       - name: Go vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
 
       - name: Static security scan
-        run: go run github.com/securego/gosec/v2/cmd/gosec@latest ./...
+        run: go run github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} ./...
 
       - name: Helm CLI smoke test
         run: ./hack/helm-cli-smoke.sh
@@ -58,11 +68,23 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
 
-      - name: Build web
+      - name: Frontend lint
         working-directory: web
         run: |
           npm ci
-          npm run build
+          npm run lint
+
+      - name: Frontend unit tests
+        working-directory: web
+        run: npm run test:unit
+
+      - name: Build web
+        working-directory: web
+        run: npm run build
+
+      - name: Bundle budget
+        working-directory: web
+        run: npm run build:budget
 
       - name: Audit web dependencies
         working-directory: web
@@ -76,6 +98,9 @@ jobs:
 
       - name: Validate production manifest policy
         run: ./hack/manifest-policy.sh deploy
+
+      - name: NetworkPolicy manifest smoke
+        run: ./hack/networkpolicy-smoke.sh
 
       - name: Validate sample manifests
         run: kubectl kustomize config/samples > /dev/null
@@ -326,6 +351,34 @@ jobs:
           provenance: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  kind-smoke:
+    name: KinD GitOps smoke
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.32.2
+
+      - name: Set up KinD
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Run KinD GitOps smoke
+        run: ./hack/e2e-gitops.sh
 
   publish-install-manifest:
     name: Publish install manifest
