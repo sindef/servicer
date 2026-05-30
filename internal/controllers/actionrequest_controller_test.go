@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -21,7 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestActionRequestReconcilerExecutesApprovedCNPGAction(t *testing.T) {
+func TestActionRequestReconcilerQueuesCNPGBackupUntilCompletionObserved(t *testing.T) {
 	reconciler := newActionRequestReconciler(t, actionRequestFixture("orders-db-backup", string(adapters.ActionBackup), platformv1alpha1.ApprovalModeAuto))
 
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "orders-db-backup"}}); err != nil {
@@ -32,23 +34,135 @@ func TestActionRequestReconcilerExecutesApprovedCNPGAction(t *testing.T) {
 	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "orders-db-backup"}, &actionRequest); err != nil {
 		t.Fatalf("Get returned error: %v", err)
 	}
-	if actionRequest.Status.Phase != "Succeeded" {
-		t.Fatalf("expected phase Succeeded, got %q", actionRequest.Status.Phase)
+	if actionRequest.Status.Phase != "Queued" {
+		t.Fatalf("expected phase Queued, got %q", actionRequest.Status.Phase)
 	}
 	if actionRequest.Status.StartedAt == nil {
 		t.Fatalf("expected StartedAt to be set")
 	}
-	if actionRequest.Status.CompletedAt == nil {
-		t.Fatalf("expected CompletedAt to be set")
+	if actionRequest.Status.CompletedAt != nil {
+		t.Fatalf("expected CompletedAt to remain empty while backup is pending")
 	}
-	if actionRequest.Status.Result.Code != "succeeded" {
-		t.Fatalf("expected result code succeeded, got %q", actionRequest.Status.Result.Code)
+	if actionRequest.Status.Result.Code != "queued" {
+		t.Fatalf("expected result code queued, got %q", actionRequest.Status.Result.Code)
 	}
-	if !strings.Contains(actionRequest.Status.Result.Message, "CNPG Backup") {
-		t.Fatalf("expected backup creation message, got %q", actionRequest.Status.Result.Message)
+	if !strings.Contains(actionRequest.Status.Result.Message, "waiting for completion") {
+		t.Fatalf("expected pending backup message, got %q", actionRequest.Status.Result.Message)
 	}
 	if actionRequest.Status.OperationRef == nil || actionRequest.Status.OperationRef.Kind != "Backup" {
 		t.Fatalf("expected Backup operation ref, got %#v", actionRequest.Status.OperationRef)
+	}
+}
+
+func TestActionRequestReconcilerMarksCNPGBackupSucceededWhenBackupCompleted(t *testing.T) {
+	action := actionRequestFixture("orders-db-backup-success", string(adapters.ActionBackup), platformv1alpha1.ApprovalModeAuto)
+	backup := cnpgBackupResourceFixture(cnpgBackupNameForAction("orders-db", action.Name), "acme-prod-orders-db", map[string]any{"phase": "completed"})
+	reconciler := newActionRequestReconcilerWithExtras(t, action, backup)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var actionRequest platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: action.Name}, &actionRequest); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if actionRequest.Status.Phase != "Succeeded" {
+		t.Fatalf("expected phase Succeeded, got %q", actionRequest.Status.Phase)
+	}
+	if actionRequest.Status.CompletedAt == nil {
+		t.Fatalf("expected CompletedAt to be set for completed backup")
+	}
+	if !strings.Contains(actionRequest.Status.Result.Message, "completed successfully") {
+		t.Fatalf("expected success completion message, got %q", actionRequest.Status.Result.Message)
+	}
+}
+
+func TestActionRequestReconcilerMarksCNPGBackupFailedWhenBackupFailed(t *testing.T) {
+	action := actionRequestFixture("orders-db-backup-failed", string(adapters.ActionBackup), platformv1alpha1.ApprovalModeAuto)
+	backup := cnpgBackupResourceFixture(cnpgBackupNameForAction("orders-db", action.Name), "acme-prod-orders-db", map[string]any{
+		"phase":        "failed",
+		"commandError": "object store write timeout",
+	})
+	reconciler := newActionRequestReconcilerWithExtras(t, action, backup)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var actionRequest platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: action.Name}, &actionRequest); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if actionRequest.Status.Phase != "Failed" {
+		t.Fatalf("expected phase Failed, got %q", actionRequest.Status.Phase)
+	}
+	if actionRequest.Status.CompletedAt == nil {
+		t.Fatalf("expected CompletedAt to be set for failed backup")
+	}
+	if !strings.Contains(actionRequest.Status.Result.Message, "object store write timeout") {
+		t.Fatalf("expected failure reason in message, got %q", actionRequest.Status.Result.Message)
+	}
+}
+
+func TestActionRequestReconcilerKeepsCNPGBackupPendingWhileRunning(t *testing.T) {
+	action := actionRequestFixture("orders-db-backup-running", string(adapters.ActionBackup), platformv1alpha1.ApprovalModeAuto)
+	backup := cnpgBackupResourceFixture(cnpgBackupNameForAction("orders-db", action.Name), "acme-prod-orders-db", map[string]any{"phase": "running"})
+	reconciler := newActionRequestReconcilerWithExtras(t, action, backup)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var actionRequest platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: action.Name}, &actionRequest); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if actionRequest.Status.Phase != "Running" {
+		t.Fatalf("expected phase Running, got %q", actionRequest.Status.Phase)
+	}
+	if actionRequest.Status.CompletedAt != nil {
+		t.Fatalf("expected CompletedAt to remain empty while backup is running")
+	}
+}
+
+func TestActionRequestReconcilerRetriesCNPGBackupWhenBackupObjectMissing(t *testing.T) {
+	action := actionRequestFixture("orders-db-backup-retry", string(adapters.ActionBackup), platformv1alpha1.ApprovalModeAuto)
+	reconciler := newActionRequestReconciler(t, action)
+	key := client.ObjectKey{Name: action.Name}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("first reconcile returned error: %v", err)
+	}
+
+	var actionRequest platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), key, &actionRequest); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if actionRequest.Status.OperationRef == nil {
+		t.Fatalf("expected operationRef after initial backup enqueue")
+	}
+
+	backup := &unstructured.Unstructured{}
+	backup.SetAPIVersion(actionRequest.Status.OperationRef.APIVersion)
+	backup.SetKind(actionRequest.Status.OperationRef.Kind)
+	backup.SetName(actionRequest.Status.OperationRef.Name)
+	backup.SetNamespace(actionRequest.Status.OperationRef.Namespace)
+	if err := reconciler.Delete(context.Background(), backup); err != nil {
+		t.Fatalf("delete backup resource: %v", err)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("second reconcile returned error: %v", err)
+	}
+	if err := reconciler.Get(context.Background(), key, &actionRequest); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if actionRequest.Status.Phase != "Queued" {
+		t.Fatalf("expected queued phase while retrying missing backup object, got %q", actionRequest.Status.Phase)
+	}
+	if !strings.Contains(actionRequest.Status.Result.Message, "retrying") {
+		t.Fatalf("expected retry message, got %q", actionRequest.Status.Result.Message)
 	}
 }
 
@@ -320,6 +434,24 @@ func TestActionRequestReconcilerPromotesMySQLFailoverCandidate(t *testing.T) {
 	}
 }
 
+func TestExecuteMySQLBackupActionRemainsQueued(t *testing.T) {
+	actionRequest := valkeyActionRequestFixture("orders-mysql-backup", string(adapters.ActionBackup), nil)
+	actionRequest.Spec.TargetRef.Name = "orders-mysql"
+	reconciler := newMySQLActionRequestReconciler(t, mysqlServiceInstanceFixture(), actionRequest)
+	result, err := reconciler.executeMySQLAction(context.Background(), adapters.ServiceContext{
+		Instance: mysqlServiceInstanceFixture(),
+	}, actionRequest, "op-mysql-backup")
+	if err != nil {
+		t.Fatalf("executeMySQLAction returned error: %v", err)
+	}
+	if result.Phase != "Queued" {
+		t.Fatalf("expected MySQL backup to remain queued, got %q", result.Phase)
+	}
+	if result.OperationRef == nil || result.OperationRef.Kind != "Job" {
+		t.Fatalf("expected MySQL backup operation ref to be a Job, got %#v", result.OperationRef)
+	}
+}
+
 func TestActionRequestReconcilerGrantsNamespaceAccess(t *testing.T) {
 	reconciler := newNamespaceActionRequestReconciler(t, namespaceGrantAccessActionRequestFixture("team-space-access", map[string]any{
 		"subject":    "bob@example.com",
@@ -361,6 +493,11 @@ func TestActionRequestReconcilerGrantsNamespaceAccess(t *testing.T) {
 
 func newActionRequestReconciler(t *testing.T, actionRequest *platformv1alpha1.ActionRequest) *ActionRequestReconciler {
 	t.Helper()
+	return newActionRequestReconcilerWithExtras(t, actionRequest)
+}
+
+func newActionRequestReconcilerWithExtras(t *testing.T, actionRequest *platformv1alpha1.ActionRequest, extras ...client.Object) *ActionRequestReconciler {
+	t.Helper()
 
 	scheme := runtime.NewScheme()
 	if err := platformv1alpha1.AddToScheme(scheme); err != nil {
@@ -372,22 +509,49 @@ func newActionRequestReconciler(t *testing.T, actionRequest *platformv1alpha1.Ac
 		t.Fatalf("NewRegistry returned error: %v", err)
 	}
 
+	objects := []client.Object{
+		tenantFixture(),
+		projectFixture(),
+		clusterTargetFixture(),
+		serviceClassFixture(),
+		servicePlanFixture(),
+		serviceInstanceFixture(),
+		actionRequest,
+	}
+	objects = append(objects, extras...)
+
 	client := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&platformv1alpha1.ActionRequest{}).
 		WithStatusSubresource(&platformv1alpha1.ServiceInstance{}).
-		WithObjects(
-			tenantFixture(),
-			projectFixture(),
-			clusterTargetFixture(),
-			serviceClassFixture(),
-			servicePlanFixture(),
-			serviceInstanceFixture(),
-			actionRequest,
-		).
+		WithObjects(objects...).
 		Build()
 
 	return &ActionRequestReconciler{Client: client, Scheme: scheme, Adapters: registry}
+}
+
+func cnpgBackupNameForAction(instanceName, actionName string) string {
+	return fmt.Sprintf("%s-%s", instanceName, actionName)
+}
+
+func cnpgBackupResourceFixture(name, namespace string, status map[string]any) *unstructured.Unstructured {
+	backup := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "postgresql.cnpg.io/v1",
+		"kind":       "Backup",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec": map[string]any{
+			"cluster": map[string]any{
+				"name": "orders-db",
+			},
+		},
+	}}
+	if len(status) > 0 {
+		backup.Object["status"] = status
+	}
+	return backup
 }
 
 func newValkeyActionRequestReconciler(t *testing.T, actionRequest *platformv1alpha1.ActionRequest) *ActionRequestReconciler {

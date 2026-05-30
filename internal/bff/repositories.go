@@ -1,8 +1,13 @@
 package bff
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +29,14 @@ const (
 	repoSecretProjectKey = "servicer.io/project" // #nosec G101 -- Kubernetes label keys, not credentials.
 	argocdNamespace      = "argocd"
 )
+
+const repositoryMirrorLabel = "servicer.io/repository-mirror"
+
+type repositoryDependencyConflictResponse struct {
+	Error        string   `json:"error"`
+	Code         string   `json:"code"`
+	Dependencies []string `json:"dependencies,omitempty"`
+}
 
 // handleListProjectRepositories returns all repositories stored under a project.
 func (s *Server) handleListProjectRepositories(w http.ResponseWriter, r *http.Request) {

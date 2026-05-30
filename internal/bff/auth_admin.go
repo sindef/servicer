@@ -3,6 +3,7 @@ package bff
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -24,6 +25,84 @@ const (
 	roleDefinitionDataKey    = "role.json"
 	roleDefinitionPrefix     = "servicer-role-"
 )
+
+type authAdminValidationResponse struct {
+	Error       string                          `json:"error"`
+	Code        string                          `json:"code"`
+	FieldErrors []authAdminFieldValidationError `json:"fieldErrors,omitempty"`
+}
+
+type authAdminFieldValidationError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+type authAdminValidationError struct {
+	message string
+	fields  []authAdminFieldValidationError
+}
+
+func (e *authAdminValidationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.message
+}
+
+func newAuthAdminValidationError(message string, fields ...authAdminFieldValidationError) *authAdminValidationError {
+	if message == "" && len(fields) == 1 {
+		message = fields[0].Message
+	}
+	if message == "" {
+		message = "validation failed"
+	}
+	return &authAdminValidationError{message: message, fields: fields}
+}
+
+func authAdminFieldError(field, message string) authAdminFieldValidationError {
+	return authAdminFieldValidationError{Field: field, Message: message}
+}
+
+func writeInvalidAuthAdminRequest(w http.ResponseWriter) {
+	writeJSON(w, http.StatusBadRequest, authAdminValidationResponse{
+		Error: "invalid request body",
+		Code:  "invalid_request_body",
+	})
+}
+
+func writeAuthAdminValidationError(w http.ResponseWriter, err error) {
+	if err == nil {
+		err = newAuthAdminValidationError("validation failed")
+	}
+	var validationErr *authAdminValidationError
+	if errors.As(err, &validationErr) {
+		writeJSON(w, http.StatusBadRequest, authAdminValidationResponse{
+			Error:       validationErr.Error(),
+			Code:        "validation_failed",
+			FieldErrors: validationErr.fields,
+		})
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, authAdminValidationResponse{
+		Error: err.Error(),
+		Code:  "validation_failed",
+	})
+}
+
+type authAdminDependencyConflictResponse struct {
+	Error        string   `json:"error"`
+	Code         string   `json:"code"`
+	Dependencies []string `json:"dependencies,omitempty"`
+}
+
+func writeAuthAdminDependencyConflict(w http.ResponseWriter, resource, name string, dependencies []string) {
+	sort.Strings(dependencies)
+	writeJSON(w, http.StatusConflict, authAdminDependencyConflictResponse{
+		Error:        fmt.Sprintf("%s %q is still referenced", resource, name),
+		Code:         "dependency_conflict",
+		Dependencies: dependencies,
+	})
+}
 
 func (s *Server) handleListAuthProviders(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin); !ok {
@@ -84,12 +163,16 @@ func (s *Server) handleCreateAuthProvider(w http.ResponseWriter, r *http.Request
 	}
 	var req AuthProviderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	provider, secrets, err := authProviderFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
+		return
+	}
+	if err := applyAuthProviderSecretRequirements(req, provider, nil); err != nil {
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	for _, secret := range secrets {
@@ -112,13 +195,22 @@ func (s *Server) handleUpdateAuthProvider(w http.ResponseWriter, r *http.Request
 	name := strings.TrimSpace(r.PathValue("name"))
 	var req AuthProviderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	req.Name = name
 	provider, secrets, err := authProviderFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
+		return
+	}
+	var existing platformv1alpha1.AuthProvider
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := applyAuthProviderSecretRequirements(req, provider, &existing); err != nil {
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	for _, secret := range secrets {
@@ -126,17 +218,6 @@ func (s *Server) handleUpdateAuthProvider(w http.ResponseWriter, r *http.Request
 			writeError(w, err)
 			return
 		}
-	}
-	var existing platformv1alpha1.AuthProvider
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
-		writeError(w, err)
-		return
-	}
-	if existing.Spec.OIDC != nil && provider.Spec.OIDC != nil && provider.Spec.OIDC.ClientSecretRef.Name == "" {
-		provider.Spec.OIDC.ClientSecretRef = existing.Spec.OIDC.ClientSecretRef
-	}
-	if existing.Spec.LDAP != nil && provider.Spec.LDAP != nil && provider.Spec.LDAP.BindSecretRef.Name == "" {
-		provider.Spec.LDAP.BindSecretRef = existing.Spec.LDAP.BindSecretRef
 	}
 	existing.Spec = provider.Spec
 	if err := s.client.Update(r.Context(), &existing); err != nil {
@@ -156,6 +237,15 @@ func (s *Server) handleDeleteAuthProvider(w http.ResponseWriter, r *http.Request
 		writeError(w, err)
 		return
 	}
+	dependencies, err := s.authProviderDeleteDependencies(r.Context(), existing)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(dependencies) > 0 {
+		writeAuthAdminDependencyConflict(w, "auth provider", name, dependencies)
+		return
+	}
 	if err := s.client.Delete(r.Context(), &existing); err != nil {
 		writeError(w, err)
 		return
@@ -164,14 +254,48 @@ func (s *Server) handleDeleteAuthProvider(w http.ResponseWriter, r *http.Request
 }
 
 func authProviderFromRequest(req AuthProviderRequest) (*platformv1alpha1.AuthProvider, []*corev1.Secret, error) {
+	name := strings.TrimSpace(req.Name)
+	displayName := strings.TrimSpace(req.DisplayName)
 	providerType := platformv1alpha1.AuthProviderType(strings.TrimSpace(req.Type))
-	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.DisplayName) == "" {
-		return nil, nil, fmt.Errorf("name and displayName are required")
+	fields := []authAdminFieldValidationError{}
+	if name == "" {
+		fields = append(fields, authAdminFieldError("name", "name is required"))
+	}
+	if displayName == "" {
+		fields = append(fields, authAdminFieldError("displayName", "displayName is required"))
+	}
+	if req.Default && !req.Enabled {
+		fields = append(fields, authAdminFieldError("default", "default providers must be enabled"))
+	}
+	switch providerType {
+	case platformv1alpha1.AuthProviderTypeLocal:
+	case platformv1alpha1.AuthProviderTypeOIDC:
+		if strings.TrimSpace(req.OIDCIssuerURL) == "" {
+			fields = append(fields, authAdminFieldError("oidcIssuerUrl", "issuer URL is required"))
+		}
+		if strings.TrimSpace(req.OIDCClientID) == "" {
+			fields = append(fields, authAdminFieldError("oidcClientId", "client ID is required"))
+		}
+	case platformv1alpha1.AuthProviderTypeLDAP:
+		if strings.TrimSpace(req.LDAPURL) == "" {
+			fields = append(fields, authAdminFieldError("ldapUrl", "LDAP URL is required"))
+		}
+		if strings.TrimSpace(req.LDAPUserBaseDN) == "" {
+			fields = append(fields, authAdminFieldError("ldapUserBaseDn", "LDAP user base DN is required"))
+		}
+		if strings.TrimSpace(req.LDAPUserFilter) == "" {
+			fields = append(fields, authAdminFieldError("ldapUserFilter", "LDAP user filter is required"))
+		}
+	default:
+		fields = append(fields, authAdminFieldError("type", fmt.Sprintf("unsupported provider type %q", req.Type)))
+	}
+	if len(fields) > 0 {
+		return nil, nil, newAuthAdminValidationError("auth provider validation failed", fields...)
 	}
 	provider := &platformv1alpha1.AuthProvider{
-		ObjectMeta: metav1.ObjectMeta{Name: req.Name},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: platformv1alpha1.AuthProviderSpec{
-			DisplayName: req.DisplayName,
+			DisplayName: displayName,
 			Type:        providerType,
 			Enabled:     req.Enabled,
 			Default:     req.Default,
@@ -193,7 +317,7 @@ func authProviderFromRequest(req AuthProviderRequest) (*platformv1alpha1.AuthPro
 			EndSessionURL: req.OIDCEndSessionURL,
 		}
 		if secret := strings.TrimSpace(req.OIDCClientSecret); secret != "" {
-			secretName := fmt.Sprintf("auth-provider-%s-oidc", req.Name)
+			secretName := fmt.Sprintf("auth-provider-%s-oidc", name)
 			secrets = append(secrets, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: authSecretNamespace},
 				StringData: map[string]string{"clientSecret": secret},
@@ -214,7 +338,7 @@ func authProviderFromRequest(req AuthProviderRequest) (*platformv1alpha1.AuthPro
 			InsecureSkipVerify: req.InsecureSkipVerify,
 		}
 		if strings.TrimSpace(req.LDAPBindUsername) != "" || strings.TrimSpace(req.LDAPBindPassword) != "" {
-			secretName := fmt.Sprintf("auth-provider-%s-ldap", req.Name)
+			secretName := fmt.Sprintf("auth-provider-%s-ldap", name)
 			secrets = append(secrets, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: authSecretNamespace},
 				StringData: map[string]string{
@@ -224,10 +348,58 @@ func authProviderFromRequest(req AuthProviderRequest) (*platformv1alpha1.AuthPro
 			})
 			provider.Spec.LDAP.BindSecretRef = platformv1alpha1.NamespacedObjectReference{Name: secretName, Namespace: authSecretNamespace}
 		}
-	default:
-		return nil, nil, fmt.Errorf("unsupported provider type %q", req.Type)
 	}
 	return provider, secrets, nil
+}
+
+func applyAuthProviderSecretRequirements(req AuthProviderRequest, provider *platformv1alpha1.AuthProvider, existing *platformv1alpha1.AuthProvider) error {
+	switch provider.Spec.Type {
+	case platformv1alpha1.AuthProviderTypeOIDC:
+		if provider.Spec.OIDC == nil {
+			return newAuthAdminValidationError("OIDC config is required", authAdminFieldError("type", "OIDC config is required"))
+		}
+		if provider.Spec.OIDC.ClientSecretRef.Name != "" {
+			return nil
+		}
+		if existing != nil && existing.Spec.Type == platformv1alpha1.AuthProviderTypeOIDC && existing.Spec.OIDC != nil && existing.Spec.OIDC.ClientSecretRef.Name != "" {
+			provider.Spec.OIDC.ClientSecretRef = existing.Spec.OIDC.ClientSecretRef
+			return nil
+		}
+		return newAuthAdminValidationError(
+			"OIDC client secret is required",
+			authAdminFieldError("oidcClientSecret", "client secret is required when creating or switching to an OIDC provider"),
+		)
+	case platformv1alpha1.AuthProviderTypeLDAP:
+		if provider.Spec.LDAP == nil {
+			return newAuthAdminValidationError("LDAP config is required", authAdminFieldError("type", "LDAP config is required"))
+		}
+		bindUsernameSet := strings.TrimSpace(req.LDAPBindUsername) != ""
+		bindPasswordSet := strings.TrimSpace(req.LDAPBindPassword) != ""
+		if bindUsernameSet != bindPasswordSet {
+			fields := []authAdminFieldValidationError{}
+			if !bindUsernameSet {
+				fields = append(fields, authAdminFieldError("ldapBindUsername", "bind username is required when bind password is provided"))
+			}
+			if !bindPasswordSet {
+				fields = append(fields, authAdminFieldError("ldapBindPassword", "bind password is required when bind username is provided"))
+			}
+			return newAuthAdminValidationError("LDAP bind credentials are incomplete", fields...)
+		}
+		if provider.Spec.LDAP.BindSecretRef.Name != "" {
+			return nil
+		}
+		if existing != nil && existing.Spec.Type == platformv1alpha1.AuthProviderTypeLDAP && existing.Spec.LDAP != nil && existing.Spec.LDAP.BindSecretRef.Name != "" {
+			provider.Spec.LDAP.BindSecretRef = existing.Spec.LDAP.BindSecretRef
+			return nil
+		}
+		return newAuthAdminValidationError(
+			"LDAP bind credentials are required",
+			authAdminFieldError("ldapBindUsername", "bind username is required when creating or switching to an LDAP provider"),
+			authAdminFieldError("ldapBindPassword", "bind password is required when creating or switching to an LDAP provider"),
+		)
+	default:
+		return nil
+	}
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -264,16 +436,16 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	var req UserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
-	if req.LocalAuthEnabled && strings.TrimSpace(req.Password) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password is required when local auth is enabled"})
+	if err := validateCreateUserRequest(req); err != nil {
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	user, secret, err := userFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	if secret != nil {
@@ -296,28 +468,32 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	var req UserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	req.Name = name
+	var existing platformv1alpha1.User
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := validateUpdateUserRequest(req, existing); err != nil {
+		writeAuthAdminValidationError(w, err)
+		return
+	}
 	user, secret, err := userFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
+	}
+	if user.Spec.LocalAuth != nil && secret == nil {
+		user.Spec.LocalAuth.PasswordHashSecretRef = existing.Spec.LocalAuth.PasswordHashSecretRef
 	}
 	if secret != nil {
 		if err := s.upsertSecret(r.Context(), secret); err != nil {
 			writeError(w, err)
 			return
 		}
-	}
-	var existing platformv1alpha1.User
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
-		writeError(w, err)
-		return
-	}
-	if user.Spec.LocalAuth != nil && secret == nil {
-		user.Spec.LocalAuth.PasswordHashSecretRef = existing.Spec.LocalAuth.PasswordHashSecretRef
 	}
 	existing.Spec = user.Spec
 	if err := s.client.Update(r.Context(), &existing); err != nil {
@@ -337,6 +513,15 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	dependencies, err := s.userDeleteDependencies(r.Context(), name)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(dependencies) > 0 {
+		writeAuthAdminDependencyConflict(w, "user", name, dependencies)
+		return
+	}
 	if err := s.client.Delete(r.Context(), &existing); err != nil {
 		writeError(w, err)
 		return
@@ -346,7 +531,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 
 func userFromRequest(req UserRequest) (*platformv1alpha1.User, *corev1.Secret, error) {
 	if strings.TrimSpace(req.Name) == "" {
-		return nil, nil, fmt.Errorf("name is required")
+		return nil, nil, newAuthAdminValidationError("name is required", authAdminFieldError("name", "name is required"))
 	}
 	user := &platformv1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{Name: req.Name},
@@ -385,6 +570,189 @@ func userFromRequest(req UserRequest) (*platformv1alpha1.User, *corev1.Secret, e
 	return user, secret, nil
 }
 
+func validateCreateUserRequest(req UserRequest) error {
+	fields := validateUserRequest(req)
+	if req.LocalAuthEnabled && strings.TrimSpace(req.Password) == "" {
+		fields = append(fields, authAdminFieldError("password", "password is required when local auth is enabled"))
+	}
+	if len(fields) > 0 {
+		return newAuthAdminValidationError("user validation failed", fields...)
+	}
+	return nil
+}
+
+func validateUpdateUserRequest(req UserRequest, existing platformv1alpha1.User) error {
+	fields := validateUserRequest(req)
+	if req.LocalAuthEnabled && strings.TrimSpace(req.Password) == "" && !hasExistingLocalAuthSecret(existing) {
+		fields = append(fields, authAdminFieldError("password", "password is required when enabling local auth for a user without an existing password secret"))
+	}
+	if len(fields) > 0 {
+		return newAuthAdminValidationError("user validation failed", fields...)
+	}
+	return nil
+}
+
+func validateUserRequest(req UserRequest) []authAdminFieldValidationError {
+	fields := []authAdminFieldValidationError{}
+	if strings.TrimSpace(req.Name) == "" {
+		fields = append(fields, authAdminFieldError("name", "name is required"))
+	}
+	externalIdentityCount, externalIdentityErrors := validateExternalIdentities(req.ExternalIdentities)
+	fields = append(fields, externalIdentityErrors...)
+	if !req.LocalAuthEnabled && externalIdentityCount == 0 {
+		fields = append(fields, authAdminFieldError("externalIdentities", "at least one local or external identity is required"))
+	}
+	return fields
+}
+
+func validateExternalIdentities(identities []ExternalIdentitySummary) (int, []authAdminFieldValidationError) {
+	fields := []authAdminFieldValidationError{}
+	count := 0
+	for i, identity := range identities {
+		provider := strings.TrimSpace(identity.Provider)
+		subject := strings.TrimSpace(identity.Subject)
+		if provider == "" && subject == "" {
+			continue
+		}
+		fieldPrefix := fmt.Sprintf("externalIdentities[%d]", i)
+		if provider == "" {
+			fields = append(fields, authAdminFieldError(fieldPrefix+".provider", "provider is required"))
+		}
+		if subject == "" {
+			fields = append(fields, authAdminFieldError(fieldPrefix+".subject", "subject is required"))
+		}
+		if provider != "" && subject != "" {
+			count++
+		}
+	}
+	return count, fields
+}
+
+func hasExistingLocalAuthSecret(user platformv1alpha1.User) bool {
+	return user.Spec.LocalAuth != nil &&
+		user.Spec.LocalAuth.Enabled &&
+		strings.TrimSpace(user.Spec.LocalAuth.PasswordHashSecretRef.Name) != "" &&
+		strings.TrimSpace(user.Spec.LocalAuth.PasswordHashSecretRef.Namespace) != ""
+}
+
+func (s *Server) authProviderDeleteDependencies(ctx context.Context, provider platformv1alpha1.AuthProvider) ([]string, error) {
+	dependencies := []string{}
+	localProviderRequired := false
+	if provider.Spec.Type == platformv1alpha1.AuthProviderTypeLocal && provider.Spec.Enabled {
+		hasAlternate, err := s.hasAlternateEnabledLocalProvider(ctx, provider.Name)
+		if err != nil {
+			return nil, err
+		}
+		localProviderRequired = !hasAlternate
+	}
+	var users platformv1alpha1.UserList
+	if err := s.client.List(ctx, &users); err != nil {
+		return nil, err
+	}
+	for _, user := range users.Items {
+		if localProviderRequired && user.Spec.LocalAuth != nil && user.Spec.LocalAuth.Enabled {
+			dependencies = append(dependencies, fmt.Sprintf("users/%s local auth", user.Name))
+		}
+		for _, identity := range user.Spec.ExternalIdentities {
+			if identity.ProviderRef.Name == provider.Name {
+				dependencies = append(dependencies, fmt.Sprintf("users/%s external identity", user.Name))
+				break
+			}
+		}
+	}
+
+	var groups platformv1alpha1.GroupList
+	if err := s.client.List(ctx, &groups); err != nil {
+		return nil, err
+	}
+	for _, group := range groups.Items {
+		for _, external := range group.Spec.ExternalGroups {
+			if external.ProviderRef.Name == provider.Name {
+				dependencies = append(dependencies, fmt.Sprintf("groups/%s external group", group.Name))
+				break
+			}
+		}
+	}
+	return uniqueSortedStrings(dependencies), nil
+}
+
+func (s *Server) hasAlternateEnabledLocalProvider(ctx context.Context, name string) (bool, error) {
+	var providers platformv1alpha1.AuthProviderList
+	if err := s.client.List(ctx, &providers); err != nil {
+		return false, err
+	}
+	for _, provider := range providers.Items {
+		if provider.Name != name && provider.Spec.Type == platformv1alpha1.AuthProviderTypeLocal && provider.Spec.Enabled {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Server) userDeleteDependencies(ctx context.Context, name string) ([]string, error) {
+	dependencies := []string{}
+	var groups platformv1alpha1.GroupList
+	if err := s.client.List(ctx, &groups); err != nil {
+		return nil, err
+	}
+	for _, group := range groups.Items {
+		for _, member := range group.Spec.Members {
+			if member.UserRef.Name == name {
+				dependencies = append(dependencies, fmt.Sprintf("groups/%s member", group.Name))
+				break
+			}
+		}
+	}
+
+	var bindings platformv1alpha1.RoleBindingList
+	if err := s.client.List(ctx, &bindings); err != nil {
+		return nil, err
+	}
+	for _, binding := range bindings.Items {
+		for _, subject := range binding.Spec.Subjects {
+			if subject.Kind == platformv1alpha1.SubjectKindUser && subject.Name == name {
+				dependencies = append(dependencies, fmt.Sprintf("rolebindings/%s subject", binding.Name))
+				break
+			}
+		}
+	}
+	return uniqueSortedStrings(dependencies), nil
+}
+
+func (s *Server) groupDeleteDependencies(ctx context.Context, name string) ([]string, error) {
+	dependencies := []string{}
+	var bindings platformv1alpha1.RoleBindingList
+	if err := s.client.List(ctx, &bindings); err != nil {
+		return nil, err
+	}
+	for _, binding := range bindings.Items {
+		for _, subject := range binding.Spec.Subjects {
+			if subject.Kind == platformv1alpha1.SubjectKindGroup && subject.Name == name {
+				dependencies = append(dependencies, fmt.Sprintf("rolebindings/%s subject", binding.Name))
+				break
+			}
+		}
+	}
+	return uniqueSortedStrings(dependencies), nil
+}
+
+func (s *Server) roleDeleteDependencies(ctx context.Context, name string) ([]string, error) {
+	dependencies := []string{}
+	var bindings platformv1alpha1.RoleBindingList
+	if err := s.client.List(ctx, &bindings); err != nil {
+		return nil, err
+	}
+	for _, binding := range bindings.Items {
+		for _, role := range binding.Spec.Roles {
+			if string(role) == name {
+				dependencies = append(dependencies, fmt.Sprintf("rolebindings/%s role", binding.Name))
+				break
+			}
+		}
+	}
+	return uniqueSortedStrings(dependencies), nil
+}
+
 func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePlatformRole(w, r, rolePlatformAdmin); !ok {
 		return
@@ -414,7 +782,11 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	var req GroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
+		return
+	}
+	if err := validateGroupRequest(req); err != nil {
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	group := groupFromRequest(req)
@@ -432,10 +804,14 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	var req GroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	req.Name = name
+	if err := validateGroupRequest(req); err != nil {
+		writeAuthAdminValidationError(w, err)
+		return
+	}
 	group := groupFromRequest(req)
 	var existing platformv1alpha1.Group
 	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
@@ -458,6 +834,15 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	var existing platformv1alpha1.Group
 	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
 		writeError(w, err)
+		return
+	}
+	dependencies, err := s.groupDeleteDependencies(r.Context(), name)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(dependencies) > 0 {
+		writeAuthAdminDependencyConflict(w, "group", name, dependencies)
 		return
 	}
 	if err := s.client.Delete(r.Context(), &existing); err != nil {
@@ -485,21 +870,21 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	var req RoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	role, err := roleFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	if _, ok := builtInRoleMap()[role.Name]; ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "built-in roles cannot be replaced"})
+		writeAuthAdminValidationError(w, newAuthAdminValidationError("built-in roles cannot be replaced", authAdminFieldError("name", "built-in roles cannot be replaced")))
 		return
 	}
 	configMap, err := roleConfigMap(role)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	if err := s.client.Create(r.Context(), configMap); err != nil {
@@ -515,23 +900,23 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if _, ok := builtInRoleMap()[name]; ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "built-in roles are locked"})
+		writeAuthAdminValidationError(w, newAuthAdminValidationError("built-in roles are locked", authAdminFieldError("name", "built-in roles are locked")))
 		return
 	}
 	var req RoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	req.Name = name
 	role, err := roleFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	configMap, err := roleConfigMap(role)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	var existing corev1.ConfigMap
@@ -554,7 +939,16 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if _, ok := builtInRoleMap()[name]; ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "built-in roles are locked"})
+		writeAuthAdminValidationError(w, newAuthAdminValidationError("built-in roles are locked", authAdminFieldError("name", "built-in roles are locked")))
+		return
+	}
+	dependencies, err := s.roleDeleteDependencies(r.Context(), name)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(dependencies) > 0 {
+		writeAuthAdminDependencyConflict(w, "role", name, dependencies)
 		return
 	}
 	var existing corev1.ConfigMap
@@ -589,6 +983,44 @@ func groupFromRequest(req GroupRequest) *platformv1alpha1.Group {
 		})
 	}
 	return group
+}
+
+func validateGroupRequest(req GroupRequest) error {
+	fields := []authAdminFieldValidationError{}
+	if strings.TrimSpace(req.Name) == "" {
+		fields = append(fields, authAdminFieldError("name", "name is required"))
+	}
+	memberCount := 0
+	for _, member := range req.Members {
+		if strings.TrimSpace(member) != "" {
+			memberCount++
+		}
+	}
+	externalGroupCount := 0
+	for i, external := range req.ExternalGroups {
+		provider := strings.TrimSpace(external.Provider)
+		name := strings.TrimSpace(external.Name)
+		if provider == "" && name == "" {
+			continue
+		}
+		fieldPrefix := fmt.Sprintf("externalGroups[%d]", i)
+		if provider == "" {
+			fields = append(fields, authAdminFieldError(fieldPrefix+".provider", "provider is required"))
+		}
+		if name == "" {
+			fields = append(fields, authAdminFieldError(fieldPrefix+".name", "name is required"))
+		}
+		if provider != "" && name != "" {
+			externalGroupCount++
+		}
+	}
+	if memberCount == 0 && externalGroupCount == 0 {
+		fields = append(fields, authAdminFieldError("members", "at least one member or external group is required"))
+	}
+	if len(fields) > 0 {
+		return newAuthAdminValidationError("group validation failed", fields...)
+	}
+	return nil
 }
 
 func (s *Server) handleListRoleBindings(w http.ResponseWriter, r *http.Request) {
@@ -627,12 +1059,12 @@ func (s *Server) handleCreateRoleBinding(w http.ResponseWriter, r *http.Request)
 	}
 	var req RoleBindingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	binding, err := roleBindingFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	if err := s.client.Create(r.Context(), binding); err != nil {
@@ -649,13 +1081,13 @@ func (s *Server) handleUpdateRoleBinding(w http.ResponseWriter, r *http.Request)
 	name := strings.TrimSpace(r.PathValue("name"))
 	var req RoleBindingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeInvalidAuthAdminRequest(w)
 		return
 	}
 	req.Name = name
 	binding, err := roleBindingFromRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthAdminValidationError(w, err)
 		return
 	}
 	var existing platformv1alpha1.RoleBinding
@@ -689,11 +1121,12 @@ func (s *Server) handleDeleteRoleBinding(w http.ResponseWriter, r *http.Request)
 }
 
 func roleBindingFromRequest(req RoleBindingRequest) (*platformv1alpha1.RoleBinding, error) {
-	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("name is required")
+	fields := validateRoleBindingRequest(req)
+	if len(fields) > 0 {
+		return nil, newAuthAdminValidationError("role binding validation failed", fields...)
 	}
 	binding := &platformv1alpha1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: req.Name},
+		ObjectMeta: metav1.ObjectMeta{Name: strings.TrimSpace(req.Name)},
 		Spec: platformv1alpha1.RoleBindingSpec{
 			DisplayName: req.DisplayName,
 			Scope:       platformv1alpha1.AccessScope(req.Scope),
@@ -717,6 +1150,57 @@ func roleBindingFromRequest(req RoleBindingRequest) (*platformv1alpha1.RoleBindi
 		}
 	}
 	return binding, nil
+}
+
+func validateRoleBindingRequest(req RoleBindingRequest) []authAdminFieldValidationError {
+	fields := []authAdminFieldValidationError{}
+	if strings.TrimSpace(req.Name) == "" {
+		fields = append(fields, authAdminFieldError("name", "name is required"))
+	}
+	scope := strings.TrimSpace(req.Scope)
+	switch scope {
+	case string(platformv1alpha1.AccessScopePlatform):
+		if strings.TrimSpace(req.TenantName) != "" {
+			fields = append(fields, authAdminFieldError("tenantName", "tenantName is only valid when scope is tenant"))
+		}
+	case string(platformv1alpha1.AccessScopeTenant):
+		if strings.TrimSpace(req.TenantName) == "" {
+			fields = append(fields, authAdminFieldError("tenantName", "tenantName is required when scope is tenant"))
+		}
+	default:
+		fields = append(fields, authAdminFieldError("scope", "scope must be platform or tenant"))
+	}
+	subjectCount := 0
+	for i, subject := range req.Subjects {
+		kind := strings.TrimSpace(subject.Kind)
+		name := strings.TrimSpace(subject.Name)
+		if kind == "" && name == "" {
+			continue
+		}
+		fieldPrefix := fmt.Sprintf("subjects[%d]", i)
+		if kind != string(platformv1alpha1.SubjectKindUser) && kind != string(platformv1alpha1.SubjectKindGroup) {
+			fields = append(fields, authAdminFieldError(fieldPrefix+".kind", "subject kind must be User or Group"))
+		}
+		if name == "" {
+			fields = append(fields, authAdminFieldError(fieldPrefix+".name", "subject name is required"))
+		}
+		if (kind == string(platformv1alpha1.SubjectKindUser) || kind == string(platformv1alpha1.SubjectKindGroup)) && name != "" {
+			subjectCount++
+		}
+	}
+	if subjectCount == 0 {
+		fields = append(fields, authAdminFieldError("subjects", "at least one subject is required"))
+	}
+	roleCount := 0
+	for _, role := range req.Roles {
+		if strings.TrimSpace(role) != "" {
+			roleCount++
+		}
+	}
+	if roleCount == 0 {
+		fields = append(fields, authAdminFieldError("roles", "at least one role is required"))
+	}
+	return fields
 }
 
 func (s *Server) authRoles(ctx context.Context) ([]RoleSummary, error) {
@@ -779,20 +1263,26 @@ func roleFromRequest(req RoleRequest) (RoleSummary, error) {
 		Scope:       strings.TrimSpace(req.Scope),
 		Permissions: uniquePermissionNames(req.Permissions),
 	}
+	fields := []authAdminFieldValidationError{}
 	if role.Name == "" {
-		return role, fmt.Errorf("name is required")
+		fields = append(fields, authAdminFieldError("name", "name is required"))
 	}
 	if role.Scope != string(platformv1alpha1.AccessScopePlatform) && role.Scope != string(platformv1alpha1.AccessScopeTenant) {
-		return role, fmt.Errorf("scope must be platform or tenant")
+		fields = append(fields, authAdminFieldError("scope", "scope must be platform or tenant"))
 	}
 	if len(role.Permissions) == 0 {
-		return role, fmt.Errorf("at least one permission is required")
+		fields = append(fields, authAdminFieldError("permissions", "at least one permission is required"))
 	}
-	allowed := allowedRolePermissions(role.Scope)
-	for _, permission := range role.Permissions {
-		if _, ok := allowed[permission]; !ok {
-			return role, fmt.Errorf("permission %q is not valid for %s roles", permission, role.Scope)
+	if role.Scope == string(platformv1alpha1.AccessScopePlatform) || role.Scope == string(platformv1alpha1.AccessScopeTenant) {
+		allowed := allowedRolePermissions(role.Scope)
+		for _, permission := range role.Permissions {
+			if _, ok := allowed[permission]; !ok {
+				fields = append(fields, authAdminFieldError("permissions", fmt.Sprintf("permission %q is not valid for %s roles", permission, role.Scope)))
+			}
 		}
+	}
+	if len(fields) > 0 {
+		return role, newAuthAdminValidationError("role validation failed", fields...)
 	}
 	return role, nil
 }
@@ -808,6 +1298,24 @@ func allowedRolePermissions(scope string) map[string]struct{} {
 }
 
 func uniquePermissionNames(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func uniqueSortedStrings(values []string) []string {
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))
 	for _, value := range values {

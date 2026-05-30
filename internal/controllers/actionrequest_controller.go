@@ -174,6 +174,13 @@ func (r *ActionRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Operation identity/state is now persisted and it is safe to execute side effects.
 		}
 		if preparedAction.Status.OperationState == actionOperationStateApplied {
+			handled, err := r.reconcileInFlightAction(ctx, req.NamespacedName, resolved, &preparedAction)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if handled {
+				return ctrl.Result{}, nil
+			}
 			return ctrl.Result{}, nil
 		}
 		if preparedAction.Status.OperationState != actionOperationStatePrepared {
@@ -266,12 +273,17 @@ func (r *ActionRequestReconciler) executeCNPGAction(ctx context.Context, service
 		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
 	}
 	namespace := actionRuntimeNamespace(serviceContext)
-	name := fmt.Sprintf("%s-%s", serviceContext.Instance.Name, actionRequest.Name)
+	operationRef := &platformv1alpha1.TypedObjectReference{
+		APIVersion: "postgresql.cnpg.io/v1",
+		Kind:       "Backup",
+		Name:       fmt.Sprintf("%s-%s", serviceContext.Instance.Name, actionRequest.Name),
+		Namespace:  namespace,
+	}
 	backup := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "postgresql.cnpg.io/v1",
 		"kind":       "Backup",
 		"metadata": map[string]any{
-			"name":      name,
+			"name":      operationRef.Name,
 			"namespace": namespace,
 			"labels": map[string]any{
 				"servicer.io/managed-by": "servicer",
@@ -284,15 +296,143 @@ func (r *ActionRequestReconciler) executeCNPGAction(ctx context.Context, service
 			},
 		},
 	}}
-	if err := r.Create(ctx, backup); err != nil && !apierrors.IsAlreadyExists(err) {
-		return adapters.ActionExecutionResult{}, err
+	createErr := r.Create(ctx, backup)
+	if createErr != nil && !apierrors.IsAlreadyExists(createErr) {
+		return adapters.ActionExecutionResult{}, createErr
+	}
+	if apierrors.IsAlreadyExists(createErr) {
+		backup = &unstructured.Unstructured{}
+		backup.SetAPIVersion(operationRef.APIVersion)
+		backup.SetKind(operationRef.Kind)
+		if err := r.Get(ctx, types.NamespacedName{Name: operationRef.Name, Namespace: operationRef.Namespace}, backup); err != nil {
+			if apierrors.IsNotFound(err) {
+				return adapters.ActionExecutionResult{
+					Phase:        "Queued",
+					OperationRef: operationRef,
+					Message:      fmt.Sprintf("CNPG Backup %s/%s request accepted; waiting for Backup object.", operationRef.Namespace, operationRef.Name),
+					Retryable:    true,
+				}, nil
+			}
+			return adapters.ActionExecutionResult{}, err
+		}
+	}
+	result := cnpgBackupExecutionResult(backup, operationRef)
+	if createErr == nil && (result.Phase == "Queued" || result.Phase == "Running") {
+		result.Message = fmt.Sprintf("CNPG Backup %s/%s created; waiting for completion.", operationRef.Namespace, operationRef.Name)
+	}
+	return result, nil
+}
+
+func (r *ActionRequestReconciler) reconcileInFlightAction(ctx context.Context, key types.NamespacedName, resolved resolvedActionRequest, actionRequest *platformv1alpha1.ActionRequest) (bool, error) {
+	if resolved.adapter.Contract().RuntimeDriver != "cnpg" || actionRequest.Spec.Action != string(adapters.ActionBackup) {
+		return false, nil
+	}
+	operationRef := actionRequest.Status.OperationRef
+	if operationRef == nil || operationRef.Kind != "Backup" || operationRef.APIVersion != "postgresql.cnpg.io/v1" || operationRef.Name == "" || operationRef.Namespace == "" {
+		return false, nil
+	}
+
+	backup := &unstructured.Unstructured{}
+	backup.SetAPIVersion(operationRef.APIVersion)
+	backup.SetKind(operationRef.Kind)
+	if err := r.Get(ctx, types.NamespacedName{Name: operationRef.Name, Namespace: operationRef.Namespace}, backup); err != nil {
+		if apierrors.IsNotFound(err) {
+			_, _, patchErr := r.patchActionRequestStatus(ctx, key, func(current *platformv1alpha1.ActionRequest) {
+				if current.Status.Phase == "Succeeded" || current.Status.Phase == "Failed" || current.Status.Phase == "Cancelled" {
+					return
+				}
+				r.applyExecutionStatus(current, adapters.ActionExecutionResult{
+					Phase:        "Queued",
+					OperationRef: operationRef,
+					Message:      fmt.Sprintf("CNPG Backup %s/%s is not observed yet; retrying.", operationRef.Namespace, operationRef.Name),
+					Retryable:    true,
+				})
+				current.Status.OperationState = actionOperationStateApplied
+				current.Status.ObservedGeneration = current.Generation
+			})
+			return true, patchErr
+		}
+		return true, err
+	}
+
+	result := cnpgBackupExecutionResult(backup, operationRef)
+	_, _, patchErr := r.patchActionRequestStatus(ctx, key, func(current *platformv1alpha1.ActionRequest) {
+		if current.Status.Phase == "Succeeded" || current.Status.Phase == "Failed" || current.Status.Phase == "Cancelled" {
+			return
+		}
+		r.applyExecutionStatus(current, result)
+		switch current.Status.Phase {
+		case "Succeeded", "Failed", "Cancelled":
+			current.Status.OperationState = actionOperationStateComplete
+		default:
+			current.Status.OperationState = actionOperationStateApplied
+		}
+		current.Status.ObservedGeneration = current.Generation
+	})
+	return true, patchErr
+}
+
+func cnpgBackupExecutionResult(backup *unstructured.Unstructured, operationRef *platformv1alpha1.TypedObjectReference) adapters.ActionExecutionResult {
+	phase, _, _ := unstructured.NestedString(backup.Object, "status", "phase")
+	phase = strings.ToLower(strings.TrimSpace(phase))
+	errorText := firstNonEmptyString(strings.TrimSpace(nestedString(backup.Object, "status", "error")), strings.TrimSpace(nestedString(backup.Object, "status", "commandError")), strings.TrimSpace(nestedString(backup.Object, "status", "failure")), strings.TrimSpace(nestedString(backup.Object, "status", "message")))
+
+	switch phase {
+	case "completed", "succeeded", "success", "done":
+		return adapters.ActionExecutionResult{
+			Phase:        "Succeeded",
+			OperationRef: operationRef,
+			Message:      fmt.Sprintf("CNPG Backup %s/%s completed successfully.", operationRef.Namespace, operationRef.Name),
+			Retryable:    false,
+		}
+	case "failed", "error":
+		if errorText == "" {
+			errorText = "backup reported a failed phase"
+		}
+		return adapters.ActionExecutionResult{
+			Phase:        "Failed",
+			OperationRef: operationRef,
+			Message:      fmt.Sprintf("CNPG Backup %s/%s failed: %s.", operationRef.Namespace, operationRef.Name, errorText),
+			Retryable:    true,
+		}
+	}
+
+	if errorText != "" {
+		return adapters.ActionExecutionResult{
+			Phase:        "Failed",
+			OperationRef: operationRef,
+			Message:      fmt.Sprintf("CNPG Backup %s/%s failed: %s.", operationRef.Namespace, operationRef.Name, errorText),
+			Retryable:    true,
+		}
+	}
+	if phase == "" || phase == "pending" || phase == "queued" || phase == "starting" {
+		return adapters.ActionExecutionResult{
+			Phase:        "Queued",
+			OperationRef: operationRef,
+			Message:      fmt.Sprintf("CNPG Backup %s/%s is queued.", operationRef.Namespace, operationRef.Name),
+			Retryable:    true,
+		}
 	}
 	return adapters.ActionExecutionResult{
-		Phase:        "Succeeded",
-		OperationRef: &platformv1alpha1.TypedObjectReference{APIVersion: "postgresql.cnpg.io/v1", Kind: "Backup", Name: name, Namespace: namespace},
-		Message:      fmt.Sprintf("CNPG Backup %s/%s created.", namespace, name),
+		Phase:        "Running",
+		OperationRef: operationRef,
+		Message:      fmt.Sprintf("CNPG Backup %s/%s is running (phase=%s).", operationRef.Namespace, operationRef.Name, phase),
 		Retryable:    true,
-	}, nil
+	}
+}
+
+func nestedString(obj map[string]any, fields ...string) string {
+	value, _, _ := unstructured.NestedString(obj, fields...)
+	return value
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (r *ActionRequestReconciler) executeNATSAction(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {

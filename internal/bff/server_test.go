@@ -424,6 +424,234 @@ func TestCreateUserCreatesLocalAuthSecret(t *testing.T) {
 	}
 }
 
+func TestCreateOIDCAuthProviderRequiresClientSecret(t *testing.T) {
+	server := testServer(t)
+	body := []byte(`{
+		"name":"corp",
+		"displayName":"Corporate OIDC",
+		"type":"oidc",
+		"enabled":true,
+		"oidcIssuerUrl":"https://issuer.example.com",
+		"oidcClientId":"servicer"
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/auth/providers", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Servicer-User", "admin@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", response.Code, response.Body.String())
+	}
+	var validation authAdminValidationResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &validation); err != nil {
+		t.Fatalf("decode validation response: %v", err)
+	}
+	if validation.Code != "validation_failed" || !hasFieldError(validation.FieldErrors, "oidcClientSecret") {
+		t.Fatalf("expected OIDC client secret validation error, got %#v", validation)
+	}
+	var provider platformv1alpha1.AuthProvider
+	if err := server.client.Get(request.Context(), types.NamespacedName{Name: "corp"}, &provider); err == nil {
+		t.Fatalf("expected auth provider not to be created")
+	}
+}
+
+func TestUpdateUserEnablesLocalAuthWithPassword(t *testing.T) {
+	server := testServer(t)
+	createExternalOnlyTestUser(t, server, "carol")
+	body := []byte(`{
+		"displayName":"Carol Singer",
+		"email":"carol@example.com",
+		"localAuthEnabled":true,
+		"password":"new-secret"
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/auth/users/carol", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Servicer-User", "admin@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var user platformv1alpha1.User
+	if err := server.client.Get(request.Context(), types.NamespacedName{Name: "carol"}, &user); err != nil {
+		t.Fatalf("expected user to be updated: %v", err)
+	}
+	if user.Spec.LocalAuth == nil || user.Spec.LocalAuth.PasswordHashSecretRef.Name != localUserSecretName("carol") {
+		t.Fatalf("expected local auth secret ref, got %#v", user.Spec.LocalAuth)
+	}
+	var secret corev1.Secret
+	key := types.NamespacedName{Name: localUserSecretName("carol"), Namespace: authSecretNamespace}
+	if err := server.client.Get(request.Context(), key, &secret); err != nil {
+		t.Fatalf("expected secret to be created: %v", err)
+	}
+	if len(secret.Data["passwordHash"]) == 0 {
+		t.Fatalf("expected password hash in secret, got %#v", secret.Data)
+	}
+}
+
+func TestUpdateUserEnablingLocalAuthRequiresPassword(t *testing.T) {
+	server := testServer(t)
+	createExternalOnlyTestUser(t, server, "dana")
+	body := []byte(`{
+		"displayName":"Dana Scully",
+		"email":"dana@example.com",
+		"localAuthEnabled":true
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/auth/users/dana", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Servicer-User", "admin@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", response.Code, response.Body.String())
+	}
+	var validation authAdminValidationResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &validation); err != nil {
+		t.Fatalf("decode validation response: %v", err)
+	}
+	if validation.Code != "validation_failed" || !hasFieldError(validation.FieldErrors, "password") {
+		t.Fatalf("expected password validation error, got %#v", validation)
+	}
+	var user platformv1alpha1.User
+	if err := server.client.Get(request.Context(), types.NamespacedName{Name: "dana"}, &user); err != nil {
+		t.Fatalf("expected user to remain: %v", err)
+	}
+	if user.Spec.LocalAuth != nil {
+		t.Fatalf("expected local auth to remain disabled, got %#v", user.Spec.LocalAuth)
+	}
+	var secret corev1.Secret
+	key := types.NamespacedName{Name: localUserSecretName("dana"), Namespace: authSecretNamespace}
+	if err := server.client.Get(request.Context(), key, &secret); err == nil {
+		t.Fatalf("expected no password secret to be created")
+	}
+}
+
+func TestUpdateUserDisablesLocalAuth(t *testing.T) {
+	server := testServer(t)
+	secretName := localUserSecretName("erin")
+	if err := server.client.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: authSecretNamespace},
+		Data:       map[string][]byte{"passwordHash": []byte("existing-hash")},
+	}); err != nil {
+		t.Fatalf("create password secret: %v", err)
+	}
+	if err := server.client.Create(context.Background(), &platformv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{Name: "erin"},
+		Spec: platformv1alpha1.UserSpec{
+			DisplayName: "Erin Carter",
+			Email:       "erin@example.com",
+			LocalAuth: &platformv1alpha1.LocalAuthSpec{
+				Enabled: true,
+				PasswordHashSecretRef: platformv1alpha1.NamespacedObjectReference{
+					Name:      secretName,
+					Namespace: authSecretNamespace,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	body := []byte(`{
+		"displayName":"Erin Carter",
+		"email":"erin@example.com",
+		"localAuthEnabled":false,
+		"externalIdentities":[{"provider":"oidc","subject":"erin-sub"}]
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/auth/users/erin", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Servicer-User", "admin@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var user platformv1alpha1.User
+	if err := server.client.Get(request.Context(), types.NamespacedName{Name: "erin"}, &user); err != nil {
+		t.Fatalf("expected user to be updated: %v", err)
+	}
+	if user.Spec.LocalAuth != nil {
+		t.Fatalf("expected local auth to be disabled, got %#v", user.Spec.LocalAuth)
+	}
+	if len(user.Spec.ExternalIdentities) != 1 || user.Spec.ExternalIdentities[0].Subject != "erin-sub" {
+		t.Fatalf("expected external identity to remain configured, got %#v", user.Spec.ExternalIdentities)
+	}
+}
+
+func TestUpdateUserWithoutPriorLocalAuthKeepsItDisabled(t *testing.T) {
+	server := testServer(t)
+	createExternalOnlyTestUser(t, server, "frank")
+	body := []byte(`{
+		"displayName":"Frank Black",
+		"email":"frank@example.com",
+		"localAuthEnabled":false,
+		"externalIdentities":[{"provider":"oidc","subject":"frank-updated"}]
+	}`)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/auth/users/frank", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Servicer-User", "admin@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var user platformv1alpha1.User
+	if err := server.client.Get(request.Context(), types.NamespacedName{Name: "frank"}, &user); err != nil {
+		t.Fatalf("expected user to be updated: %v", err)
+	}
+	if user.Spec.LocalAuth != nil {
+		t.Fatalf("expected local auth to remain disabled, got %#v", user.Spec.LocalAuth)
+	}
+	if len(user.Spec.ExternalIdentities) != 1 || user.Spec.ExternalIdentities[0].Subject != "frank-updated" {
+		t.Fatalf("expected external identity update, got %#v", user.Spec.ExternalIdentities)
+	}
+	var secret corev1.Secret
+	key := types.NamespacedName{Name: localUserSecretName("frank"), Namespace: authSecretNamespace}
+	if err := server.client.Get(request.Context(), key, &secret); err == nil {
+		t.Fatalf("expected no password secret to be created")
+	}
+}
+
+func createExternalOnlyTestUser(t *testing.T, server *Server, name string) {
+	t.Helper()
+	if err := server.client.Create(context.Background(), &platformv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: platformv1alpha1.UserSpec{
+			DisplayName: name,
+			Email:       name + "@example.com",
+			ExternalIdentities: []platformv1alpha1.ExternalIdentitySpec{{
+				ProviderRef: platformv1alpha1.LocalObjectReference{Name: "oidc"},
+				Subject:     name + "-sub",
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("create external-only user: %v", err)
+	}
+}
+
+func hasFieldError(fields []authAdminFieldValidationError, field string) bool {
+	for _, candidate := range fields {
+		if candidate.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
 func TestUpdateProductRequestChangesPlan(t *testing.T) {
 	server := testServer(t)
 	body := []byte(`{"name":"session-cache","projectName":"acme-prod","serviceClass":"valkey","servicePlan":"valkey-replicated","version":"8.0"}`)
