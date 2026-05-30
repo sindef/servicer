@@ -3,7 +3,7 @@ kind: Namespace
 metadata:
   name: servicer-system
   labels:
-    platform.mnorris.dev/profile: platform
+    platform.servicer.io/profile: platform
 ---
 apiVersion: v1
 kind: Secret

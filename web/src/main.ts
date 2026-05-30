@@ -1,17 +1,8 @@
 import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
-import OverviewPage from './pages/OverviewPage.vue'
-import CatalogPage from './pages/CatalogPage.vue'
-import InstancesPage from './pages/InstancesPage.vue'
-import InstanceDetailPage from './pages/InstanceDetailPage.vue'
-import NamespaceClaimsPage from './pages/NamespaceClaimsPage.vue'
-import NamespaceClaimDetailPage from './pages/NamespaceClaimDetailPage.vue'
-import TenancyPage from './pages/TenancyPage.vue'
-import AuditPage from './pages/AuditPage.vue'
-import AdminPage from './pages/AdminPage.vue'
-import LoginPage from './pages/LoginPage.vue'
 import {
+  authState,
   authSession,
   canViewAdminShell,
   canViewAudit,
@@ -24,22 +15,23 @@ import './styles.css'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/login', name: 'login', component: LoginPage, meta: { publicLayout: true } },
-    { path: '/', name: 'overview', component: OverviewPage },
-    { path: '/catalog', name: 'catalog', component: CatalogPage },
-    { path: '/instances', name: 'instances', component: InstancesPage, meta: { requireCapability: 'instances' } },
-    { path: '/instances/:name', name: 'instance-detail', component: InstanceDetailPage, props: true, meta: { requireCapability: 'instances' } },
-    { path: '/namespace-claims', name: 'namespace-claims', component: NamespaceClaimsPage, meta: { requireCapability: 'instances' } },
-    { path: '/namespace-claims/:name', name: 'namespace-claim-detail', component: NamespaceClaimDetailPage, props: true, meta: { requireCapability: 'instances' } },
-    { path: '/tenancy', name: 'tenancy', component: TenancyPage, meta: { requireCapability: 'tenancy' } },
-    { path: '/audit', name: 'audit', component: AuditPage, meta: { requireCapability: 'audit' } },
-    { path: '/admin', name: 'admin', component: AdminPage, meta: { requireCapability: 'admin' } }
+    { path: '/login', name: 'login', component: () => import('./pages/LoginPage.vue'), meta: { publicLayout: true } },
+    { path: '/', name: 'overview', component: () => import('./pages/OverviewPage.vue') },
+    { path: '/catalog', name: 'catalog', component: () => import('./pages/CatalogPage.vue') },
+    { path: '/instances', name: 'instances', component: () => import('./pages/InstancesPage.vue'), meta: { requireCapability: 'instances' } },
+    { path: '/instances/:name', name: 'instance-detail', component: () => import('./pages/InstanceDetailPage.vue'), props: true, meta: { requireCapability: 'instances' } },
+    { path: '/namespace-claims', name: 'namespace-claims', component: () => import('./pages/NamespaceClaimsPage.vue'), meta: { requireCapability: 'instances' } },
+    { path: '/namespace-claims/:name', name: 'namespace-claim-detail', component: () => import('./pages/NamespaceClaimDetailPage.vue'), props: true, meta: { requireCapability: 'instances' } },
+    { path: '/tenancy', name: 'tenancy', component: () => import('./pages/TenancyPage.vue'), meta: { requireCapability: 'tenancy' } },
+    { path: '/audit', name: 'audit', component: () => import('./pages/AuditPage.vue'), meta: { requireCapability: 'audit' } },
+    { path: '/admin', name: 'admin', component: () => import('./pages/AdminPage.vue'), meta: { requireCapability: 'admin' } }
   ]
 })
 
-await initializeAuth()
-
 router.beforeEach((to) => {
+  if (authState.value === 'loading') {
+    return true
+  }
   const authenticated = authSession.value?.authenticated === true
   if (to.name === 'login') {
     if (authenticated) {
@@ -63,6 +55,7 @@ router.beforeEach((to) => {
 })
 
 createApp(App).use(router).mount('#app')
+void initializeAuth()
 
 function routeAllowed(capability: unknown) {
   switch (capability) {

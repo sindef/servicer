@@ -27,7 +27,7 @@ cleanup() {
 trap cleanup EXIT
 
 kubectl create namespace "${YUGABYTE_OPERATOR_NAMESPACE}" --dry-run=client -o yaml \
-  | kubectl label --local -f - platform.mnorris.dev/profile=platform --dry-run=client -o yaml \
+  | kubectl label --local -f - platform.servicer.io/profile=platform --dry-run=client -o yaml \
   | kubectl apply -f - >/dev/null
 
 git clone --depth 1 --branch "${YUGABYTE_OPERATOR_REF}" https://github.com/yugabyte/yugabyte-k8s-operator "${workdir}/yugabyte-k8s-operator" >/dev/null

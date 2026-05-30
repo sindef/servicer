@@ -1,61 +1,28 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { dump, load } from 'js-yaml'
 import { api, type CredentialDetail, type ProductRequest } from '../api'
+import { authConfig, beginOIDCLogin } from '../auth'
 import { useApi } from '../composables/useApi'
 import StatusPill from '../components/StatusPill.vue'
-import YamlEditor from '../components/YamlEditor.vue'
+import {
+  buildProductParameters,
+  type NatsConsumerForm,
+  type NatsCredentialForm,
+  type NatsStreamForm,
+  type ProductParameterForm,
+  type VmDiskForm,
+  type VmNetworkForm
+} from '../products/parameters'
 
-type NatsStreamForm = {
-  id: number
-  name: string
-  subjects: string
-  storage: string
-  retention: string
-  maxAge: string
-}
-
-type NatsConsumerForm = {
-  id: number
-  name: string
-  stream: string
-  filterSubjects: string
-  ackPolicy: string
-}
-
-type NatsCredentialForm = {
-  id: number
-  name: string
-  username: string
-  publish: string
-  subscribe: string
-  allowResponses: boolean
-}
-
-type VmNetworkForm = {
-  id: number
-  name: string
-  networkType: 'pod' | 'multus'
-  bindingMethod: 'masquerade' | 'bridge' | 'sriov'
-  multusNetworkName: string
-  model: string
-}
-
-type VmDiskForm = {
-  id: number
-  name: string
-  image: string
-  size: string
-  storageClass: string
-  bus: string
-}
+const YamlEditor = defineAsyncComponent(() => import('../components/YamlEditor.vue'))
 
 const props = defineProps<{ name: string }>()
-const { data, loading, error, reload } = useApi(() => api.instance(props.name), {
+const { data, loading, error, reload } = useApi((signal) => api.instance(props.name, { signal }), {
   refreshMs: 3000,
   retainOnSilentError: true
 })
-const catalog = useApi(api.catalog)
+const catalog = useApi((signal) => api.catalog({ signal }))
 const nextNatsRowId = ref(1)
 
 const endpointRows = computed(() => Object.entries(data.value?.endpoints || {}))
@@ -128,7 +95,7 @@ const updateForm = reactive({
   servicePlan: '',
   version: ''
 })
-const parameterForm = reactive({
+const parameterForm = reactive<ProductParameterForm>({
   replicas: 3,
   databaseName: '',
   cpu: '2',
@@ -163,7 +130,17 @@ const parameterForm = reactive({
   externalDnsHostname: '',
   natsStreams: [] as NatsStreamForm[],
   natsConsumers: [] as NatsConsumerForm[],
-  natsAppCredentials: [] as NatsCredentialForm[]
+  natsAppCredentials: [] as NatsCredentialForm[],
+  argoSourceType: 'manifests',
+  argoRepoRef: '',
+  argoRepoURL: '',
+  argoPath: '',
+  argoTargetRevision: 'HEAD',
+  argoTargetNamespace: '',
+  argoSyncPolicy: 'manual',
+  argoCreateNamespace: false,
+  argoHelmReleaseName: '',
+  argoHelmValuesYAML: ''
 })
 function defaultNamespaceAccessUrl() {
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
@@ -199,7 +176,12 @@ const actionDownloading = ref<string | null>(null)
 const credentialLoading = ref<string | null>(null)
 const credentialDetail = ref<CredentialDetail | null>(null)
 const credentialsOpen = ref(false)
+const credentialConfirmOpen = ref(false)
+const credentialWarningAcknowledged = ref(false)
+const pendingCredential = ref<{ name: string; url?: string } | null>(null)
 const credentialError = ref<string | null>(null)
+const revealedCredentialFields = ref<string[]>([])
+const revealAutoHideTimer = ref<number | null>(null)
 const backupConfigOpen = ref(false)
 const showCapabilities = ref(false)
 const formMessage = ref<string | null>(null)
@@ -263,13 +245,6 @@ function createVmDisk(values: Partial<Omit<VmDiskForm, 'id'>> = {}): VmDiskForm 
     storageClass: values.storageClass || '',
     bus: values.bus || 'virtio'
   }
-}
-
-function csvList(value: string) {
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
 }
 
 function addNatsStream() {
@@ -479,203 +454,24 @@ function applyParameters(parameters: Record<string, unknown>) {
   }
 }
 
-function compactParams(values: Record<string, unknown>) {
-  return Object.fromEntries(
-    Object.entries(values).filter(([, value]) => {
-      if (Array.isArray(value)) {
-        return value.length > 0
-      }
-      return value !== '' && value !== undefined && value !== null
-    })
-  )
-}
-
 function buildUpdateParameters() {
-  switch (data.value?.productClass) {
-    case 'namespace':
-      return {
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        pods: parameterForm.pods,
-        defaultDenyIngress: parameterForm.defaultDenyIngress,
-        labels: { 'platform.mnorris.dev/profile': 'workload' }
-      }
-    case 'postgresql': {
-      const backupObjectStore = parameterForm.backupBucket && parameterForm.backupCredentialsSecret
-        ? compactParams({
-            endpointUrl: parameterForm.backupEndpoint,
-            bucket: parameterForm.backupBucket,
-            path: parameterForm.backupPath,
-            region: parameterForm.backupRegion,
-            credentialsSecret: parameterForm.backupCredentialsSecret
-          })
-        : undefined
-      const backup = backupObjectStore
-        ? compactParams({
-            objectStore: backupObjectStore,
-            schedule: parameterForm.backupSchedule,
-            retention: parameterForm.backupRetention
-          })
-        : undefined
-      return compactParams({
-        instances: parameterForm.replicas,
-        databaseName: parameterForm.databaseName,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        backup,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    }
-    case 'mysql':
-      return compactParams({
-        replicas: parameterForm.replicas,
-        databaseName: parameterForm.databaseName,
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        backupProfile: parameterForm.backupProfile,
-        replicationMode: updateForm.servicePlan === 'mysql-galera' ? 'galera' : updateForm.servicePlan === 'mysql-active-passive' ? 'active-passive' : 'single-primary',
-        primaryCluster: parameterForm.primaryCluster,
-        standbyClusters: parameterForm.standbyClusters
-          .split(',')
-          .map((cluster) => cluster.trim())
-          .filter(Boolean),
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'nats':
-      return compactParams({
-        replicas: parameterForm.replicas,
-        jetstream: data.value.planName === 'nats-jetstream' || data.value.planName === 'nats-geo',
-        streams: parameterForm.natsStreams
-          .map((stream) =>
-            compactParams({
-              name: stream.name.trim(),
-              subjects: csvList(stream.subjects),
-              storage: stream.storage,
-              retention: stream.retention,
-              maxAge: stream.maxAge
-            })
-          )
-          .filter((stream) => typeof stream.name === 'string' && stream.name.length > 0),
-        consumers: parameterForm.natsConsumers
-          .map((consumer) =>
-            compactParams({
-              name: consumer.name.trim(),
-              stream: consumer.stream.trim(),
-              filterSubjects: csvList(consumer.filterSubjects),
-              ackPolicy: consumer.ackPolicy
-            })
-          )
-          .filter(
-            (consumer) =>
-              typeof consumer.name === 'string' &&
-              consumer.name.length > 0 &&
-              typeof consumer.stream === 'string' &&
-              consumer.stream.length > 0
-          ),
-        appCredentials: parameterForm.natsAppCredentials
-          .map((credential) =>
-            compactParams({
-              name: credential.name.trim(),
-              username: credential.username.trim(),
-              permissions: compactParams({
-                publish: csvList(credential.publish),
-                subscribe: csvList(credential.subscribe),
-                allowResponses: credential.allowResponses ? true : undefined
-              })
-            })
-          )
-          .filter((credential) => typeof credential.name === 'string' && credential.name.length > 0),
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        maxPayload: parameterForm.maxPayload,
-        memoryLimit: parameterForm.memoryLimit,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'valkey':
-      return compactParams({
-        replicas: parameterForm.replicas,
-        memoryProfile: parameterForm.memoryProfile,
-        memoryLimit: parameterForm.memoryLimit,
-        persistence: parameterForm.persistence,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        maxMemoryPolicy: parameterForm.maxMemoryPolicy,
-        primaryCluster: parameterForm.primaryCluster,
-        standbyClusters: parameterForm.standbyClusters
-          .split(',')
-          .map((cluster) => cluster.trim())
-          .filter(Boolean),
-        maxReplicationLagSeconds: parameterForm.maxReplicationLagSeconds,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'yugabyte':
-      return compactParams({
-        tserverReplicas: parameterForm.replicas,
-        masterReplicas: parameterForm.replicas,
-        databaseName: parameterForm.databaseName,
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        storageSize: parameterForm.storageSize,
-        storageClass: parameterForm.storageClass,
-        backupProfile: parameterForm.backupProfile,
-        primaryCluster: parameterForm.primaryCluster,
-        standbyClusters: parameterForm.standbyClusters
-          .split(',')
-          .map((cluster) => cluster.trim())
-          .filter(Boolean),
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'virtual-machine':
-      return compactParams({
-        image: parameterForm.vmImage,
-        workloadType: parameterForm.vmWorkloadType,
-        poolReplicas: parameterForm.vmWorkloadType === 'vmp' ? parameterForm.vmPoolReplicas : undefined,
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        runStrategy: parameterForm.vmRunStrategy,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        networks: parameterForm.vmNetworks
-          .map((network) =>
-            compactParams({
-              name: network.name.trim(),
-              type: network.networkType,
-              bindingMethod: network.bindingMethod,
-              multusNetworkName: network.networkType === 'multus' ? network.multusNetworkName.trim() : undefined,
-              model: network.model.trim()
-            })
-          )
-          .filter((network) => typeof network.name === 'string' && network.name.length > 0),
-        disks: parameterForm.vmDisks
-          .map((disk) =>
-            compactParams({
-              name: disk.name.trim(),
-              image: disk.image.trim(),
-              size: disk.size.trim(),
-              storageClass: disk.storageClass.trim(),
-              bus: disk.bus.trim()
-            })
-          )
-          .filter(
-            (disk) =>
-              typeof disk.name === 'string' &&
-              disk.name.length > 0 &&
-              typeof disk.image === 'string' &&
-              disk.image.length > 0 &&
-              typeof disk.size === 'string' &&
-              disk.size.length > 0
-          )
-      })
-    default:
-      return undefined
+  if (!data.value) {
+    return undefined
   }
+  const submissionForm: ProductParameterForm = {
+    ...parameterForm,
+    standbyClusters: Array.isArray(parameterForm.standbyClusters)
+      ? parameterForm.standbyClusters
+      : parameterForm.standbyClusters
+          .split(',')
+          .map((cluster) => cluster.trim())
+          .filter(Boolean)
+  }
+  return buildProductParameters({
+    serviceClass: data.value.productClass,
+    servicePlan: updateForm.servicePlan,
+    form: submissionForm
+  })
 }
 
 function openYamlEditor() {
@@ -838,6 +634,17 @@ async function downloadKubeconfig(actionName: string, url: string) {
 }
 
 async function revealCredential(name: string, url?: string) {
+  pendingCredential.value = { name, url }
+  credentialWarningAcknowledged.value = false
+  credentialConfirmOpen.value = true
+}
+
+async function confirmRevealCredential() {
+  if (!data.value || !pendingCredential.value) {
+    return
+  }
+  const { name, url } = pendingCredential.value
+  credentialConfirmOpen.value = false
   if (!data.value) {
     return
   }
@@ -848,13 +655,104 @@ async function revealCredential(name: string, url?: string) {
   credentialError.value = null
   try {
     credentialDetail.value = await api.credential(revealUrl)
+    revealedCredentialFields.value = []
     credentialsOpen.value = true
+    armCredentialAutoHide()
   } catch (err) {
     credentialError.value = err instanceof Error ? err.message : 'Credential retrieval failed'
   } finally {
     credentialLoading.value = null
+    pendingCredential.value = null
   }
 }
+
+function closeCredentialModal() {
+  credentialsOpen.value = false
+  credentialDetail.value = null
+  revealedCredentialFields.value = []
+  clearCredentialAutoHide()
+}
+
+function armCredentialAutoHide() {
+  clearCredentialAutoHide()
+  revealAutoHideTimer.value = window.setTimeout(() => {
+    closeCredentialModal()
+  }, 60000)
+}
+
+function clearCredentialAutoHide() {
+  if (revealAutoHideTimer.value !== null) {
+    window.clearTimeout(revealAutoHideTimer.value)
+    revealAutoHideTimer.value = null
+  }
+}
+
+function maskCredentialValue(value: string) {
+  if (!value) {
+    return ''
+  }
+  return '•'.repeat(Math.min(Math.max(value.length, 8), 24))
+}
+
+function credentialFieldRevealed(key: string) {
+  return revealedCredentialFields.value.includes(key)
+}
+
+function toggleCredentialField(key: string) {
+  if (credentialFieldRevealed(key)) {
+    revealedCredentialFields.value = revealedCredentialFields.value.filter((entry) => entry !== key)
+  } else {
+    revealedCredentialFields.value = [...revealedCredentialFields.value, key]
+  }
+  armCredentialAutoHide()
+}
+
+async function downloadCredential() {
+  if (!data.value || !credentialDetail.value) {
+    return
+  }
+  try {
+    const downloadUrl =
+      `/api/instances/${encodeURIComponent(data.value.name)}/credentials/` +
+      `${encodeURIComponent(credentialDetail.value.namespace)}/${encodeURIComponent(credentialDetail.value.name)}/download`
+    const blob = await api.downloadKubeconfig(downloadUrl)
+    const objectUrl = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = objectUrl
+    anchor.download = `${credentialDetail.value.name}.credentials.json`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(objectUrl)
+  } catch (err) {
+    credentialError.value = err instanceof Error ? err.message : 'Credential download failed'
+  }
+}
+
+function triggerCredentialReauth() {
+  if (authConfig.value?.credentialRevealReauthPath) {
+    window.location.assign(authConfig.value.credentialRevealReauthPath)
+    return
+  }
+  beginOIDCLogin(undefined, window.location.pathname + window.location.search)
+}
+
+const credentialReauthSupported = computed(() => Boolean(authConfig.value?.credentialRevealReauthPath))
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    closeCredentialModal()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onBeforeUnmount(() => {
+  clearCredentialAutoHide()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+})
 </script>
 
 <template>
@@ -1221,6 +1119,41 @@ async function revealCredential(name: string, url?: string) {
   </template>
 
   <Teleport to="body">
+    <div v-if="credentialConfirmOpen && pendingCredential" class="modal-backdrop">
+      <div class="modal-panel">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Sensitive access</p>
+            <h2>Reveal credential</h2>
+            <p class="muted">{{ pendingCredential.name }}</p>
+          </div>
+          <button class="button secondary icon-button" type="button" @click="credentialConfirmOpen = false">x</button>
+        </div>
+        <p class="muted">
+          Revealing credentials can expose secrets through screen capture, browser tooling, and local history.
+        </p>
+        <label class="checkbox-label">
+          <input v-model="credentialWarningAcknowledged" type="checkbox" />
+          I understand and need temporary access for troubleshooting.
+        </label>
+        <div class="form-actions">
+          <button
+            v-if="credentialReauthSupported"
+            class="button secondary compact-button"
+            type="button"
+            @click="triggerCredentialReauth"
+          >
+            Re-authenticate
+          </button>
+          <button class="button primary compact-button" type="button" :disabled="!credentialWarningAcknowledged" @click="confirmRevealCredential">
+            Reveal now
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <Teleport to="body">
     <div v-if="credentialsOpen && credentialDetail" class="modal-backdrop">
       <div class="modal-panel">
         <div class="modal-head">
@@ -1229,13 +1162,20 @@ async function revealCredential(name: string, url?: string) {
             <h2>{{ credentialDetail.name }}</h2>
             <p class="muted">{{ credentialDetail.namespace }}</p>
           </div>
-          <button class="button secondary icon-button" type="button" @click="credentialsOpen = false">x</button>
+          <button class="button secondary icon-button" type="button" @click="closeCredentialModal">x</button>
         </div>
         <div class="credential-values">
           <div v-for="(value, key) in credentialDetail.data" :key="key" class="credential-value">
             <span>{{ key }}</span>
-            <textarea :value="value" readonly :rows="credentialRows(value)" />
+            <textarea :value="credentialFieldRevealed(key) ? value : maskCredentialValue(value)" readonly :rows="credentialRows(value)" />
+            <button class="button secondary compact-button" type="button" @click="toggleCredentialField(key)">
+              {{ credentialFieldRevealed(key) ? 'Mask' : 'Reveal field' }}
+            </button>
           </div>
+        </div>
+        <div class="form-actions">
+          <button class="button secondary compact-button" type="button" @click="downloadCredential">Download JSON</button>
+          <button class="button secondary compact-button" type="button" @click="closeCredentialModal">Done</button>
         </div>
       </div>
     </div>

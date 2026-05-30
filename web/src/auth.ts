@@ -14,6 +14,7 @@ export interface AuthConfig {
   callbackPath?: string
   defaultProvider?: string
   providers?: AuthProviderView[]
+  credentialRevealReauthPath?: string
 }
 
 export interface TenantRoleSummary {
@@ -35,8 +36,10 @@ export interface AuthSession {
 
 export const authConfig = ref<AuthConfig | null>(null)
 export const authSession = ref<AuthSession | null>(null)
-export const authReady = ref(false)
+export type AuthState = 'loading' | 'error' | 'authenticated' | 'anonymous'
+export const authState = ref<AuthState>('loading')
 export const authError = ref<string | null>(null)
+export const authReady = computed(() => authState.value !== 'loading')
 
 export const availableAuthProviders = computed(() => authConfig.value?.providers ?? [])
 export const sessionRoles = computed(() => authSession.value?.roles ?? [])
@@ -86,18 +89,37 @@ export function canViewCatalogAdmin() {
 }
 
 export async function initializeAuth() {
-  authReady.value = false
+  authState.value = 'loading'
   authError.value = null
-  authConfig.value = await fetchJSON<AuthConfig>('/api/auth/config')
+  try {
+    authConfig.value = await fetchJSON<AuthConfig>('/api/auth/config')
+  } catch (err) {
+    authConfig.value = null
+    authSession.value = null
+    authError.value = describeError(err, 'Failed to load authentication configuration')
+    authState.value = 'error'
+    return
+  }
   try {
     authSession.value = normalizeAuthSession(await fetchJSON<AuthSession>('/api/auth/session', {
       headers: authHeaders()
     }))
+    authState.value = authSession.value.authenticated ? 'authenticated' : 'anonymous'
   } catch (err) {
-    authError.value = err instanceof Error ? err.message : 'Failed to initialize authentication'
+    authError.value = describeError(err, 'Failed to establish authentication session')
     authSession.value = null
+    authState.value = 'anonymous'
   }
-  authReady.value = true
+}
+
+export async function retryAuthInitialization() {
+  await initializeAuth()
+}
+
+export function markSessionExpired(message = 'Session expired. Sign in again to continue.') {
+  authSession.value = null
+  authError.value = message
+  authState.value = 'anonymous'
 }
 
 export function authHeaders(): HeadersInit {
@@ -133,6 +155,8 @@ export async function completePasswordLogin(provider: string, username: string, 
   authSession.value = normalizeAuthSession(await fetchJSON<AuthSession>('/api/auth/session', {
     headers: authHeaders()
   }))
+  authError.value = null
+  authState.value = authSession.value.authenticated ? 'authenticated' : 'anonymous'
 }
 
 export function logout(returnTo?: string | Event) {
@@ -147,7 +171,7 @@ async function fetchJSON<T>(path: string, init: RequestInit = {}) {
   const response = await fetch(path, init)
   if (!response.ok) {
     const message = await response.text()
-    throw new Error(message || `Request failed: ${response.status}`)
+    throw new Error(message || `Request failed (${response.status})`)
   }
   return (await response.json()) as T
 }
@@ -169,4 +193,14 @@ function normalizeAuthSession(session: AuthSession): AuthSession {
     groups: session.groups ?? [],
     tenants: session.tenants ?? []
   }
+}
+
+function describeError(err: unknown, fallback: string) {
+  return err instanceof Error && err.message ? err.message : fallback
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('servicer:auth-expired', () => {
+    markSessionExpired()
+  })
 }

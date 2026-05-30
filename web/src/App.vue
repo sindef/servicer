@@ -4,12 +4,14 @@ import { useRoute } from 'vue-router'
 import {
   authError,
   authReady,
+  authState,
   authSession,
   canViewAdminShell,
   canViewAudit,
   canViewInstances,
   canViewTenancy,
-  logout
+  logout,
+  retryAuthInitialization
 } from './auth'
 
 const route = useRoute()
@@ -19,7 +21,7 @@ const usePublicLayout = computed(() => route.meta.publicLayout === true)
 <template>
   <RouterView v-if="usePublicLayout" />
 
-  <section v-else-if="!authReady" class="app-loading-shell">
+  <section v-else-if="authState === 'loading'" class="app-loading-shell">
     <div class="content-band app-loading-card">
       <p class="eyebrow">Authentication</p>
       <h2>Loading access policy</h2>
@@ -27,11 +29,14 @@ const usePublicLayout = computed(() => route.meta.publicLayout === true)
     </div>
   </section>
 
-  <section v-else-if="authError && !authSession?.authenticated" class="app-loading-shell">
+  <section v-else-if="authState === 'error' && !authSession?.authenticated" class="app-loading-shell">
     <div class="content-band app-loading-card">
       <p class="eyebrow">Authentication</p>
       <h2>Unable to establish a session</h2>
       <p class="error-text">{{ authError }}</p>
+      <button class="button secondary compact-button" type="button" @click="retryAuthInitialization">
+        Retry
+      </button>
     </div>
   </section>
 

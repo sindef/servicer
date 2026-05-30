@@ -4,50 +4,15 @@ import { load as parseYAML } from 'js-yaml'
 import { api, type CatalogEntry, type RepositorySummary } from '../api'
 import { useApi } from '../composables/useApi'
 import StatusPill from '../components/StatusPill.vue'
-
-type NatsStreamForm = {
-  id: number
-  name: string
-  subjects: string
-  storage: string
-  retention: string
-  maxAge: string
-}
-
-type NatsConsumerForm = {
-  id: number
-  name: string
-  stream: string
-  filterSubjects: string
-  ackPolicy: string
-}
-
-type NatsCredentialForm = {
-  id: number
-  name: string
-  username: string
-  publish: string
-  subscribe: string
-  allowResponses: boolean
-}
-
-type VmNetworkForm = {
-  id: number
-  name: string
-  networkType: 'pod' | 'multus'
-  bindingMethod: 'masquerade' | 'bridge' | 'sriov'
-  multusNetworkName: string
-  model: string
-}
-
-type VmDiskForm = {
-  id: number
-  name: string
-  image: string
-  size: string
-  storageClass: string
-  bus: string
-}
+import {
+  buildProductParameters,
+  type NatsConsumerForm,
+  type NatsCredentialForm,
+  type NatsStreamForm,
+  type ProductParameterForm,
+  type VmDiskForm,
+  type VmNetworkForm
+} from '../products/parameters'
 
 const { data, loading, error } = useApi(api.catalog)
 const projects = useApi(api.projects)
@@ -64,7 +29,7 @@ const requestForm = reactive({
   servicePlan: '',
   version: ''
 })
-const parameterForm = reactive({
+const parameterForm = reactive<ProductParameterForm>({
   replicas: 3,
   databaseName: '',
   cpu: '2',
@@ -141,7 +106,8 @@ const natsStreamOptions = computed(() =>
 watch(
   () => parameterForm.primaryCluster,
   (newPrimary) => {
-    parameterForm.standbyClusters = parameterForm.standbyClusters.filter((c) => c !== newPrimary)
+    const currentStandbys = Array.isArray(parameterForm.standbyClusters) ? parameterForm.standbyClusters : []
+    parameterForm.standbyClusters = currentStandbys.filter((cluster) => cluster !== newPrimary)
   }
 )
 
@@ -346,62 +312,6 @@ function onArgoRepoRefChange(repoName: string) {
   parameterForm.argoRepoURL = repo ? repo.url : ''
 }
 
-function csvList(value: string) {
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function natsStreamParameters() {
-  return parameterForm.natsStreams
-    .map((stream) =>
-      compactParams({
-        name: stream.name.trim(),
-        subjects: csvList(stream.subjects),
-        storage: stream.storage,
-        retention: stream.retention,
-        maxAge: stream.maxAge
-      })
-    )
-    .filter((stream) => typeof stream.name === 'string' && stream.name.length > 0)
-}
-
-function natsConsumerParameters() {
-  return parameterForm.natsConsumers
-    .map((consumer) =>
-      compactParams({
-        name: consumer.name.trim(),
-        stream: consumer.stream.trim(),
-        filterSubjects: csvList(consumer.filterSubjects),
-        ackPolicy: consumer.ackPolicy
-      })
-    )
-    .filter(
-      (consumer) =>
-        typeof consumer.name === 'string' &&
-        consumer.name.length > 0 &&
-        typeof consumer.stream === 'string' &&
-        consumer.stream.length > 0
-    )
-}
-
-function natsCredentialParameters() {
-  return parameterForm.natsAppCredentials
-    .map((credential) =>
-      compactParams({
-        name: credential.name.trim(),
-        username: credential.username.trim(),
-        permissions: compactParams({
-          publish: csvList(credential.publish),
-          subscribe: csvList(credential.subscribe),
-          allowResponses: credential.allowResponses ? true : undefined
-        })
-      })
-    )
-    .filter((credential) => typeof credential.name === 'string' && credential.name.length > 0)
-}
-
 function applyPlanDefaults(serviceClass: string, servicePlan: string) {
   if (serviceClass === 'namespace') {
     parameterForm.cpu = '2'
@@ -540,173 +450,6 @@ function validateRequestParameters() {
   return null
 }
 
-function buildParameters() {
-  switch (requestForm.serviceClass) {
-    case 'namespace':
-      return {
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        pods: parameterForm.pods,
-        defaultDenyIngress: parameterForm.defaultDenyIngress,
-        labels: { 'platform.mnorris.dev/profile': 'workload' }
-      }
-    case 'postgresql': {
-      const backupObjectStore = parameterForm.backupBucket && parameterForm.backupCredentialsSecret
-        ? compactParams({
-            endpointUrl: parameterForm.backupEndpoint,
-            bucket: parameterForm.backupBucket,
-            path: parameterForm.backupPath,
-            region: parameterForm.backupRegion,
-            credentialsSecret: parameterForm.backupCredentialsSecret
-          })
-        : undefined
-      const backup = backupObjectStore
-        ? compactParams({
-            objectStore: backupObjectStore,
-            schedule: parameterForm.backupSchedule,
-            retention: parameterForm.backupRetention
-          })
-        : undefined
-      return compactParams({
-        instances: parameterForm.replicas,
-        databaseName: parameterForm.databaseName,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        backup,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    }
-    case 'mysql':
-      return compactParams({
-        replicas: parameterForm.replicas,
-        databaseName: parameterForm.databaseName,
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        backupProfile: parameterForm.backupProfile,
-        replicationMode: requestForm.servicePlan === 'mysql-galera' ? 'galera' : requestForm.servicePlan === 'mysql-active-passive' ? 'active-passive' : 'single-primary',
-        primaryCluster: selectedPlan.value?.topology === 'multi-region' ? parameterForm.primaryCluster : undefined,
-        standbyClusters: selectedPlan.value?.topology === 'multi-region' ? parameterForm.standbyClusters : undefined,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'nats':
-      return compactParams({
-        replicas: parameterForm.replicas,
-        jetstream: requestForm.servicePlan === 'nats-jetstream' || requestForm.servicePlan === 'nats-geo',
-        streams: natsStreamParameters(),
-        consumers: natsConsumerParameters(),
-        appCredentials: natsCredentialParameters(),
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        maxPayload: parameterForm.maxPayload,
-        memoryLimit: parameterForm.memoryLimit,
-        standbyClusters: parameterForm.standbyClusters,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'valkey':
-      return compactParams({
-        replicas: parameterForm.replicas,
-        memoryProfile: parameterForm.memoryProfile,
-        memoryLimit: parameterForm.memoryLimit,
-        persistence: parameterForm.persistence,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        maxMemoryPolicy: parameterForm.maxMemoryPolicy,
-        primaryCluster: parameterForm.primaryCluster,
-        standbyClusters: parameterForm.standbyClusters,
-        maxReplicationLagSeconds: parameterForm.maxReplicationLagSeconds,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'yugabyte':
-      return compactParams({
-        tserverReplicas: parameterForm.replicas,
-        masterReplicas: parameterForm.replicas,
-        databaseName: parameterForm.databaseName,
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        storageSize: parameterForm.storageSize,
-        storageClass: parameterForm.storageClass,
-        backupProfile: parameterForm.backupProfile,
-        primaryCluster: parameterForm.primaryCluster,
-        standbyClusters: parameterForm.standbyClusters,
-        serviceType: parameterForm.serviceType,
-        externalDnsHostname: (parameterForm.serviceType === 'LoadBalancer' || parameterForm.serviceType === 'NodePort') ? parameterForm.externalDnsHostname : undefined
-      })
-    case 'argo-application':
-      return compactParams({
-        sourceType: parameterForm.argoSourceType,
-        repoURL: parameterForm.argoRepoURL || parameterForm.argoRepoRef,
-        path: parameterForm.argoPath,
-        targetRevision: parameterForm.argoTargetRevision,
-        targetNamespace: parameterForm.argoTargetNamespace,
-        syncPolicy: parameterForm.argoSyncPolicy,
-        createNamespace: parameterForm.argoCreateNamespace || undefined,
-        helmReleaseName: parameterForm.argoSourceType === 'helm' ? parameterForm.argoHelmReleaseName : undefined,
-        helmValuesYAML: parameterForm.argoSourceType === 'helm' ? parameterForm.argoHelmValuesYAML : undefined,
-        repoRef: parameterForm.argoRepoRef
-      })
-    case 'virtual-machine':
-      return compactParams({
-        image: parameterForm.vmImage,
-        workloadType: parameterForm.vmWorkloadType,
-        poolReplicas: parameterForm.vmWorkloadType === 'vmp' ? parameterForm.vmPoolReplicas : undefined,
-        cpu: parameterForm.cpu,
-        memory: parameterForm.memory,
-        runStrategy: parameterForm.vmRunStrategy,
-        storageClass: parameterForm.storageClass,
-        storageSize: parameterForm.storageSize,
-        networks: parameterForm.vmNetworks
-          .map((network) =>
-            compactParams({
-              name: network.name.trim(),
-              type: network.networkType,
-              bindingMethod: network.bindingMethod,
-              multusNetworkName: network.networkType === 'multus' ? network.multusNetworkName.trim() : undefined,
-              model: network.model.trim()
-            })
-          )
-          .filter((network) => typeof network.name === 'string' && network.name.length > 0),
-        disks: parameterForm.vmDisks
-          .map((disk) =>
-            compactParams({
-              name: disk.name.trim(),
-              image: disk.image.trim(),
-              size: disk.size.trim(),
-              storageClass: disk.storageClass.trim(),
-              bus: disk.bus.trim()
-            })
-          )
-          .filter(
-            (disk) =>
-              typeof disk.name === 'string' &&
-              disk.name.length > 0 &&
-              typeof disk.image === 'string' &&
-              disk.image.length > 0 &&
-              typeof disk.size === 'string' &&
-              disk.size.length > 0
-          )
-      })
-    default:
-      return undefined
-  }
-}
-
-function compactParams(values: Record<string, unknown>) {
-  return Object.fromEntries(
-    Object.entries(values).filter(([, value]) => {
-      if (Array.isArray(value)) {
-        return value.length > 0
-      }
-      return value !== '' && value !== undefined && value !== null
-    })
-  )
-}
-
 function closeRequest() {
   if (submitting.value) {
     return
@@ -724,7 +467,13 @@ async function submitRequest() {
   submitError.value = null
   submitMessage.value = null
   try {
-    const parameters = buildParameters()
+    const parameters = buildProductParameters({
+      serviceClass: requestForm.serviceClass,
+      servicePlan: requestForm.servicePlan,
+      form: parameterForm,
+      includeMultiRegionOnlyFields: true,
+      selectedPlanTopology: selectedPlan.value?.topology
+    })
     const response = await api.createRequest({
       name: requestForm.name,
       projectName: requestForm.projectName,
@@ -1432,7 +1181,7 @@ async function submitRequest() {
               <span v-else-if="repositoriesLoading" class="muted" style="font-size: 13px">Loading repositories...</span>
               <span v-else class="muted" style="font-size: 13px">
                 No repositories registered for this project.
-                <a href="#" @click.prevent="() => {}">Add one in Admin → Repositories.</a>
+                <RouterLink to="/admin">Open Admin → Repositories.</RouterLink>
               </span>
             </label>
             <label style="grid-column: span 2" v-if="!parameterForm.argoRepoRef">

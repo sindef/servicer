@@ -393,7 +393,7 @@ func (a *MySQLAdapter) renderClusterArtifacts(ctx ServiceContext, params mysqlPa
 		"metadata": map[string]any{
 			"name": namespace,
 			"labels": map[string]string{
-				"platform.mnorris.dev/profile": "workload",
+				"platform.servicer.io/profile": "workload",
 				"servicer.io/managed-by":       "servicer",
 				"servicer.io/project":          ctx.Project.Name,
 				"servicer.io/tenant":           ctx.Tenant.Name,

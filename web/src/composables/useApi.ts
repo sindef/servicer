@@ -5,17 +5,22 @@ interface UseApiOptions {
   retainOnSilentError?: boolean
 }
 
-export function useApi<T>(loader: () => Promise<T>, options: UseApiOptions = {}) {
+type ApiLoader<T> = (...args: any[]) => Promise<T>
+
+export function useApi<T>(loader: ApiLoader<T>, options: UseApiOptions = {}) {
   const data = ref<T | null>(null)
   const loading = ref(true)
   const error = ref<string | null>(null)
   let refreshTimer: number | undefined
   let inFlight = false
+  let activeController: AbortController | null = null
 
   async function reload(silent = false) {
     if (inFlight) {
       return
     }
+    activeController?.abort()
+    activeController = new AbortController()
     inFlight = true
     if (!silent) {
       loading.value = true
@@ -24,9 +29,12 @@ export function useApi<T>(loader: () => Promise<T>, options: UseApiOptions = {})
       error.value = null
     }
     try {
-      data.value = await loader()
+      data.value = await (loader.length > 0 ? loader(activeController.signal) : loader())
       error.value = null
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return
+      }
       if (!silent || !options.retainOnSilentError || data.value === null) {
         error.value = err instanceof Error ? err.message : 'Request failed'
       }
@@ -44,6 +52,7 @@ export function useApi<T>(loader: () => Promise<T>, options: UseApiOptions = {})
   })
 
   onBeforeUnmount(() => {
+    activeController?.abort()
     if (refreshTimer) {
       window.clearInterval(refreshTimer)
     }

@@ -11,6 +11,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "strict": true,
+    "types": ["vite/client", "vitest/globals"],
     "jsx": "preserve"
   },
   "include": ["src/**/*.ts", "src/**/*.vue"]

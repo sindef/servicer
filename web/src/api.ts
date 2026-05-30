@@ -1,5 +1,42 @@
 import { authHeaders } from './auth'
 
+const requestIDHeaders = ['x-request-id', 'x-servicer-request-id']
+
+export interface ApiErrorPayload {
+  error?: string
+  message?: string
+  code?: string
+  requestId?: string
+  details?: unknown
+}
+
+export class ApiError extends Error {
+  readonly status: number
+  readonly requestId?: string
+  readonly code?: string
+  readonly details?: unknown
+  readonly url: string
+  readonly isAuthExpired: boolean
+
+  constructor(message: string, options: { status: number; requestId?: string; code?: string; details?: unknown; url: string }) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = options.status
+    this.requestId = options.requestId
+    this.code = options.code
+    this.details = options.details
+    this.url = options.url
+    this.isAuthExpired = options.status === 401
+  }
+}
+
+function dispatchSessionExpired() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.dispatchEvent(new Event('servicer:auth-expired'))
+}
+
 export interface OverviewResponse {
   tenants: number
   projects: number
@@ -448,17 +485,28 @@ export interface RoleBindingRequest {
   roles: string[]
 }
 
+export interface RequestOptions {
+  signal?: AbortSignal
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers({
+    ...authHeaders(),
+    ...init.headers
+  })
+  if (init.body && !headers.has('Content-Type') && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
   const response = await fetch(path, {
     ...init,
-    headers: {
-      ...authHeaders(),
-      ...init.headers
-    }
+    headers
   })
   if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `Request failed: ${response.status}`)
+    const parsed = await parseApiError(response)
+    if (parsed.status === 401) {
+      dispatchSessionExpired()
+    }
+    throw parsed
   }
   return response.json() as Promise<T>
 }
@@ -468,10 +516,51 @@ async function download(path: string): Promise<Blob> {
     headers: authHeaders()
   })
   if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `Request failed: ${response.status}`)
+    const parsed = await parseApiError(response)
+    if (parsed.status === 401) {
+      dispatchSessionExpired()
+    }
+    throw parsed
   }
   return response.blob()
+}
+
+export async function parseApiError(response: Response): Promise<ApiError> {
+  const requestId =
+    requestIDHeaders.map((header) => response.headers.get(header) ?? '').find((value) => value.trim().length > 0) ||
+    undefined
+  const fallbackMessage = `Request failed (${response.status})`
+  const contentType = response.headers.get('content-type') ?? ''
+  let message = ''
+  let code: string | undefined
+  let details: unknown
+  if (contentType.includes('application/json')) {
+    try {
+      const payload = (await response.json()) as ApiErrorPayload
+      message = (payload.error || payload.message || '').trim()
+      code = payload.code
+      details = payload.details
+      if (!requestId && payload.requestId) {
+        details = { ...(typeof details === 'object' && details ? details : {}), requestId: payload.requestId }
+      }
+    } catch {
+      message = ''
+    }
+  }
+  if (!message) {
+    try {
+      message = (await response.text()).trim()
+    } catch {
+      message = ''
+    }
+  }
+  if (!message) {
+    message = fallbackMessage
+  }
+  if (requestId) {
+    message = `${message} (request ID: ${requestId})`
+  }
+  return new ApiError(message, { status: response.status, requestId, code, details, url: response.url })
 }
 
 export const api = {
@@ -497,9 +586,10 @@ export const api = {
         method: 'DELETE'
       })
   },
-  catalog: () => request<CatalogEntry[]>('/api/catalog'),
+  catalog: (options?: RequestOptions) => request<CatalogEntry[]>('/api/catalog', options),
   instances: () => request<InstanceSummary[]>('/api/instances'),
-  instance: (name: string) => request<InstanceDetail>(`/api/instances/${encodeURIComponent(name)}`),
+  instance: (name: string, options?: RequestOptions) =>
+    request<InstanceDetail>(`/api/instances/${encodeURIComponent(name)}`, options),
   audit: (query = '') => request<AuditEventSummary[]>(`/api/audit${query ? `?q=${encodeURIComponent(query)}` : ''}`),
   createRequest: (body: ProductRequest) =>
     request<{ name: string; message: string }>('/api/requests', {
@@ -520,7 +610,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body)
     }),
-  credential: (url: string) => request<CredentialDetail>(url),
+  credential: (url: string, options?: RequestOptions) => request<CredentialDetail>(url, options),
   downloadKubeconfig: (url: string) => download(url),
   admin: {
     clusters: () => request<ClusterTargetSummary[]>('/api/admin/clusters'),

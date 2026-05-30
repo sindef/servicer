@@ -228,7 +228,7 @@ func (a *ValkeyAdapter) renderClusterArtifacts(ctx ServiceContext, parameters va
 		"metadata": map[string]any{
 			"name": namespace,
 			"labels": map[string]string{
-				"platform.mnorris.dev/profile": "workload",
+				"platform.servicer.io/profile": "workload",
 				"servicer.io/managed-by":       "servicer",
 				"servicer.io/project":          ctx.Project.Name,
 				"servicer.io/tenant":           ctx.Tenant.Name,

@@ -4,11 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   authConfig,
   authError,
-  authReady,
+  authState,
   authSession,
   availableAuthProviders,
   beginOIDCLogin,
-  completePasswordLogin
+  completePasswordLogin,
+  retryAuthInitialization
 } from '../auth'
 
 const route = useRoute()
@@ -82,12 +83,13 @@ async function submitPasswordLogin() {
         </div>
       </div>
 
-      <section v-if="!authReady" class="login-state">
+      <section v-if="authState === 'loading'" class="login-state">
         <p class="muted">Loading authentication providers...</p>
       </section>
 
-      <section v-else-if="authError" class="login-state">
+      <section v-else-if="authState === 'error'" class="login-state">
         <p class="error-text">{{ authError }}</p>
+        <button class="button secondary compact-button" type="button" @click="retryAuthInitialization">Retry</button>
       </section>
 
       <section v-else-if="providers.length === 0" class="login-state">

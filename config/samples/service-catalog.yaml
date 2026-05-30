@@ -27,7 +27,7 @@ spec:
     pods: "20"
     defaultDenyIngress: true
     labels:
-      platform.mnorris.dev/profile: workload
+      platform.servicer.io/profile: workload
 ---
 apiVersion: platform.servicer.io/v1alpha1
 kind: ServiceClass
