@@ -313,15 +313,16 @@ type WriteResponse struct {
 }
 
 type AuditEventSummary struct {
-	Time     string `json:"time,omitempty"`
-	Type     string `json:"type"`
-	Subject  string `json:"subject"`
-	Action   string `json:"action,omitempty"`
-	Actor    string `json:"actor,omitempty"`
-	Phase    string `json:"phase,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Involved string `json:"involved,omitempty"`
+	Time      string `json:"time,omitempty"`
+	Type      string `json:"type"`
+	Subject   string `json:"subject"`
+	RequestID string `json:"requestId,omitempty"`
+	Action    string `json:"action,omitempty"`
+	Actor     string `json:"actor,omitempty"`
+	Phase     string `json:"phase,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Involved  string `json:"involved,omitempty"`
 }
 
 // Admin types

@@ -22,6 +22,9 @@ func (s *Server) handleKubernetesNamespaceProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if s.metrics != nil {
+			s.metrics.namespaceProxyDenialsTotal.Inc()
+		}
 		http.Error(w, "Namespace proxy is read-only", http.StatusMethodNotAllowed)
 		return
 	}
@@ -32,15 +35,24 @@ func (s *Server) handleKubernetesNamespaceProxy(w http.ResponseWriter, r *http.R
 	}
 	secret, ok := s.namespaceAccessSecretForToken(r, namespace)
 	if !ok {
+		if s.metrics != nil {
+			s.metrics.namespaceProxyDenialsTotal.Inc()
+		}
 		http.Error(w, "Invalid namespace access token", http.StatusUnauthorized)
 		return
 	}
 	secretNamespace := strings.TrimSpace(string(secret.Data["namespace"]))
 	if secretNamespace != "" && secretNamespace != namespace {
+		if s.metrics != nil {
+			s.metrics.namespaceProxyDenialsTotal.Inc()
+		}
 		http.Error(w, "Access token is not valid for this namespace", http.StatusForbidden)
 		return
 	}
 	if !namespaceProxyPathAllowed(namespace, upstreamPath) {
+		if s.metrics != nil {
+			s.metrics.namespaceProxyDenialsTotal.Inc()
+		}
 		http.Error(w, "Namespace access is limited to discovery and granted namespace reads", http.StatusForbidden)
 		return
 	}
@@ -53,11 +65,17 @@ func (s *Server) handleKubernetesRootProxy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if s.metrics != nil {
+			s.metrics.namespaceProxyDenialsTotal.Inc()
+		}
 		http.Error(w, "Namespace proxy is read-only", http.StatusMethodNotAllowed)
 		return
 	}
 	secret, ok := s.namespaceAccessSecretForToken(r, "")
 	if !ok {
+		if s.metrics != nil {
+			s.metrics.namespaceProxyDenialsTotal.Inc()
+		}
 		http.Error(w, "Invalid namespace access token", http.StatusUnauthorized)
 		return
 	}
@@ -66,6 +84,9 @@ func (s *Server) handleKubernetesRootProxy(w http.ResponseWriter, r *http.Reques
 		namespace = secret.Namespace
 	}
 	if !namespaceProxyPathAllowed(namespace, r.URL.Path) {
+		if s.metrics != nil {
+			s.metrics.namespaceProxyDenialsTotal.Inc()
+		}
 		http.Error(w, "Namespace access is limited to discovery and granted namespace reads", http.StatusForbidden)
 		return
 	}

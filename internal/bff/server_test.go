@@ -1321,6 +1321,67 @@ func TestInstancesListFiltersToAuthorizedTenancy(t *testing.T) {
 	}
 }
 
+func TestInstancesListSupportsPaginationAndQueryFiltering(t *testing.T) {
+	server := testServer(t)
+	for _, name := range []string{"alpha-cache", "beta-cache", "gamma-db"} {
+		if err := server.client.Create(context.Background(), &platformv1alpha1.ServiceInstance{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: platformv1alpha1.ServiceInstanceSpec{
+				ProjectRef:      platformv1alpha1.LocalObjectReference{Name: "acme-prod"},
+				ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "valkey"},
+				ServicePlanRef:  platformv1alpha1.LocalObjectReference{Name: "valkey-dev"},
+			},
+		}); err != nil {
+			t.Fatalf("create instance %q: %v", name, err)
+		}
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/instances?q=cache&limit=1&offset=1", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var instances []InstanceSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &instances); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(instances) != 1 {
+		t.Fatalf("expected one paginated instance, got %#v", instances)
+	}
+	if !strings.Contains(instances[0].Name, "cache") {
+		t.Fatalf("expected filtered cache instance, got %#v", instances[0])
+	}
+}
+
+func TestWriteErrorIncludesRequestIDWhenPresent(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/instances/does-not-exist", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+	request.Header.Set("X-Request-Id", "req-test-123")
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("X-Request-Id"); got != "req-test-123" {
+		t.Fatalf("expected echoed request id header, got %q", got)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["requestId"] != "req-test-123" {
+		t.Fatalf("expected requestId in error payload, got %#v", payload)
+	}
+}
+
 func TestMetricsEndpointExposesPrometheusMetrics(t *testing.T) {
 	server := testServer(t)
 	apiResponse := httptest.NewRecorder()
@@ -1341,6 +1402,15 @@ func TestMetricsEndpointExposesPrometheusMetrics(t *testing.T) {
 	}
 	if !strings.Contains(body, "servicer_bff_authentication_failures_total") {
 		t.Fatalf("expected auth failure metric, got %s", body)
+	}
+	if !strings.Contains(body, "servicer_bff_repository_mirror_total") {
+		t.Fatalf("expected repository mirror metric, got %s", body)
+	}
+	if !strings.Contains(body, "servicer_bff_namespace_proxy_denials_total") {
+		t.Fatalf("expected namespace proxy denial metric, got %s", body)
+	}
+	if !strings.Contains(body, "servicer_bff_audit_persist_failures_total") {
+		t.Fatalf("expected audit persistence failure metric, got %s", body)
 	}
 }
 

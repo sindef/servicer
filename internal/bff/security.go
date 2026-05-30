@@ -236,7 +236,12 @@ func ensureCSRFCookieForRequest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) recordAudit(ctx context.Context, event AuditEventSummary) {
 	if s.auditStore != nil {
-		_ = s.auditStore.persist(ctx, []AuditEventSummary{event})
+		if err := s.auditStore.persist(ctx, []AuditEventSummary{event}); err != nil {
+			if s.metrics != nil {
+				s.metrics.auditPersistFailuresTotal.Inc()
+			}
+			slog.Error("failed to persist audit event", "error", err.Error(), "type", event.Type, "subject", event.Subject, "requestId", event.RequestID)
+		}
 	}
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SERVICER_AUDIT_STDOUT")), "true") {
 		_ = json.NewEncoder(os.Stdout).Encode(event)

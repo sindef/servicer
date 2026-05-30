@@ -48,6 +48,11 @@ func (s *Server) handleListProjectRepositories(w http.ResponseWriter, r *http.Re
 		return
 	}
 	projectName := strings.TrimSpace(r.PathValue("project"))
+	page, err := pageQueryFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if _, err := s.authorizedRepositoryProject(r, actor, projectName); err != nil {
 		writeRepositoryError(w, err)
 		return
@@ -67,8 +72,25 @@ func (s *Server) handleListProjectRepositories(w http.ResponseWriter, r *http.Re
 
 	result := make([]RepositorySummary, 0, len(secretList.Items))
 	for _, sec := range secretList.Items {
-		result = append(result, repoSecretToSummary(sec))
+		summary := repoSecretToSummary(sec)
+		if page.query != "" {
+			searchFields := strings.ToLower(strings.Join([]string{
+				summary.Name,
+				summary.DisplayName,
+				summary.URL,
+				summary.Scope,
+				summary.ProjectName,
+				summary.TenantName,
+			}, " "))
+			if !strings.Contains(searchFields, page.query) {
+				continue
+			}
+		}
+		result = append(result, summary)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	start, end := paginateRange(len(result), page.offset, page.limit)
+	result = result[start:end]
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -79,6 +101,11 @@ func (s *Server) handleListTenantRepositories(w http.ResponseWriter, r *http.Req
 		return
 	}
 	tenantName := strings.TrimSpace(r.PathValue("tenant"))
+	page, err := pageQueryFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if _, err := s.authorizedRepositoryTenant(r, actor, tenantName); err != nil {
 		writeRepositoryError(w, err)
 		return
@@ -99,8 +126,25 @@ func (s *Server) handleListTenantRepositories(w http.ResponseWriter, r *http.Req
 
 	result := make([]RepositorySummary, 0, len(secretList.Items))
 	for _, sec := range secretList.Items {
-		result = append(result, repoSecretToSummary(sec))
+		summary := repoSecretToSummary(sec)
+		if page.query != "" {
+			searchFields := strings.ToLower(strings.Join([]string{
+				summary.Name,
+				summary.DisplayName,
+				summary.URL,
+				summary.Scope,
+				summary.ProjectName,
+				summary.TenantName,
+			}, " "))
+			if !strings.Contains(searchFields, page.query) {
+				continue
+			}
+		}
+		result = append(result, summary)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	start, end := paginateRange(len(result), page.offset, page.limit)
+	result = result[start:end]
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -150,12 +194,18 @@ func (s *Server) handleCreateProjectRepository(w http.ResponseWriter, r *http.Re
 	// Mirror credentials into an Argo CD repository secret so the repo is usable
 	// without additional manual configuration.
 	if err := s.ensureArgoCDRepoSecretImpl(r, req); err != nil {
+		if s.metrics != nil {
+			s.metrics.repositoryMirrorTotal.WithLabelValues("create", "failed").Inc()
+		}
 		if deleteErr := s.client.Delete(r.Context(), sec); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
 			writeError(w, fmt.Errorf("mirror Argo CD repository secret: %w; rollback repository secret: %v", err, deleteErr))
 			return
 		}
 		writeError(w, fmt.Errorf("mirror Argo CD repository secret: %w", err))
 		return
+	}
+	if s.metrics != nil {
+		s.metrics.repositoryMirrorTotal.WithLabelValues("create", "succeeded").Inc()
 	}
 
 	writeJSON(w, http.StatusCreated, WriteResponse{Name: req.Name, Message: "Repository registered."})
@@ -204,12 +254,18 @@ func (s *Server) handleCreateTenantRepository(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := s.ensureArgoCDRepoSecretImpl(r, req); err != nil {
+		if s.metrics != nil {
+			s.metrics.repositoryMirrorTotal.WithLabelValues("create", "failed").Inc()
+		}
 		if deleteErr := s.client.Delete(r.Context(), sec); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
 			writeError(w, fmt.Errorf("mirror Argo CD repository secret: %w; rollback repository secret: %v", err, deleteErr))
 			return
 		}
 		writeError(w, fmt.Errorf("mirror Argo CD repository secret: %w", err))
 		return
+	}
+	if s.metrics != nil {
+		s.metrics.repositoryMirrorTotal.WithLabelValues("create", "succeeded").Inc()
 	}
 
 	writeJSON(w, http.StatusCreated, WriteResponse{Name: req.Name, Message: "Repository registered."})
@@ -253,8 +309,14 @@ func (s *Server) handleDeleteProjectRepository(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := s.cleanupArgoCDRepoSecretIfUnused(r, sec); err != nil {
+		if s.metrics != nil {
+			s.metrics.repositoryMirrorTotal.WithLabelValues("delete", "failed").Inc()
+		}
 		writeError(w, err)
 		return
+	}
+	if s.metrics != nil {
+		s.metrics.repositoryMirrorTotal.WithLabelValues("delete", "succeeded").Inc()
 	}
 	if err := s.client.Delete(r.Context(), &sec); err != nil {
 		writeError(w, err)
@@ -302,8 +364,14 @@ func (s *Server) handleDeleteTenantRepository(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := s.cleanupArgoCDRepoSecretIfUnused(r, sec); err != nil {
+		if s.metrics != nil {
+			s.metrics.repositoryMirrorTotal.WithLabelValues("delete", "failed").Inc()
+		}
 		writeError(w, err)
 		return
+	}
+	if s.metrics != nil {
+		s.metrics.repositoryMirrorTotal.WithLabelValues("delete", "succeeded").Inc()
 	}
 	if err := s.client.Delete(r.Context(), &sec); err != nil {
 		writeError(w, err)

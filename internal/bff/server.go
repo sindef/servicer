@@ -137,7 +137,7 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) (*Server
 	mux.HandleFunc("GET /api/tenants/{tenant}/repositories", server.handleListTenantRepositories)
 	mux.HandleFunc("POST /api/tenants/{tenant}/repositories", server.handleCreateTenantRepository)
 	mux.HandleFunc("DELETE /api/tenants/{tenant}/repositories/{repo}", server.handleDeleteTenantRepository)
-	server.handler = withJSON(server.withMetrics(server.withCSRF(server.withAuthentication(server.withAudit(mux)))))
+	server.handler = server.withRequestID(withJSON(server.withMetrics(server.withCSRF(server.withAuthentication(server.withAudit(mux))))))
 	return server, nil
 }
 
@@ -256,15 +256,16 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 				"clientIp", verifiedClientIP(r),
 			)
 			s.recordAudit(r.Context(), AuditEventSummary{
-				Time:     time.Now().UTC().Format(time.RFC3339),
-				Type:     "Auth",
-				Subject:  strings.TrimSpace(req.Username),
-				Action:   "login",
-				Actor:    strings.TrimSpace(req.Username),
-				Phase:    "Failed",
-				Reason:   "RateLimited",
-				Message:  "login temporarily locked after repeated failures",
-				Involved: "AuthProvider/" + strings.TrimSpace(req.Provider),
+				Time:      time.Now().UTC().Format(time.RFC3339),
+				Type:      "Auth",
+				RequestID: requestIDFromContext(r.Context()),
+				Subject:   strings.TrimSpace(req.Username),
+				Action:    "login",
+				Actor:     strings.TrimSpace(req.Username),
+				Phase:     "Failed",
+				Reason:    "RateLimited",
+				Message:   "login temporarily locked after repeated failures",
+				Involved:  "AuthProvider/" + strings.TrimSpace(req.Provider),
 			})
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed login attempts"})
 			return
@@ -274,15 +275,16 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 				s.loginLimit.RecordFailure(rateLimitKey)
 			}
 			s.recordAudit(r.Context(), AuditEventSummary{
-				Time:     time.Now().UTC().Format(time.RFC3339),
-				Type:     "Auth",
-				Subject:  strings.TrimSpace(req.Username),
-				Action:   "login",
-				Actor:    strings.TrimSpace(req.Username),
-				Phase:    "Failed",
-				Reason:   "InvalidCredentials",
-				Message:  err.Error(),
-				Involved: "AuthProvider/" + strings.TrimSpace(req.Provider),
+				Time:      time.Now().UTC().Format(time.RFC3339),
+				Type:      "Auth",
+				RequestID: requestIDFromContext(r.Context()),
+				Subject:   strings.TrimSpace(req.Username),
+				Action:    "login",
+				Actor:     strings.TrimSpace(req.Username),
+				Phase:     "Failed",
+				Reason:    "InvalidCredentials",
+				Message:   err.Error(),
+				Involved:  "AuthProvider/" + strings.TrimSpace(req.Provider),
 			})
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
@@ -292,13 +294,14 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		s.ensureCSRFCookie(w, r)
 		s.recordAudit(r.Context(), AuditEventSummary{
-			Time:     time.Now().UTC().Format(time.RFC3339),
-			Type:     "Auth",
-			Subject:  strings.TrimSpace(req.Username),
-			Action:   "login",
-			Actor:    strings.TrimSpace(req.Username),
-			Phase:    "Succeeded",
-			Involved: "AuthProvider/" + strings.TrimSpace(req.Provider),
+			Time:      time.Now().UTC().Format(time.RFC3339),
+			Type:      "Auth",
+			RequestID: requestIDFromContext(r.Context()),
+			Subject:   strings.TrimSpace(req.Username),
+			Action:    "login",
+			Actor:     strings.TrimSpace(req.Username),
+			Phase:     "Succeeded",
+			Involved:  "AuthProvider/" + strings.TrimSpace(req.Provider),
 		})
 		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 	default:
@@ -318,12 +321,13 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, clearAuthCookie(r, authFlowCookieName))
 	http.SetCookie(w, clearAuthCookie(r, csrfCookieName))
 	s.recordAudit(r.Context(), AuditEventSummary{
-		Time:     time.Now().UTC().Format(time.RFC3339),
-		Type:     "Auth",
-		Action:   "logout",
-		Actor:    actorFromRequest(r).UserName,
-		Phase:    "Succeeded",
-		Involved: "Session",
+		Time:      time.Now().UTC().Format(time.RFC3339),
+		Type:      "Auth",
+		RequestID: requestIDFromContext(r.Context()),
+		Action:    "logout",
+		Actor:     actorFromRequest(r).UserName,
+		Phase:     "Succeeded",
+		Involved:  "Session",
 	})
 	http.Redirect(w, r, s.auth.LogoutRedirectURL(r.Context(), r), http.StatusFound) // #nosec G710 -- Redirect target is constrained by LogoutRedirectURL validation.
 }
@@ -386,6 +390,11 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	page, err := pageQueryFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	tenants, projects, instances, _, err := s.loadCore(ctx)
 	if err != nil {
 		writeError(w, r, err)
@@ -410,7 +419,7 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 
 	response := make([]TenantSummary, 0, len(tenants.Items))
 	for _, tenant := range tenants.Items {
-		response = append(response, TenantSummary{
+		summary := TenantSummary{
 			Name:                  tenant.Name,
 			DisplayName:           displayName(tenant.Spec.DisplayName, tenant.Name),
 			Phase:                 tenant.Status.Phase,
@@ -418,9 +427,23 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 			ProjectCount:          projectCounts[tenant.Name],
 			InstanceCount:         instanceCounts[tenant.Name],
 			Owners:                append([]string(nil), tenant.Spec.Owners.Users...),
-		})
+		}
+		if page.query != "" {
+			searchFields := strings.ToLower(strings.Join([]string{
+				summary.Name,
+				summary.DisplayName,
+				summary.Phase,
+				strings.Join(summary.Owners, " "),
+			}, " "))
+			if !strings.Contains(searchFields, page.query) {
+				continue
+			}
+		}
+		response = append(response, summary)
 	}
 	sort.Slice(response, func(i, j int) bool { return response[i].Name < response[j].Name })
+	start, end := paginateRange(len(response), page.offset, page.limit)
+	response = response[start:end]
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -430,6 +453,11 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	page, err := pageQueryFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	tenants, projects, instances, _, err := s.loadCore(ctx)
 	if err != nil {
 		writeError(w, r, err)
@@ -444,7 +472,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 
 	response := make([]ProjectSummary, 0, len(projects.Items))
 	for _, project := range projects.Items {
-		response = append(response, ProjectSummary{
+		summary := ProjectSummary{
 			Name:          project.Name,
 			DisplayName:   displayName(project.Spec.DisplayName, project.Name),
 			TenantName:    project.Spec.TenantRef.Name,
@@ -453,9 +481,25 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			ClusterName:   project.Status.Placement.ClusterName,
 			NamespaceMode: string(project.Spec.NamespaceStrategy.Mode),
 			InstanceCount: instanceCounts[project.Name],
-		})
+		}
+		if page.query != "" {
+			searchFields := strings.ToLower(strings.Join([]string{
+				summary.Name,
+				summary.DisplayName,
+				summary.TenantName,
+				summary.Environment,
+				summary.Phase,
+				summary.ClusterName,
+			}, " "))
+			if !strings.Contains(searchFields, page.query) {
+				continue
+			}
+		}
+		response = append(response, summary)
 	}
 	sort.Slice(response, func(i, j int) bool { return response[i].Name < response[j].Name })
+	start, end := paginateRange(len(response), page.offset, page.limit)
+	response = response[start:end]
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -539,6 +583,11 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	page, err := pageQueryFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	tenants, projects, instances, _, err := s.loadCore(ctx)
 	if err != nil {
 		writeError(w, r, err)
@@ -555,9 +604,29 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 
 	response := make([]InstanceSummary, 0, len(instances.Items))
 	for _, instance := range instances.Items {
-		response = append(response, summarizeInstance(instance, projectTenants, classes, plans))
+		summary := summarizeInstance(instance, projectTenants, classes, plans)
+		if page.query != "" {
+			searchFields := strings.ToLower(strings.Join([]string{
+				summary.Name,
+				summary.DisplayName,
+				summary.ProjectName,
+				summary.TenantName,
+				summary.ProductClass,
+				summary.PlanName,
+				summary.Phase,
+				summary.Health,
+				summary.ClusterName,
+				summary.Namespace,
+			}, " "))
+			if !strings.Contains(searchFields, page.query) {
+				continue
+			}
+		}
+		response = append(response, summary)
 	}
 	sort.Slice(response, func(i, j int) bool { return response[i].Name < response[j].Name })
+	start, end := paginateRange(len(response), page.offset, page.limit)
+	response = response[start:end]
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -721,13 +790,19 @@ func writeError(w http.ResponseWriter, args ...any) {
 		"code", code,
 		"path", requestPath(r),
 		"method", requestMethod(r),
-		"requestId", strings.TrimSpace(requestHeader(r, "X-Request-Id")),
+		"requestId", strings.TrimSpace(requestHeader(r, requestIDHeader)),
 	)
 	logger.Error("request failed", "error", err.Error())
-	writeJSON(w, status, map[string]string{
+	response := map[string]string{
 		"error": message,
 		"code":  code,
-	})
+	}
+	if r != nil {
+		if requestID := strings.TrimSpace(requestHeader(r, requestIDHeader)); requestID != "" {
+			response["requestId"] = requestID
+		}
+	}
+	writeJSON(w, status, response)
 }
 
 func requestPath(r *http.Request) string {

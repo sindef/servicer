@@ -44,15 +44,16 @@ func (s *Server) withAudit(next http.Handler) http.Handler {
 			phase = "Failed"
 		}
 		s.recordAudit(r.Context(), AuditEventSummary{
-			Time:     time.Now().UTC().Format(time.RFC3339),
-			Type:     "BFFRequest",
-			Subject:  requestRoutePattern(r),
-			Action:   r.Method,
-			Actor:    firstNonEmpty(current.UserName, current.Email, current.Name),
-			Phase:    phase,
-			Reason:   strconv.Itoa(recorder.status),
-			Message:  http.StatusText(recorder.status),
-			Involved: auditInvolvedResource(r),
+			Time:      time.Now().UTC().Format(time.RFC3339),
+			Type:      "BFFRequest",
+			Subject:   requestRoutePattern(r),
+			RequestID: requestIDFromContext(r.Context()),
+			Action:    r.Method,
+			Actor:     firstNonEmpty(current.UserName, current.Email, current.Name),
+			Phase:     phase,
+			Reason:    strconv.Itoa(recorder.status),
+			Message:   http.StatusText(recorder.status),
+			Involved:  auditInvolvedResource(r),
 		})
 	})
 }

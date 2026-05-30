@@ -238,6 +238,7 @@ export interface AuditEventSummary {
   time?: string
   type: string
   subject: string
+  requestId?: string
   action?: string
   actor?: string
   phase?: string

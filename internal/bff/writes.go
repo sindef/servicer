@@ -236,6 +236,7 @@ func (s *Server) namespaceClaimRequestToClaim(r *http.Request, actor actor, requ
 			Annotations: map[string]string{
 				"servicer.io/requested-by": actor.Name,
 				"servicer.io/requested-at": time.Now().UTC().Format(time.RFC3339),
+				"servicer.io/request-id":   requestIDFromContext(r.Context()),
 			},
 		},
 		Spec: platformv1alpha1.NamespaceClaimSpec{
@@ -366,6 +367,7 @@ func (s *Server) handleSubmitAction(w http.ResponseWriter, r *http.Request) {
 			Annotations: map[string]string{
 				"servicer.io/requested-by":   actor.Name,
 				"servicer.io/request-reason": request.Reason,
+				"servicer.io/request-id":     requestIDFromContext(r.Context()),
 			},
 		},
 		Spec: platformv1alpha1.ActionRequestSpec{
@@ -560,6 +562,7 @@ func (s *Server) productRequestToInstance(r *http.Request, actor actor, request 
 			Annotations: map[string]string{
 				"servicer.io/requested-by": actor.Name,
 				"servicer.io/requested-at": time.Now().UTC().Format(time.RFC3339),
+				"servicer.io/request-id":   requestIDFromContext(r.Context()),
 			},
 		},
 		Spec: platformv1alpha1.ServiceInstanceSpec{

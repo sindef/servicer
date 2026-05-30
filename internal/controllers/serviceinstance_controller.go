@@ -111,13 +111,33 @@ const (
 	kubeVirtDataVolumeCRDName     = "datavolumes.cdi.kubevirt.io"
 )
 
-func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, reconcileErr error) {
+	start := time.Now()
+	previousPhase := ""
+	failureStage := ""
+	defer func() {
+		observeServiceInstanceReconcileDuration(start)
+		if reconcileErr != nil {
+			observeServiceInstanceFailure(failureStage)
+		}
+	}()
+
 	var instance platformv1alpha1.ServiceInstance
 	if err := r.Get(ctx, req.NamespacedName, &instance); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		reconcileErr = client.IgnoreNotFound(err)
+		if reconcileErr != nil {
+			failureStage = "load_instance"
+		}
+		return ctrl.Result{}, reconcileErr
 	}
 
 	originalStatus := instance.Status
+	previousPhase = originalStatus.Phase
+	defer func() {
+		if previousPhase != instance.Status.Phase {
+			observeServiceInstancePhase(instance.Status.Phase)
+		}
+	}()
 	instance.Status.ObservedGeneration = instance.Generation
 
 	// Handle deletion before any other logic.
@@ -129,6 +149,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if !serviceInstanceContains(instance.Finalizers, instanceFinalizer) {
 		instance.Finalizers = append(instance.Finalizers, instanceFinalizer)
 		if err := r.Update(ctx, &instance); err != nil {
+			failureStage = "ensure_finalizer"
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -416,6 +437,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	publishedBranch := ""
 	publishedPushed := false
 	if r.Publisher != nil && r.Publisher.Enabled() {
+		observeDeliveryPublish("attempted")
 		publishResult, publishErr := r.Publisher.Publish(ctx, deliveryrepo.Request{
 			PackagePath:  renderResult.PackagePath,
 			PackagePaths: renderResult.PackagePaths,
@@ -424,6 +446,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			Message:      fmt.Sprintf("servicer: publish %s/%s", project.Name, instance.Name),
 		})
 		if publishErr != nil {
+			observeDeliveryPublish("failed")
 			instance.Status.Phase = "Failed"
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "PublishFailed", publishErr.Error())
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "PublishFailed", "Delivery artifacts could not be published to the configured Git worktree.")
@@ -433,6 +456,7 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 			return ctrl.Result{}, nil
 		}
+		observeDeliveryPublish("succeeded")
 		if publishResult.PublishedPath != "" {
 			publishedPath = publishResult.PublishedPath
 		}

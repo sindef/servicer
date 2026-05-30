@@ -47,6 +47,30 @@ spec:
           annotations:
             summary: Servicer BFF authentication failures are elevated.
             description: More than 20 authentication failures were observed in 10 minutes.
+        - alert: ServicerBFFLoginRateLimited
+          expr: increase(servicer_bff_login_rate_limit_blocks_total[10m]) > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer BFF login rate limits are frequently blocking requests.
+            description: Login bursts are triggering BFF rate-limiter blocks above normal baseline.
+        - alert: ServicerRepositoryMirrorFailures
+          expr: increase(servicer_bff_repository_mirror_total{status="failed"}[10m]) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Servicer repository mirror operations are failing.
+            description: Repository mirror create/delete operations are failing and may leave GitOps state degraded.
+        - alert: ServicerAuditPersistenceFailures
+          expr: increase(servicer_bff_audit_persist_failures_total[10m]) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Servicer audit events are failing to persist.
+            description: Audit persistence failures were observed in the BFF and should be investigated immediately.
         - alert: ServicerBFFUpstreamFailures
           expr: increase(servicer_bff_upstream_failures_total[10m]) > 5
           for: 5m
@@ -65,6 +89,22 @@ spec:
           annotations:
             summary: Servicer controller reconcile errors detected.
             description: Controller-runtime is reporting sustained reconciliation failures.
+        - alert: ServicerServiceInstanceReconcileFailures
+          expr: increase(servicer_controller_serviceinstance_reconcile_failures_total[10m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ServiceInstance reconciles are returning errors.
+            description: ServiceInstance reconcile failures have been observed and may stall provisioning or updates.
+        - alert: ServicerDeliveryPublishingFailures
+          expr: increase(servicer_controller_delivery_publish_total{status="failed"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Delivery publishing failed in ServiceInstance reconciliation.
+            description: Delivery repository publishing is failing and can block production GitOps rollout.
         - alert: ServicerDeliveryPublishFailed
           expr: kube_customresource_status_condition{customresource_group="platform.servicer.io",customresource_kind="ServiceInstance",condition="Materialized",status="false",reason="PublishFailed"} > 0
           for: 10m

@@ -15,8 +15,11 @@ type serverMetrics struct {
 	requestDuration              *prometheus.HistogramVec
 	authFailuresTotal            prometheus.Counter
 	upstreamFailuresTotal        prometheus.Counter
+	namespaceProxyDenialsTotal   prometheus.Counter
 	loginRateLimitBlocksTotal    prometheus.Counter
 	loginRateLimitEvictionsTotal prometheus.Counter
+	repositoryMirrorTotal        *prometheus.CounterVec
+	auditPersistFailuresTotal    prometheus.Counter
 }
 
 func newServerMetrics() *serverMetrics {
@@ -58,6 +61,14 @@ func newServerMetrics() *serverMetrics {
 				Help:      "Total number of upstream Kubernetes proxy failures.",
 			},
 		),
+		namespaceProxyDenialsTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: "servicer",
+				Subsystem: "bff",
+				Name:      "namespace_proxy_denials_total",
+				Help:      "Total number of denied namespace Kubernetes proxy requests.",
+			},
+		),
 		loginRateLimitBlocksTotal: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Namespace: "servicer",
@@ -74,15 +85,40 @@ func newServerMetrics() *serverMetrics {
 				Help:      "Total number of expired login rate limiter entries evicted.",
 			},
 		),
+		repositoryMirrorTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "servicer",
+				Subsystem: "bff",
+				Name:      "repository_mirror_total",
+				Help:      "Total number of repository mirror operations by outcome.",
+			},
+			[]string{"operation", "status"},
+		),
+		auditPersistFailuresTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: "servicer",
+				Subsystem: "bff",
+				Name:      "audit_persist_failures_total",
+				Help:      "Total number of audit persistence failures.",
+			},
+		),
 	}
 	registry.MustRegister(
 		metrics.requestsTotal,
 		metrics.requestDuration,
 		metrics.authFailuresTotal,
 		metrics.upstreamFailuresTotal,
+		metrics.namespaceProxyDenialsTotal,
 		metrics.loginRateLimitBlocksTotal,
 		metrics.loginRateLimitEvictionsTotal,
+		metrics.repositoryMirrorTotal,
+		metrics.auditPersistFailuresTotal,
 	)
+	for _, operation := range []string{"create", "update", "delete"} {
+		for _, status := range []string{"succeeded", "failed"} {
+			metrics.repositoryMirrorTotal.WithLabelValues(operation, status).Add(0)
+		}
+	}
 	return metrics
 }
 
