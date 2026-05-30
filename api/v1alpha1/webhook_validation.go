@@ -2,7 +2,9 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -720,12 +722,16 @@ func validateActionRequestSpec(spec ActionRequestSpec) field.ErrorList {
 	}
 	if spec.Approval.Mode == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec", "approval", "mode"), "mode is required"))
+	} else if !isSupportedApprovalMode(spec.Approval.Mode) {
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("spec", "approval", "mode"), spec.Approval.Mode, supportedApprovalModes()))
 	}
 	if strings.TrimSpace(spec.RequestedBy.Subject) == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec", "requestedBy", "subject"), "subject is required"))
 	}
 	if spec.RequestedBy.Source == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec", "requestedBy", "source"), "source is required"))
+	} else if !isSupportedRequestSource(spec.RequestedBy.Source) {
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("spec", "requestedBy", "source"), spec.RequestedBy.Source, supportedRequestSources()))
 	}
 	return allErrs
 }
@@ -834,6 +840,12 @@ func validateOperatorPackageSpec(spec OperatorPackageSpec) field.ErrorList {
 	for i, probe := range spec.Probes {
 		if strings.TrimSpace(probe.CRD) == "" {
 			allErrs = append(allErrs, field.Required(field.NewPath("spec", "probes").Index(i).Child("crd"), "crd is required"))
+		}
+	}
+	if productionModeEnabled() && !allowMutableOperatorRevisions() {
+		revision := strings.TrimSpace(spec.Source.TargetRevision)
+		if revision == "" || strings.EqualFold(revision, "head") {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "source", "targetRevision"), spec.Source.TargetRevision, "mutable targetRevision is not allowed in production mode; use an immutable git commit SHA or explicit tag"))
 		}
 	}
 	return allErrs
@@ -1136,6 +1148,7 @@ func validateServiceClassSpec(spec ServiceClassSpec) field.ErrorList {
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "requiredPackages").Index(i), requiredPackage, "kubevirt service classes must rely on preinstalled KubeVirt/CDI dependencies rather than OperatorPackage installation"))
 		}
 	}
+	allErrs = append(allErrs, validateJSONMap(spec.DefaultParameters, field.NewPath("spec", "defaultParameters"))...)
 	return allErrs
 }
 
@@ -1159,6 +1172,7 @@ func validateServicePlanUpdate(previous, current *ServicePlan) error {
 func validateServicePlanSpec(spec ServicePlanSpec) field.ErrorList {
 	allErrs := validateLocalRef(spec.ServiceClassRef, field.NewPath("spec", "serviceClassRef"))
 	allErrs = append(allErrs, validatePolicyRefs(spec.PolicyRefs, field.NewPath("spec", "policyRefs"))...)
+	allErrs = append(allErrs, validateJSONMap(spec.DefaultParameters, field.NewPath("spec", "defaultParameters"))...)
 	return allErrs
 }
 
@@ -1223,6 +1237,7 @@ func validateServiceInstanceSpec(spec ServiceInstanceSpec) field.ErrorList {
 	allErrs = append(allErrs, validateExposure(spec.Exposure, field.NewPath("spec", "exposure"))...)
 	allErrs = append(allErrs, validateSecretPolicy(spec.SecretPolicy, field.NewPath("spec", "secretPolicy"))...)
 	allErrs = append(allErrs, validateDeletionPolicy(spec.DeletionPolicy, field.NewPath("spec", "deletionPolicy"))...)
+	allErrs = append(allErrs, validateJSONMap(spec.Parameters, field.NewPath("spec", "parameters"))...)
 	return allErrs
 }
 
@@ -1450,6 +1465,9 @@ func validateExposure(exposure ExposureSpec, path *field.Path) field.ErrorList {
 	if exposure.Mode == "" {
 		return field.ErrorList{field.Required(path.Child("mode"), "mode is required")}
 	}
+	if !isSupportedExposureMode(exposure.Mode) {
+		return field.ErrorList{field.NotSupported(path.Child("mode"), exposure.Mode, supportedExposureModes())}
+	}
 	return nil
 }
 
@@ -1457,6 +1475,9 @@ func validateSecretPolicy(policy SecretPolicySpec, path *field.Path) field.Error
 	allErrs := field.ErrorList{}
 	if policy.DeliveryMode == "" {
 		return field.ErrorList{field.Required(path.Child("deliveryMode"), "deliveryMode is required")}
+	}
+	if !isSupportedSecretDeliveryMode(policy.DeliveryMode) {
+		allErrs = append(allErrs, field.NotSupported(path.Child("deliveryMode"), policy.DeliveryMode, supportedSecretDeliveryModes()))
 	}
 	if policy.ExternalSecretProvider != "" && policy.DeliveryMode != SecretDeliveryModeExternalSecret {
 		allErrs = append(allErrs, field.Forbidden(path.Child("externalSecretProvider"), "externalSecretProvider is only valid when deliveryMode=external-secret"))
@@ -1495,7 +1516,102 @@ func validateDeletionPolicy(policy DeletionPolicy, path *field.Path) field.Error
 	if policy == "" {
 		return field.ErrorList{field.Required(path, "deletionPolicy is required")}
 	}
+	if !isSupportedDeletionPolicy(policy) {
+		return field.ErrorList{field.NotSupported(path, policy, supportedDeletionPolicies())}
+	}
 	return nil
+}
+
+func validateJSONMap(raw *ParametersObject, path *field.Path) field.ErrorList {
+	if raw == nil || len(raw.Raw) == 0 || string(raw.Raw) == "null" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(raw.Raw))
+	if strings.HasPrefix(trimmed, "{") {
+		return nil
+	}
+	var decoded any
+	if err := json.Unmarshal(raw.Raw, &decoded); err != nil {
+		return field.ErrorList{field.Invalid(path, string(raw.Raw), fmt.Sprintf("must be valid JSON object: %v", err))}
+	}
+	if _, ok := decoded.(map[string]any); !ok {
+		return field.ErrorList{field.Invalid(path, string(raw.Raw), "must be a JSON object")}
+	}
+	return nil
+}
+
+func isSupportedExposureMode(mode ExposureMode) bool {
+	switch mode {
+	case ExposureModeClusterInternal, ExposureModePrivateIngress, ExposureModePublicIngress:
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedExposureModes() []string {
+	return []string{string(ExposureModeClusterInternal), string(ExposureModePrivateIngress), string(ExposureModePublicIngress)}
+}
+
+func isSupportedSecretDeliveryMode(mode SecretDeliveryMode) bool {
+	switch mode {
+	case SecretDeliveryModeExternalSecret, SecretDeliveryModeDirectSecretRef, SecretDeliveryModeManual:
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedSecretDeliveryModes() []string {
+	return []string{string(SecretDeliveryModeExternalSecret), string(SecretDeliveryModeDirectSecretRef), string(SecretDeliveryModeManual)}
+}
+
+func isSupportedDeletionPolicy(policy DeletionPolicy) bool {
+	switch policy {
+	case DeletionPolicyDelete, DeletionPolicyOrphan, DeletionPolicySnapshot:
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedDeletionPolicies() []string {
+	return []string{string(DeletionPolicyDelete), string(DeletionPolicyOrphan), string(DeletionPolicySnapshot)}
+}
+
+func isSupportedApprovalMode(mode ApprovalMode) bool {
+	switch mode {
+	case ApprovalModeAuto, ApprovalModeRequired, ApprovalModeApproved, ApprovalModeRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedApprovalModes() []string {
+	return []string{string(ApprovalModeAuto), string(ApprovalModeRequired), string(ApprovalModeApproved), string(ApprovalModeRejected)}
+}
+
+func isSupportedRequestSource(source RequestSource) bool {
+	switch source {
+	case RequestSourceUI, RequestSourceAPI, RequestSourceAutomation:
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedRequestSources() []string {
+	return []string{string(RequestSourceUI), string(RequestSourceAPI), string(RequestSourceAutomation)}
+}
+
+func productionModeEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("SERVICER_ENVIRONMENT")), string(EnvironmentProduction))
+}
+
+func allowMutableOperatorRevisions() bool {
+	allow := strings.TrimSpace(os.Getenv("SERVICER_ALLOW_MUTABLE_OPERATOR_REVISIONS"))
+	return strings.EqualFold(allow, "1") || strings.EqualFold(allow, "true") || strings.EqualFold(allow, "yes")
 }
 
 func validateLabelMap(labels map[string]string, path *field.Path) field.ErrorList {

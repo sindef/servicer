@@ -2,7 +2,10 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 func TestServiceInstanceDefaulting(t *testing.T) {
@@ -357,5 +360,142 @@ func TestRoleBindingRejectsScopeMutation(t *testing.T) {
 
 	if _, err := newBinding.ValidateUpdate(context.Background(), oldBinding, newBinding); err == nil {
 		t.Fatal("expected validation error for scope mutation")
+	}
+}
+
+func TestActionRequestRejectsInvalidApprovalAndSourceEnums(t *testing.T) {
+	request := &ActionRequest{
+		Spec: ActionRequestSpec{
+			TargetRef:      TypedObjectReference{APIVersion: "v1", Kind: "Pod", Name: "demo"},
+			Action:         "restart",
+			IdempotencyKey: "abc",
+			Approval:       ApprovalSpec{Mode: ApprovalMode("maybe")},
+			RequestedBy: RequestedBySpec{
+				Subject: "alice@example.com",
+				Source:  RequestSource("cli"),
+			},
+		},
+	}
+
+	_, err := request.ValidateCreate(context.Background(), request)
+	if err == nil {
+		t.Fatal("expected validation error for invalid approval/source enums")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "spec.approval.mode") || !strings.Contains(msg, "spec.requestedBy.source") {
+		t.Fatalf("expected enum errors in webhook response, got %v", err)
+	}
+}
+
+func TestServiceInstanceRejectsInvalidExposureMode(t *testing.T) {
+	instance := &ServiceInstance{
+		Spec: ServiceInstanceSpec{
+			ProjectRef:      LocalObjectReference{Name: "demo"},
+			ServiceClassRef: LocalObjectReference{Name: "valkey"},
+			ServicePlanRef:  LocalObjectReference{Name: "standard"},
+			Exposure:        ExposureSpec{Mode: ExposureMode("internet")},
+			SecretPolicy:    SecretPolicySpec{DeliveryMode: SecretDeliveryModeExternalSecret},
+			DeletionPolicy:  DeletionPolicyDelete,
+		},
+	}
+
+	if _, err := instance.ValidateCreate(context.Background(), instance); err == nil {
+		t.Fatal("expected validation error for invalid exposure mode")
+	}
+}
+
+func TestServiceInstanceRejectsInvalidDeletionPolicy(t *testing.T) {
+	instance := &ServiceInstance{
+		Spec: ServiceInstanceSpec{
+			ProjectRef:      LocalObjectReference{Name: "demo"},
+			ServiceClassRef: LocalObjectReference{Name: "valkey"},
+			ServicePlanRef:  LocalObjectReference{Name: "standard"},
+			Exposure:        ExposureSpec{Mode: ExposureModeClusterInternal},
+			SecretPolicy:    SecretPolicySpec{DeliveryMode: SecretDeliveryModeExternalSecret},
+			DeletionPolicy:  DeletionPolicy("archive"),
+		},
+	}
+
+	if _, err := instance.ValidateCreate(context.Background(), instance); err == nil {
+		t.Fatal("expected validation error for invalid deletion policy")
+	}
+}
+
+func TestServiceInstanceRejectsInvalidParametersType(t *testing.T) {
+	instance := &ServiceInstance{
+		Spec: ServiceInstanceSpec{
+			ProjectRef:      LocalObjectReference{Name: "demo"},
+			ServiceClassRef: LocalObjectReference{Name: "valkey"},
+			ServicePlanRef:  LocalObjectReference{Name: "standard"},
+			Parameters:      &apiextensionsv1.JSON{Raw: []byte(`"not-an-object"`)},
+			Exposure:        ExposureSpec{Mode: ExposureModeClusterInternal},
+			SecretPolicy:    SecretPolicySpec{DeliveryMode: SecretDeliveryModeExternalSecret},
+			DeletionPolicy:  DeletionPolicyDelete,
+		},
+	}
+
+	if _, err := instance.ValidateCreate(context.Background(), instance); err == nil {
+		t.Fatal("expected validation error for non-object parameters")
+	}
+}
+
+func TestServiceInstanceAcceptsValidSpec(t *testing.T) {
+	instance := &ServiceInstance{
+		Spec: ServiceInstanceSpec{
+			ProjectRef:      LocalObjectReference{Name: "demo"},
+			ServiceClassRef: LocalObjectReference{Name: "valkey"},
+			ServicePlanRef:  LocalObjectReference{Name: "standard"},
+			Parameters:      &apiextensionsv1.JSON{Raw: []byte(`{"replicas":3}`)},
+			Exposure:        ExposureSpec{Mode: ExposureModeClusterInternal},
+			SecretPolicy: SecretPolicySpec{
+				DeliveryMode:           SecretDeliveryModeExternalSecret,
+				ExternalSecretProvider: ExternalSecretProviderKubernetes,
+			},
+			DeletionPolicy: DeletionPolicyDelete,
+		},
+	}
+
+	if _, err := instance.ValidateCreate(context.Background(), instance); err != nil {
+		t.Fatalf("expected valid service instance spec to pass validation: %v", err)
+	}
+}
+
+func TestOperatorPackageRejectsMutableRevisionInProduction(t *testing.T) {
+	t.Setenv("SERVICER_ENVIRONMENT", "production")
+	t.Setenv("SERVICER_ALLOW_MUTABLE_OPERATOR_REVISIONS", "")
+
+	pkg := &OperatorPackage{
+		Spec: OperatorPackageSpec{
+			DisplayName: "CNPG",
+			Probes:      []OperatorProbe{{CRD: "clusters.postgresql.cnpg.io"}},
+			Source: OperatorPackageSource{
+				ManifestURL:    "https://example.invalid/manifests.yaml",
+				TargetRevision: "HEAD",
+			},
+		},
+	}
+
+	if _, err := pkg.ValidateCreate(context.Background(), pkg); err == nil {
+		t.Fatal("expected production validation error for mutable targetRevision")
+	}
+}
+
+func TestOperatorPackageAllowsMutableRevisionWithExplicitOptIn(t *testing.T) {
+	t.Setenv("SERVICER_ENVIRONMENT", "production")
+	t.Setenv("SERVICER_ALLOW_MUTABLE_OPERATOR_REVISIONS", "true")
+
+	pkg := &OperatorPackage{
+		Spec: OperatorPackageSpec{
+			DisplayName: "CNPG",
+			Probes:      []OperatorProbe{{CRD: "clusters.postgresql.cnpg.io"}},
+			Source: OperatorPackageSource{
+				ManifestURL:    "https://example.invalid/manifests.yaml",
+				TargetRevision: "HEAD",
+			},
+		},
+	}
+
+	if _, err := pkg.ValidateCreate(context.Background(), pkg); err != nil {
+		t.Fatalf("expected mutable revision with explicit opt-in to validate: %v", err)
 	}
 }

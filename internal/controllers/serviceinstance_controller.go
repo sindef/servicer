@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -46,7 +47,12 @@ type ServiceInstanceReconciler struct {
 	DeliveryRepoRef  string
 	DeliveryRepoPath string
 	ProductionMode   bool
-	targetClients    sync.Map // keyed by ClusterTarget name → client.Client
+	targetClients    sync.Map // keyed by ClusterTarget name → targetClientCacheEntry
+}
+
+type targetClientCacheEntry struct {
+	key    string
+	client client.Client
 }
 
 // getTargetClient lazily builds and caches a client for the given ClusterTarget's remote cluster.
@@ -55,17 +61,22 @@ func (r *ServiceInstanceReconciler) getTargetClient(ctx context.Context, target 
 		return nil, nil
 	}
 	if strings.TrimSpace(target.Spec.ConnectionRef.Name) == "" || strings.TrimSpace(target.Spec.ConnectionRef.Namespace) == "" {
+		r.targetClients.Delete(target.Name)
 		return nil, nil
-	}
-	if cached, ok := r.targetClients.Load(target.Name); ok {
-		return cached.(client.Client), nil
 	}
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Name: target.Spec.ConnectionRef.Name, Namespace: target.Spec.ConnectionRef.Namespace}, &secret); err != nil {
 		return nil, fmt.Errorf("reading connection secret for ClusterTarget %q: %w", target.Name, err)
 	}
+	cacheKey := targetClientCacheKey(target, &secret)
+	if cached, ok := r.targetClients.Load(target.Name); ok {
+		if entry, castOK := cached.(targetClientCacheEntry); castOK && entry.key == cacheKey && entry.client != nil {
+			return entry.client, nil
+		}
+	}
 	kubeconfigBytes := clusterConnectionData(&secret)
 	if len(kubeconfigBytes) == 0 {
+		r.targetClients.Delete(target.Name)
 		return nil, nil
 	}
 	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigBytes)
@@ -76,8 +87,21 @@ func (r *ServiceInstanceReconciler) getTargetClient(ctx context.Context, target 
 	if err != nil {
 		return nil, fmt.Errorf("building client for ClusterTarget %q: %w", target.Name, err)
 	}
-	r.targetClients.Store(target.Name, c)
+	r.targetClients.Store(target.Name, targetClientCacheEntry{key: cacheKey, client: c})
 	return c, nil
+}
+
+func targetClientCacheKey(target *platformv1alpha1.ClusterTarget, secret *corev1.Secret) string {
+	if target == nil || secret == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		target.Name,
+		fmt.Sprintf("%d", target.Generation),
+		target.ResourceVersion,
+		secret.Namespace + "/" + secret.Name,
+		secret.ResourceVersion,
+	}, "|")
 }
 
 const (
@@ -172,10 +196,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if clusterName == "" {
 		instance.Status.Phase = "PendingPlacement"
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Placed", metav1.ConditionFalse, "PlacementPending", "Service instance is waiting for cluster placement.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if err := r.Status().Update(ctx, &instance); err != nil {
-				return ctrl.Result{}, err
-			}
+		if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -203,10 +225,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "OperatorPackagePending", "Service instance is waiting for required operator packages to become ready.")
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "OperatorPackagePending", message)
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "OperatorPackagePending", "Service instance is blocked on an operator dependency, not failed.")
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if err := r.Status().Update(ctx, &instance); err != nil {
-					return ctrl.Result{}, err
-				}
+			if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
@@ -221,10 +241,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is waiting for KubeVirt runtime dependencies.")
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is blocked on a runtime dependency, not failed.")
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if err := r.Status().Update(ctx, &instance); err != nil {
-					return ctrl.Result{}, err
-				}
+			if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
@@ -241,10 +259,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is waiting for KubeVirt runtime dependencies.")
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is blocked on a runtime dependency, not failed.")
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if err := r.Status().Update(ctx, &instance); err != nil {
-					return ctrl.Result{}, err
-				}
+			if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
@@ -256,10 +272,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is waiting for KubeVirt runtime dependencies.")
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "RuntimeDependencyMissing", message)
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, "RuntimeDependencyMissing", "Service instance is blocked on a runtime dependency, not failed.")
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if err := r.Status().Update(ctx, &instance); err != nil {
-					return ctrl.Result{}, err
-				}
+			if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
@@ -273,10 +287,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "UnsupportedServiceClass", "Service instance cannot become sync-ready because its service class is unsupported.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "UnsupportedServiceClass", "Service instance cannot reconcile runtime health because its service class is unsupported.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "UnsupportedServiceClass", "Service instance cannot be reconciled because its service class is unsupported.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if err := r.Status().Update(ctx, &instance); err != nil {
-				return ctrl.Result{}, err
-			}
+		if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
@@ -298,10 +310,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ValidationError", "Service instance validation failed before sync readiness.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "ValidationError", "Service instance validation failed before runtime reconciliation.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ValidationError", err.Error())
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-				return ctrl.Result{}, updateErr
-			}
+		if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+			return ctrl.Result{}, updateErr
 		}
 		return ctrl.Result{}, nil
 	}
@@ -312,10 +322,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ValidationFailed", "Service instance validation failed before sync readiness.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "ValidationFailed", "Service instance validation failed before runtime reconciliation.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ValidationFailed", "Service instance validation failed.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if err := r.Status().Update(ctx, &instance); err != nil {
-				return ctrl.Result{}, err
-			}
+		if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
@@ -325,19 +333,15 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		instance.Status.Phase = "Failed"
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "RenderFailed", err.Error())
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "RenderFailed", err.Error())
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if err := r.Status().Update(ctx, &instance); err != nil {
-				return ctrl.Result{}, err
-			}
+		if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 	if r.productionDeliveryRequired(renderResult) && !r.deliveryPublishingConfigured() {
 		markDeliveryRepoRequired(&instance, "DeliveryRepoRequired", "Production mode requires delivery repository publishing with auto-commit and auto-push before service instances can be provisioned.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-				return ctrl.Result{}, updateErr
-			}
+		if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+			return ctrl.Result{}, updateErr
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -350,20 +354,16 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.ensureCredentialSecrets(ctx, &instance, renderResult, targetClient); err != nil {
 		if apierrors.IsNotFound(err) {
 			markCredentialProjectionPending(&instance)
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-					return ctrl.Result{}, updateErr
-				}
+			if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+				return ctrl.Result{}, updateErr
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 		instance.Status.Phase = "Failed"
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "CredentialProjectionFailed", err.Error())
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "CredentialProjectionFailed", "Service instance credential projection failed.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-				return ctrl.Result{}, updateErr
-			}
+		if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+			return ctrl.Result{}, updateErr
 		}
 		return ctrl.Result{}, nil
 	}
@@ -383,10 +383,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			instance.Status.Phase = "Failed"
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "ExternalSecretRenderFailed", projectionErr.Error())
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ExternalSecretRenderFailed", "Credential projection artifacts could not be rendered.")
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-					return ctrl.Result{}, updateErr
-				}
+			if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+				return ctrl.Result{}, updateErr
 			}
 			return ctrl.Result{}, nil
 		}
@@ -407,10 +405,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "MaterializeFailed", "Delivery artifacts are not ready for Argo CD reconciliation.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, "MaterializeFailed", "Service instance runtime cannot be reconciled until delivery artifacts are materialized.")
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "MaterializeFailed", "Delivery artifacts could not be materialized.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if err := r.Status().Update(ctx, &instance); err != nil {
-				return ctrl.Result{}, err
-			}
+		if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
@@ -432,10 +428,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, "PublishFailed", publishErr.Error())
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "PublishFailed", "Delivery artifacts could not be published to the configured Git worktree.")
 			setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "PublishFailed", "Delivery artifacts could not be published.")
-			if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-				if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-					return ctrl.Result{}, updateErr
-				}
+			if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+				return ctrl.Result{}, updateErr
 			}
 			return ctrl.Result{}, nil
 		}
@@ -449,10 +443,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	if r.productionDeliveryRequired(renderResult) && !publishedPushed {
 		markDeliveryRepoRequired(&instance, "DeliveryPushRequired", "Production mode requires delivery artifacts to be pushed to the configured Git repository before service instances can be provisioned.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-				return ctrl.Result{}, updateErr
-			}
+		if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+			return ctrl.Result{}, updateErr
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -485,10 +477,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		instance.Status.Phase = "Failed"
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, "ArgoApplicationFailed", err.Error())
 		setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, "ArgoApplicationFailed", "Argo CD application could not be reconciled.")
-		if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-			if updateErr := r.Status().Update(ctx, &instance); updateErr != nil {
-				return ctrl.Result{}, updateErr
-			}
+		if updateErr := r.persistStatusIfChanged(ctx, &instance, originalStatus); updateErr != nil {
+			return ctrl.Result{}, updateErr
 		}
 		return ctrl.Result{}, nil
 	}
@@ -519,10 +509,8 @@ func (r *ServiceInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		r.Recorder.Event(&instance, eventType, instance.Status.Phase, instance.Status.Health.Summary)
 	}
 
-	if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-		if err := r.Status().Update(ctx, &instance); err != nil {
-			return ctrl.Result{}, err
-		}
+	if err := r.persistStatusIfChanged(ctx, &instance, originalStatus); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	if instance.Status.Phase != "Ready" {
@@ -538,6 +526,28 @@ func (r *ServiceInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+func (r *ServiceInstanceReconciler) persistStatusIfChanged(ctx context.Context, desired *platformv1alpha1.ServiceInstance, original platformv1alpha1.ServiceInstanceStatus) error {
+	if desired == nil || equality.Semantic.DeepEqual(original, desired.Status) {
+		return nil
+	}
+	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var current platformv1alpha1.ServiceInstance
+		if err := r.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		base := current.DeepCopy()
+		current.Status = desired.Status
+		if err := r.Status().Patch(ctx, &current, client.MergeFrom(base)); err != nil {
+			if apierrors.IsConflict(err) {
+				return err
+			}
+			return err
+		}
+		return nil
+	})
+}
+
 func (r *ServiceInstanceReconciler) handleDependencyError(ctx context.Context, instance *platformv1alpha1.ServiceInstance, originalStatus platformv1alpha1.ServiceInstanceStatus, reason, message string, err error) (ctrl.Result, error) {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
@@ -546,10 +556,8 @@ func (r *ServiceInstanceReconciler) handleDependencyError(ctx context.Context, i
 	instance.Status.Phase = "Failed"
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Accepted", metav1.ConditionFalse, reason, message)
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, reason, message)
-	if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-			return ctrl.Result{}, updateErr
-		}
+	if updateErr := r.persistStatusIfChanged(ctx, instance, originalStatus); updateErr != nil {
+		return ctrl.Result{}, updateErr
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
@@ -559,10 +567,8 @@ func (r *ServiceInstanceReconciler) handleDependencyPending(ctx context.Context,
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Accepted", metav1.ConditionFalse, reason, message)
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Ready", metav1.ConditionFalse, reason, message)
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionFalse, reason, message)
-	if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-			return ctrl.Result{}, updateErr
-		}
+	if updateErr := r.persistStatusIfChanged(ctx, instance, originalStatus); updateErr != nil {
+		return ctrl.Result{}, updateErr
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
@@ -644,10 +650,8 @@ func (r *ServiceInstanceReconciler) handleValidationFailure(ctx context.Context,
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Materialized", metav1.ConditionFalse, reason, "Service instance validation failed before materialization.")
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Synced", metav1.ConditionFalse, reason, "Service instance validation failed before sync readiness.")
 	setStatusCondition(&instance.Status.Conditions, instance.Generation, "Failed", metav1.ConditionTrue, reason, message)
-	if !equality.Semantic.DeepEqual(originalStatus, instance.Status) {
-		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-			return ctrl.Result{}, updateErr
-		}
+	if updateErr := r.persistStatusIfChanged(ctx, instance, originalStatus); updateErr != nil {
+		return ctrl.Result{}, updateErr
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }

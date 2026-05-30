@@ -2,13 +2,16 @@ package controllers
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"github.com/sindef/servicer/internal/adapters"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -211,4 +214,108 @@ func crdObject(name string) *unstructured.Unstructured {
 			},
 		},
 	}
+}
+
+func TestGetTargetClientRefreshesAfterSecretRotationAndTargetUpdate(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	target := &platformv1alpha1.ClusterTarget{
+		ObjectMeta: metav1.ObjectMeta{Name: "remote-a", Generation: 1, ResourceVersion: "1"},
+		Spec: platformv1alpha1.ClusterTargetSpec{
+			ConnectionRef: platformv1alpha1.NamespacedObjectReference{Name: "remote-a-kubeconfig", Namespace: "servicer-system"},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "remote-a-kubeconfig", Namespace: "servicer-system", ResourceVersion: "1"},
+		Data:       map[string][]byte{"kubeconfig": []byte(sampleRemoteKubeconfig("token-v1"))},
+	}
+	reconciler := &ServiceInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(target, secret).Build(),
+		Scheme: scheme,
+	}
+
+	first, err := reconciler.getTargetClient(context.Background(), target)
+	if err != nil {
+		t.Fatalf("getTargetClient (first) returned error: %v", err)
+	}
+	if first == nil {
+		t.Fatalf("expected first target client")
+	}
+
+	var rotated corev1.Secret
+	secretKey := types.NamespacedName{Name: "remote-a-kubeconfig", Namespace: "servicer-system"}
+	if err := reconciler.Get(context.Background(), secretKey, &rotated); err != nil {
+		t.Fatalf("get secret before rotation: %v", err)
+	}
+	rotated.Data["kubeconfig"] = []byte(sampleRemoteKubeconfig("token-v2"))
+	if err := reconciler.Update(context.Background(), &rotated); err != nil {
+		t.Fatalf("update rotated secret: %v", err)
+	}
+
+	second, err := reconciler.getTargetClient(context.Background(), target)
+	if err != nil {
+		t.Fatalf("getTargetClient (after secret rotation) returned error: %v", err)
+	}
+	if second == nil {
+		t.Fatalf("expected second target client")
+	}
+	if clientPointer(first) == clientPointer(second) {
+		t.Fatalf("expected secret rotation to invalidate cached target client")
+	}
+
+	var updatedTarget platformv1alpha1.ClusterTarget
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "remote-a"}, &updatedTarget); err != nil {
+		t.Fatalf("get target before update: %v", err)
+	}
+	if updatedTarget.Annotations == nil {
+		updatedTarget.Annotations = map[string]string{}
+	}
+	updatedTarget.Annotations["servicer.io/cache-bust"] = "1"
+	if err := reconciler.Update(context.Background(), &updatedTarget); err != nil {
+		t.Fatalf("update target: %v", err)
+	}
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "remote-a"}, &updatedTarget); err != nil {
+		t.Fatalf("reload target after update: %v", err)
+	}
+
+	third, err := reconciler.getTargetClient(context.Background(), &updatedTarget)
+	if err != nil {
+		t.Fatalf("getTargetClient (after target update) returned error: %v", err)
+	}
+	if third == nil {
+		t.Fatalf("expected third target client")
+	}
+	if clientPointer(second) == clientPointer(third) {
+		t.Fatalf("expected target update to invalidate cached target client")
+	}
+}
+
+func sampleRemoteKubeconfig(token string) string {
+	return `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://remote-a.example.invalid
+  name: remote-a
+contexts:
+- context:
+    cluster: remote-a
+    user: remote-a
+  name: remote-a
+current-context: remote-a
+users:
+- name: remote-a
+  user:
+    token: ` + token + `
+`
+}
+
+func clientPointer(c client.Client) uintptr {
+	if c == nil {
+		return 0
+	}
+	value := reflect.ValueOf(c)
+	if value.Kind() != reflect.Pointer {
+		return 0
+	}
+	return value.Pointer()
 }
