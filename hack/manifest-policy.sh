@@ -22,6 +22,11 @@ if grep -Eq 'verbs:[[:space:]]*\[[[:space:]]*"?\*"?[[:space:]]*\]' "$rendered"; 
   exit 1
 fi
 
+if grep -Eq 'apiGroups:[[:space:]]*\[[[:space:]]*"?\*"?[[:space:]]*\]' "$rendered"; then
+  echo "production RBAC must not use wildcard apiGroups" >&2
+  exit 1
+fi
+
 required=(
   'kind: PodDisruptionBudget'
   'kind: NetworkPolicy'
@@ -41,3 +46,5 @@ for pattern in "${required[@]}"; do
     exit 1
   fi
 done
+
+./hack/rbac-policy.sh "$manifest"

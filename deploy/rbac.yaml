@@ -3,73 +3,76 @@ kind: ClusterRole
 metadata:
   name: servicer-manager
 rules:
+  # Controller read access across reconciled platform APIs.
   - apiGroups: ["platform.servicer.io"]
     resources:
       - actionrequests
-      - authproviders
       - clustertargets
-      - groups
       - namespaceclaims
       - operatorpackages
       - policies
       - projects
-      - rolebindings
       - servicebindings
       - serviceclasses
       - serviceinstances
       - serviceplans
       - tenants
-      - users
       - virtualmachineclaims
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch"]
+  # Only ServiceInstances are controller-created/updated as primary state.
+  - apiGroups: ["platform.servicer.io"]
+    resources: ["serviceinstances"]
+    verbs: ["create", "update", "patch"]
   - apiGroups: ["platform.servicer.io"]
     resources:
       - actionrequests/status
-      - authproviders/status
       - clustertargets/status
-      - groups/status
       - namespaceclaims/status
       - operatorpackages/status
       - policies/status
       - projects/status
-      - rolebindings/status
       - servicebindings/status
       - serviceclasses/status
       - serviceinstances/status
       - serviceplans/status
       - tenants/status
-      - users/status
       - virtualmachineclaims/status
     verbs: ["get", "update", "patch"]
   - apiGroups: [""]
-    resources: ["namespaces", "configmaps", "serviceaccounts"]
+    resources: ["namespaces"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
     resources: ["events"]
-    verbs: ["get", "list", "watch", "create", "patch"]
+    verbs: ["create", "patch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["apps"]
-    resources: ["statefulsets", "deployments", "replicasets", "daemonsets"]
+    resources: ["statefulsets", "deployments", "daemonsets"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["external-secrets.io"]
     resources: ["secretstores", "externalsecrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
+    resources: ["applications", "applicationsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
@@ -91,7 +94,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: servicer-bff
+  name: servicer-bff-read
 rules:
   - apiGroups: ["platform.servicer.io"]
     resources:
@@ -111,28 +114,56 @@ rules:
       - tenants
       - users
       - virtualmachineclaims
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["configmaps", "events", "namespaces", "pods", "secrets", "serviceaccounts"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "daemonsets"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["batch"]
-    resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles", "rolebindings"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["configmaps", "events", "secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: servicer-bff-write
+rules:
+  - apiGroups: ["platform.servicer.io"]
+    resources:
+      - actionrequests
+      - authproviders
+      - clustertargets
+      - groups
+      - namespaceclaims
+      - projects
+      - rolebindings
+      - serviceclasses
+      - serviceinstances
+      - tenants
+      - users
+    verbs: ["create", "update", "patch", "delete"]
+  # BFF write access is constrained to API-owned secret/config storage.
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: servicer-bff
+  name: servicer-bff-read
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: servicer-bff
+  name: servicer-bff-read
+subjects:
+  - kind: ServiceAccount
+    name: servicer-bff
+    namespace: servicer-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: servicer-bff-write
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: servicer-bff-write
 subjects:
   - kind: ServiceAccount
     name: servicer-bff

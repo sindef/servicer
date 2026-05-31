@@ -82,15 +82,31 @@ If your ingress, monitoring, DNS, Argo CD, Git, LDAP, or OIDC endpoints live els
 
 ## Component Permissions
 
-`servicer-manager` owns reconciliation. It needs explicit access to Servicer CRDs, runtime namespaces, generated credentials, workload observation, External Secrets resources, Argo CD Applications, webhook certificates, and leader-election Leases.
+`servicer-manager` owns reconciliation. It has read-only access across reconciled Servicer CRDs, status-write access for reconciler statuses, and targeted runtime mutation rights for namespace/serviceinstance reconciliation, action execution, External Secrets projection, Argo CD application objects, and leader election.
 
-`servicer-bff` owns browser/API requests. It can read and mutate Servicer CRDs through authorized endpoints, read runtime state for detail pages, manage repository credential Secrets, and persist audit ConfigMaps.
+`servicer-bff` uses split roles:
+
+- `servicer-bff-read`: read-only CRD plus Secret/ConfigMap/Event access for API responses, auth, audit, and namespace access token validation.
+- `servicer-bff-write`: CRD writes only for exposed API mutation endpoints and core writes only to `secrets`/`configmaps` (auth material, repository registration, audit store).
+
+This split removes direct BFF write access to Kubernetes RBAC objects, pods, namespaces, and workload controllers.
 
 `servicer-webhook-bootstrap` only creates/updates the webhook serving Secret and patches admission webhook configurations.
 
 `servicer-control-plane-backup` only reads Servicer CRDs and selected runtime state for backup/restore jobs.
 
 Wildcard RBAC rules are not allowed in production manifests.
+
+The permission boundaries above are derived from current API usage in `internal/bff/*.go` and `internal/controllers/*_controller.go` (create/update/delete/patch call sites), then enforced by manifest policy checks.
+
+### Remaining Broad Permissions
+
+- `servicer-manager` retains cluster-wide `secrets` and `namespaces` mutation rights because runtime credentials and tenant namespaces are created/rotated/deleted during reconciliation and action execution.
+  - Owner: Platform controller maintainers.
+- `servicer-manager` retains workload patch/update rights (`deployments`, `statefulsets`, `daemonsets`, `jobs`, `cronjobs`, `pods`) because service binding/action flows patch live workloads for restart/credential integration and create runtime admin jobs.
+  - Owner: Product controller maintainers.
+- `servicer-manager` retains `argoproj.io` application/applicationSet mutation rights because GitOps delivery reconciliation creates, updates, and removes Argo CD objects.
+  - Owner: GitOps/delivery maintainers.
 
 ## Demo-Only Inputs
 

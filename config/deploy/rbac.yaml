@@ -3,52 +3,95 @@ kind: ClusterRole
 metadata:
   name: servicer
 rules:
-  # All Servicer platform CRDs
+  # Compatibility profile for config/deploy (single ServiceAccount).
+  # Keep explicit least-privilege rules and avoid wildcards.
   - apiGroups: ["platform.servicer.io"]
-    resources: ["*"]
-    verbs: ["*"]
-  # Secrets (repository credentials, cluster kubeconfig refs)
-  # Namespaces, ConfigMaps, ServiceAccounts (NamespaceClaim reconciliation)
+    resources:
+      - actionrequests
+      - authproviders
+      - clustertargets
+      - groups
+      - namespaceclaims
+      - operatorpackages
+      - policies
+      - projects
+      - rolebindings
+      - servicebindings
+      - serviceclasses
+      - serviceinstances
+      - serviceplans
+      - tenants
+      - users
+      - virtualmachineclaims
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["platform.servicer.io"]
+    resources:
+      - actionrequests
+      - authproviders
+      - clustertargets
+      - groups
+      - namespaceclaims
+      - projects
+      - rolebindings
+      - serviceclasses
+      - serviceinstances
+      - tenants
+      - users
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["platform.servicer.io"]
+    resources:
+      - actionrequests/status
+      - clustertargets/status
+      - namespaceclaims/status
+      - operatorpackages/status
+      - policies/status
+      - projects/status
+      - servicebindings/status
+      - serviceclasses/status
+      - serviceinstances/status
+      - serviceplans/status
+      - tenants/status
+      - virtualmachineclaims/status
+    verbs: ["get", "update", "patch"]
   - apiGroups: [""]
-    resources: ["secrets", "namespaces", "configmaps", "serviceaccounts"]
+    resources: ["namespaces"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Events
   - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["get", "list", "watch", "create", "patch"]
-  # Pods (observeRuntime pod health checks)
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps", "events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  # Apps workloads (observeRuntime StatefulSet/Deployment observation)
   - apiGroups: ["apps"]
-    resources: ["statefulsets", "deployments", "replicasets", "daemonsets"]
+    resources: ["statefulsets", "deployments", "daemonsets"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  # Batch workloads (ServiceBinding target integration)
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  # RBAC support objects for External Secrets Kubernetes provider
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # External Secrets projection resources
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["external-secrets.io"]
     resources: ["secretstores", "externalsecrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # CRDs (operator detection: ArgoCD, YugabyteDB, etc.)
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
-  # ArgoCD Applications (operator package delivery)
   - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
+    resources: ["applications", "applicationsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Admission webhook bootstrap and patching
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
