@@ -75,10 +75,23 @@ Production network policy defaults deny all traffic in `servicer-system`, then a
 - Prometheus in namespace `monitoring` to BFF and manager metrics
 - manager webhook traffic from any namespace to port `9443`
 - DNS egress to `kube-system`
-- BFF broad TCP/443 egress for Kubernetes API, OIDC, and LDAPS endpoints
-- manager HTTPS/SSH egress for Argo CD and Git
+- BFF TCP/443 egress (fail-open) for Kubernetes API, OIDC, and LDAPS endpoints
+- manager HTTPS/SSH egress (fail-open) for Argo CD and Git endpoints
 
 If your ingress, monitoring, DNS, Argo CD, Git, LDAP, or OIDC endpoints live elsewhere or need non-443 ports such as LDAP StartTLS on 389, adjust `deploy/network-policies.yaml` in an overlay before rollout.
+
+The base policies intentionally keep these fail-open egress paths because upstream Kubernetes `NetworkPolicy` cannot express hostnames. For production, replace these broad destination rules with environment-specific `ipBlock` CIDRs and/or CNI-specific policy overlays for:
+
+- OIDC issuer/discovery + token endpoints
+- LDAP/LDAPS directory endpoints
+- Git remotes used by delivery publishing
+- remote cluster Kubernetes API endpoints
+
+Validate the final policy in a NetworkPolicy-enforcing cluster:
+
+```bash
+./hack/networkpolicy-smoke.sh runtime
+```
 
 ## Component Permissions
 

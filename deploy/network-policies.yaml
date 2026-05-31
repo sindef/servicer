@@ -32,7 +32,7 @@ spec:
               app.kubernetes.io/name: bff
       ports:
         - protocol: TCP
-          port: 9090
+          port: 8090
     - to:
         - namespaceSelector:
             matchLabels:
@@ -67,7 +67,7 @@ spec:
               kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
-          port: 8090
+          port: 9090
   egress:
     - to:
         - namespaceSelector:
@@ -78,6 +78,19 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # Best-effort in-cluster Kubernetes API access for self-hosted control planes.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              component: kube-apiserver
+      ports:
+        - protocol: TCP
+          port: 443
+    # Fail-open for external OIDC endpoints and managed-cluster Kubernetes APIs.
+    # Production overlays should replace this with explicit CIDRs for trusted IdP/API endpoints.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -118,6 +131,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # Argo CD API/service access for Application reconciliation.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -125,6 +139,19 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Best-effort in-cluster Kubernetes API access for self-hosted control planes.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              component: kube-apiserver
+      ports:
+        - protocol: TCP
+          port: 443
+    # Fail-open for remote cluster APIs and Git endpoints.
+    # Production overlays should replace this with explicit CIDRs for trusted Git/API endpoints.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
