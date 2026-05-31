@@ -28,10 +28,15 @@ function dialogFocusableElements() {
     'input:not([disabled]):not([type="hidden"])',
     'select:not([disabled])',
     'textarea:not([disabled])',
-    '[tabindex]:not([tabindex="-1"])'
+    '[tabindex]:not([tabindex="-1"])',
+    '[contenteditable="true"]'
   ].join(',')
   return Array.from(dialogEl.value.querySelectorAll<HTMLElement>(selector)).filter(
-    (element) => !element.hasAttribute('aria-hidden')
+    (element) =>
+      !element.hasAttribute('aria-hidden') &&
+      !element.hasAttribute('inert') &&
+      element.getAttribute('data-disabled') !== 'true' &&
+      element.offsetParent !== null
   )
 }
 

@@ -763,9 +763,9 @@ onBeforeUnmount(() => {
       <h1>{{ props.name }}</h1>
     </div>
     <div class="form-actions">
-      <button class="button secondary" @click="openYamlEditor">Edit YAML</button>
-      <button class="button secondary" @click="editOpen = true; showCapabilities = false">Edit</button>
-      <button class="button danger" @click="deleteOpen = true">Delete</button>
+      <button class="button secondary" type="button" @click="openYamlEditor">Edit YAML</button>
+      <button class="button secondary" type="button" @click="editOpen = true; showCapabilities = false">Edit</button>
+      <button class="button danger" type="button" @click="deleteOpen = true">Delete</button>
     </div>
   </section>
 
@@ -881,9 +881,9 @@ onBeforeUnmount(() => {
                 <span>{{ address }}</span>
               </li>
               <li v-if="endpointsPageCount > 1" class="pagination-row">
-                <button class="button secondary compact-button" :disabled="endpointsPage === 0" @click="endpointsPage--">‹</button>
+                <button class="button secondary compact-button" type="button" aria-label="Previous endpoints page" :disabled="endpointsPage === 0" @click="endpointsPage--">‹</button>
                 <span class="pagination-label">{{ endpointsPage + 1 }} / {{ endpointsPageCount }}</span>
-                <button class="button secondary compact-button" :disabled="endpointsPage >= endpointsPageCount - 1" @click="endpointsPage++">›</button>
+                <button class="button secondary compact-button" type="button" aria-label="Next endpoints page" :disabled="endpointsPage >= endpointsPageCount - 1" @click="endpointsPage++">›</button>
               </li>
             </ul>
             <p v-else class="muted">No live endpoints published yet.</p>
@@ -921,13 +921,13 @@ onBeforeUnmount(() => {
                 </button>
               </li>
               <li v-if="kubeconfigPageCount > 1" class="pagination-row">
-                <button class="button secondary compact-button" :disabled="kubeconfigPage === 0" @click="kubeconfigPage--">‹</button>
+                <button class="button secondary compact-button" type="button" aria-label="Previous kubeconfig page" :disabled="kubeconfigPage === 0" @click="kubeconfigPage--">‹</button>
                 <span class="pagination-label">{{ kubeconfigPage + 1 }} / {{ kubeconfigPageCount }}</span>
-                <button class="button secondary compact-button" :disabled="kubeconfigPage >= kubeconfigPageCount - 1" @click="kubeconfigPage++">›</button>
+                <button class="button secondary compact-button" type="button" aria-label="Next kubeconfig page" :disabled="kubeconfigPage >= kubeconfigPageCount - 1" @click="kubeconfigPage++">›</button>
               </li>
             </ul>
             <p v-else class="muted">No credential Secrets published for this instance.</p>
-            <p v-if="credentialError" class="error-text">{{ credentialError }}</p>
+            <p v-if="credentialError" class="error-text" role="alert" aria-live="assertive">{{ credentialError }}</p>
           </div>
         </section>
 
@@ -941,9 +941,9 @@ onBeforeUnmount(() => {
                 </div>
               </li>
               <li v-if="actionsPageCount > 1" class="pagination-row">
-                <button class="button secondary compact-button" :disabled="actionsPage === 0" @click="actionsPage--">‹</button>
+                <button class="button secondary compact-button" type="button" aria-label="Previous actions page" :disabled="actionsPage === 0" @click="actionsPage--">‹</button>
                 <span class="pagination-label">{{ actionsPage + 1 }} / {{ actionsPageCount }}</span>
-                <button class="button secondary compact-button" :disabled="actionsPage >= actionsPageCount - 1" @click="actionsPage++">›</button>
+                <button class="button secondary compact-button" type="button" aria-label="Next actions page" :disabled="actionsPage >= actionsPageCount - 1" @click="actionsPage++">›</button>
               </li>
             </ul>
             <p v-else class="muted">No recent actions.</p>
@@ -953,8 +953,8 @@ onBeforeUnmount(() => {
           <div class="band-header">
             <h2>Backup</h2>
             <div class="band-header-actions">
-              <button class="button secondary small" @click="backupConfigOpen = true">Configure</button>
-              <button class="button secondary small" @click="submitAction('backup')" :disabled="!!actionSubmitting">
+              <button class="button secondary small" type="button" @click="backupConfigOpen = true">Configure</button>
+              <button class="button secondary small" type="button" @click="submitAction('backup')" :disabled="!!actionSubmitting">
                 {{ actionSubmitting === 'backup' ? 'Queuing...' : 'Backup now' }}
               </button>
             </div>
@@ -1060,8 +1060,8 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <p v-else class="muted">No actions available.</p>
-          <p v-if="formMessage" class="success-text">{{ formMessage }}</p>
-          <p v-if="formError" class="error-text">{{ formError }}</p>
+          <p v-if="formMessage" class="success-text" role="status" aria-live="polite">{{ formMessage }}</p>
+          <p v-if="formError" class="error-text" role="alert" aria-live="assertive">{{ formError }}</p>
         </section>
       </div>
 
@@ -1106,9 +1106,9 @@ onBeforeUnmount(() => {
               <tr v-if="eventsPageCount > 1">
                 <td colspan="2">
                   <div class="pagination-row" style="justify-content: center; display: flex; align-items: center; gap: 8px; padding: 4px 0">
-                    <button class="button secondary compact-button" :disabled="eventsPage === 0" @click="eventsPage--">‹</button>
+                    <button class="button secondary compact-button" type="button" aria-label="Previous events page" :disabled="eventsPage === 0" @click="eventsPage--">‹</button>
                     <span class="pagination-label">{{ eventsPage + 1 }} / {{ eventsPageCount }}</span>
-                    <button class="button secondary compact-button" :disabled="eventsPage >= eventsPageCount - 1" @click="eventsPage++">›</button>
+                    <button class="button secondary compact-button" type="button" aria-label="Next events page" :disabled="eventsPage >= eventsPageCount - 1" @click="eventsPage++">›</button>
                   </div>
                 </td>
               </tr>
@@ -1221,11 +1221,18 @@ onBeforeUnmount(() => {
         </div>
 
         <section class="modal-section">
-          <h3 style="cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between" @click="showCapabilities = !showCapabilities">
-            Capabilities
+          <button
+            type="button"
+            class="button secondary"
+            :aria-expanded="showCapabilities ? 'true' : 'false'"
+            aria-controls="instance-capabilities-panel"
+            style="cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left"
+            @click="showCapabilities = !showCapabilities"
+          >
+            <span>Capabilities</span>
             <span class="collapsible-chevron" style="font-weight: normal">{{ showCapabilities ? '▾' : '▸' }}</span>
-          </h3>
-          <div v-show="showCapabilities">
+          </button>
+          <div id="instance-capabilities-panel" v-show="showCapabilities">
           <div v-if="data.productClass === 'namespace'" class="form-grid modal-form-grid">
             <label>CPU quota<input v-model="parameterForm.cpu" /></label>
             <label>Memory quota<input v-model="parameterForm.memory" /></label>
@@ -1522,10 +1529,10 @@ onBeforeUnmount(() => {
         </div>
         <YamlEditor v-model="yamlContent" aria-label="Product request YAML editor" />
         <div class="form-actions" style="margin-top: 12px">
-          <button class="button primary" :disabled="yamlSaving" @click="saveYaml">
+          <button class="button primary" type="button" :disabled="yamlSaving" @click="saveYaml">
             {{ yamlSaving ? 'Saving...' : 'Save' }}
           </button>
-          <button class="button secondary" :disabled="yamlSaving" @click="yamlOpen = false">Cancel</button>
+          <button class="button secondary" type="button" :disabled="yamlSaving" @click="yamlOpen = false">Cancel</button>
           <span v-if="yamlError" class="error-text" role="alert" aria-live="assertive">{{ yamlError }}</span>
         </div>
       </div>

@@ -45,7 +45,9 @@ onMounted(() => {
         yaml(),
         highContrastTheme,
         EditorView.contentAttributes.of({
-          'aria-label': props.ariaLabel
+          'aria-label': props.ariaLabel,
+          role: 'textbox',
+          'aria-multiline': 'true'
         }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) emit('update:modelValue', update.state.doc.toString())

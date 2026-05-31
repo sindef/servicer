@@ -1160,6 +1160,7 @@ resetBindingForm()
               v-model="search"
               class="auth-search"
               type="search"
+              :aria-label="`Search ${sectionMeta(activeSection).title.toLowerCase()}`"
               :placeholder="sectionSearchPlaceholder"
             />
             <button class="button primary" :disabled="busy" @click="openNewCurrentSection">
@@ -1638,6 +1639,7 @@ resetBindingForm()
                 v-model="groupMemberSearch"
                 class="auth-search auth-picker-search"
                 type="search"
+                aria-label="Search users to add as group members"
                 placeholder="Search users, Enter to add"
                 @keydown.enter.prevent="addFirstGroupMember"
               />
@@ -1718,6 +1720,7 @@ resetBindingForm()
                 class="auth-search auth-picker-search"
                 type="search"
                 :disabled="selectedRole?.builtIn"
+                aria-label="Search role permissions"
                 placeholder="Search permissions, Enter to add"
                 @keydown.enter.prevent="addFirstRolePermission"
               />
@@ -1799,6 +1802,7 @@ resetBindingForm()
                 v-model="bindingSubjectSearch"
                 class="auth-search auth-picker-search"
                 type="search"
+                aria-label="Search users and groups to add as subjects"
                 placeholder="Search users/groups, Enter to add"
                 @keydown.enter.prevent="addFirstBindingSubject"
               />
@@ -1833,6 +1837,7 @@ resetBindingForm()
                 v-model="bindingRoleSearch"
                 class="auth-search auth-picker-search"
                 type="search"
+                aria-label="Search roles to grant in this binding"
                 placeholder="Search roles, Enter to add"
                 @keydown.enter.prevent="addFirstBindingRole"
               />
