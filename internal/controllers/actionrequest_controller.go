@@ -60,16 +60,23 @@ func (e *actionResolutionError) Error() string {
 }
 
 func (r *ActionRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := ctrl.LoggerFrom(ctx).WithValues("actionRequest", req.Name)
 	var actionRequest platformv1alpha1.ActionRequest
 	if err := r.Get(ctx, req.NamespacedName, &actionRequest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if requestID := strings.TrimSpace(actionRequest.Annotations["servicer.io/request-id"]); requestID != "" {
+		logger = logger.WithValues("requestId", requestID)
+	}
+	logger.Info("reconciling action request", "phase", actionRequest.Status.Phase, "generation", actionRequest.Generation)
 	if actionAlreadySubmitted(actionRequest.Status, actionRequest.Generation) {
+		logger.Info("action request already reconciled for generation", "phase", actionRequest.Status.Phase, "operationId", actionRequest.Status.OperationID)
 		return ctrl.Result{}, nil
 	}
 
 	resolved, err := r.resolveAction(ctx, &actionRequest)
 	if err != nil {
+		logger.Info("action request resolution failed", "error", err.Error())
 		if resolutionErr, ok := err.(*actionResolutionError); ok {
 			if _, _, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
 				current.Status.ObservedGeneration = current.Generation
@@ -234,6 +241,9 @@ func (r *ActionRequestReconciler) patchActionRequestStatus(ctx context.Context, 
 		}
 		if err := r.Status().Patch(ctx, &current, client.MergeFrom(before)); err != nil {
 			return err
+		}
+		if before.Status.Phase != current.Status.Phase {
+			observeActionRequestPhase(current.Status.Phase)
 		}
 		patched = current
 		changed = true

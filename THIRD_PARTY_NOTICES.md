@@ -22,8 +22,24 @@ The web UI is built from packages listed in `web/package.json` and
 
 Before publishing source archives, binaries, container images, or appliance
 bundles, regenerate `dist/THIRD_PARTY_LICENSES/` and include it beside the
-artifact. This preserves upstream license texts where they are present in the
-Go module cache and npm package tree.
+artifact. Generation is reproducible from `go.mod`, `go.sum`, and
+`web/package-lock.json`:
+
+```sh
+./hack/generate-third-party-licenses.sh
+```
+
+This preserves upstream license texts where they are present in the Go module
+cache and npm package tree.
+
+If a web dependency has no shipped license file, approved exceptions are
+recorded in:
+
+- `dist/THIRD_PARTY_LICENSES/web/APPROVED_LICENSE_EXCEPTIONS.tsv`
+
+Any unapproved missing license files are emitted to
+`dist/THIRD_PARTY_LICENSES/web/MISSING_LICENSE_FILES.tsv` and the generator
+fails.
 
 Known license families in the current web dependency tree are permissive:
 MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, and Python-2.0.

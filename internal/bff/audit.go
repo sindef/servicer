@@ -124,14 +124,15 @@ func (s *Server) auditEvents(r *http.Request, actor actor) ([]AuditEventSummary,
 	events := make([]AuditEventSummary, 0, len(actions.Items)+len(kubeEvents.Items))
 	for _, action := range actions.Items {
 		events = append(events, AuditEventSummary{
-			Time:     timestamp(action.CreationTimestamp),
-			Type:     "ActionRequest",
-			Subject:  action.Name,
-			Action:   action.Spec.Action,
-			Actor:    action.Spec.RequestedBy.Subject,
-			Phase:    action.Status.Phase,
-			Message:  action.Status.Result.Message,
-			Involved: action.Spec.TargetRef.Name,
+			Time:      timestamp(action.CreationTimestamp),
+			Type:      "ActionRequest",
+			Subject:   action.Name,
+			RequestID: actionRequestID(action),
+			Action:    action.Spec.Action,
+			Actor:     action.Spec.RequestedBy.Subject,
+			Phase:     action.Status.Phase,
+			Message:   action.Status.Result.Message,
+			Involved:  action.Spec.TargetRef.Name,
 		})
 	}
 	for _, event := range kubeEvents.Items {
@@ -188,6 +189,13 @@ func (s *Server) auditEvents(r *http.Request, actor actor) ([]AuditEventSummary,
 		})
 	}
 	return events, nil
+}
+
+func actionRequestID(action platformv1alpha1.ActionRequest) string {
+	if action.Annotations == nil {
+		return ""
+	}
+	return strings.TrimSpace(action.Annotations["servicer.io/request-id"])
 }
 
 func (s *Server) eventsForTarget(r *http.Request, target string, limit int) []AuditEventSummary {

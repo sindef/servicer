@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${ROOT}/dist/THIRD_PARTY_LICENSES"
-
 sanitize() {
   printf '%s' "$1" | tr '/:@+' '____'
 }
@@ -14,7 +13,7 @@ copy_license_files() {
   mkdir -p "${target_dir}"
   find "${source_dir}" -maxdepth 2 -type f \
     \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) \
-    -print0 | while IFS= read -r -d '' file; do
+    -print0 | sort -z | while IFS= read -r -d '' file; do
       local rel
       rel="${file#"${source_dir}/"}"
       mkdir -p "${target_dir}/$(dirname "${rel}")"
@@ -29,22 +28,7 @@ cp "${ROOT}/LICENSE" "${OUT}/SERVICER-LICENSE"
 cp "${ROOT}/THIRD_PARTY_NOTICES.md" "${OUT}/THIRD_PARTY_NOTICES.md"
 
 pushd "${ROOT}" >/dev/null
-mod_backup="$(mktemp -d)"
-cp go.mod "${mod_backup}/go.mod"
-if [[ -f go.sum ]]; then
-  cp go.sum "${mod_backup}/go.sum"
-fi
-restore_mod_files() {
-  cp "${mod_backup}/go.mod" go.mod
-  if [[ -f "${mod_backup}/go.sum" ]]; then
-    cp "${mod_backup}/go.sum" go.sum
-  else
-    rm -f go.sum
-  fi
-  rm -rf "${mod_backup}"
-}
-trap restore_mod_files EXIT
-go mod download all
+GOFLAGS="-mod=readonly" go mod download all
 go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{"\t"}}{{.Dir}}{{end}}' all |
   while IFS=$'\t' read -r module version dir; do
     [[ -n "${module}" && -n "${dir}" && -d "${dir}" ]] || continue
@@ -55,13 +39,9 @@ go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{"\t"}}{{.Dir}}{{en
       printf '%s\t%s\t%s\n' "${module}" "${version}" "NO_LICENSE_FILE_FOUND" >>"${OUT}/go/MISSING_LICENSE_FILES.tsv"
     fi
   done
-restore_mod_files
-trap - EXIT
 popd >/dev/null
 
-if [[ ! -d "${ROOT}/web/node_modules" ]]; then
-  npm --prefix "${ROOT}/web" ci --ignore-scripts
-fi
+npm --prefix "${ROOT}/web" ci --ignore-scripts
 
 node - "${ROOT}" "${OUT}" <<'NODE'
 const fs = require('fs')
@@ -72,6 +52,12 @@ const out = process.argv[3]
 const nodeModules = path.join(root, 'web', 'node_modules')
 const summary = []
 const missing = []
+const approved = new Set([
+  '@esbuild/linux-x64@0.27.7',
+  '@rollup/rollup-linux-x64-gnu@4.60.4',
+  '@vue/devtools-api@6.6.4'
+])
+const approvedMatches = []
 
 function packages(dir) {
   if (!fs.existsSync(dir)) return []
@@ -119,8 +105,23 @@ for (const dir of packages(nodeModules)) {
 }
 
 fs.writeFileSync(path.join(out, 'web', 'PACKAGE_LICENSES.tsv'), summary.sort().join('\n') + '\n')
-if (missing.length) {
-  fs.writeFileSync(path.join(out, 'web', 'MISSING_LICENSE_FILES.tsv'), missing.sort().join('\n') + '\n')
+const unresolved = []
+for (const row of missing.sort()) {
+  const [name, version] = row.split('\t')
+  const key = `${name}@${version}`
+  if (approved.has(key)) {
+    approvedMatches.push(row)
+  } else {
+    unresolved.push(row)
+  }
+}
+if (approvedMatches.length) {
+  fs.writeFileSync(path.join(out, 'web', 'APPROVED_LICENSE_EXCEPTIONS.tsv'), approvedMatches.join('\n') + '\n')
+}
+if (unresolved.length) {
+  fs.writeFileSync(path.join(out, 'web', 'MISSING_LICENSE_FILES.tsv'), unresolved.join('\n') + '\n')
+  console.error(`Unapproved missing license files detected: ${unresolved.length}`)
+  process.exit(1)
 }
 NODE
 

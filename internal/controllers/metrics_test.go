@@ -22,6 +22,13 @@ func TestControllerMetricsObserveHelpers(t *testing.T) {
 		t.Fatalf("expected phase counter increment, before=%v after=%v", phasesBefore, phasesAfter)
 	}
 
+	actionPhasesBefore := testutil.ToFloat64(actionRequestPhasesTotal.WithLabelValues("Succeeded"))
+	observeActionRequestPhase("Succeeded")
+	actionPhasesAfter := testutil.ToFloat64(actionRequestPhasesTotal.WithLabelValues("Succeeded"))
+	if actionPhasesAfter != actionPhasesBefore+1 {
+		t.Fatalf("expected action request phase counter increment, before=%v after=%v", actionPhasesBefore, actionPhasesAfter)
+	}
+
 	publishBefore := testutil.ToFloat64(deliveryPublishTotal.WithLabelValues("succeeded"))
 	observeDeliveryPublish("succeeded")
 	publishAfter := testutil.ToFloat64(deliveryPublishTotal.WithLabelValues("succeeded"))

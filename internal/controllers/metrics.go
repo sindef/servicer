@@ -26,6 +26,15 @@ var (
 		},
 		[]string{"phase"},
 	)
+	actionRequestPhasesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "servicer",
+			Subsystem: "controller",
+			Name:      "actionrequest_phase_transitions_total",
+			Help:      "Total number of ActionRequest phase transitions observed during reconcile.",
+		},
+		[]string{"phase"},
+	)
 	deliveryPublishTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "servicer",
@@ -50,6 +59,7 @@ func init() {
 	metrics.Registry.MustRegister(
 		serviceInstanceReconcileFailuresTotal,
 		serviceInstanceActionPhasesTotal,
+		actionRequestPhasesTotal,
 		deliveryPublishTotal,
 		serviceInstanceReconcileDuration,
 	)
@@ -60,6 +70,13 @@ func observeServiceInstancePhase(phase string) {
 		phase = "unknown"
 	}
 	serviceInstanceActionPhasesTotal.WithLabelValues(phase).Inc()
+}
+
+func observeActionRequestPhase(phase string) {
+	if phase == "" {
+		phase = "unknown"
+	}
+	actionRequestPhasesTotal.WithLabelValues(phase).Inc()
 }
 
 func observeServiceInstanceFailure(stage string) {

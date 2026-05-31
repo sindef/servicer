@@ -137,7 +137,19 @@ func NewServerWithConfig(client client.Client, restConfig *rest.Config) (*Server
 	mux.HandleFunc("GET /api/tenants/{tenant}/repositories", server.handleListTenantRepositories)
 	mux.HandleFunc("POST /api/tenants/{tenant}/repositories", server.handleCreateTenantRepository)
 	mux.HandleFunc("DELETE /api/tenants/{tenant}/repositories/{repo}", server.handleDeleteTenantRepository)
-	server.handler = server.withRequestID(withJSON(server.withMetrics(server.withCSRF(server.withAuthentication(server.withAudit(mux))))))
+	server.handler = server.withRequestID(
+		withJSON(
+			server.withRequestLogging(
+				server.withMetrics(
+					server.withCSRF(
+						server.withAuthentication(
+							server.withAudit(mux),
+						),
+					),
+				),
+			),
+		),
+	)
 	return server, nil
 }
 

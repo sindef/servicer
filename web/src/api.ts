@@ -490,6 +490,33 @@ export interface RequestOptions {
   signal?: AbortSignal
 }
 
+export interface ListQuery {
+  q?: string
+  limit?: number
+  offset?: number
+}
+
+function withListQuery(path: string, query?: ListQuery): string {
+  if (!query) {
+    return path
+  }
+  const params = new URLSearchParams()
+  if (query.q && query.q.trim().length > 0) {
+    params.set('q', query.q.trim())
+  }
+  if (typeof query.limit === 'number' && Number.isFinite(query.limit) && query.limit > 0) {
+    params.set('limit', String(Math.trunc(query.limit)))
+  }
+  if (typeof query.offset === 'number' && Number.isFinite(query.offset) && query.offset >= 0) {
+    params.set('offset', String(Math.trunc(query.offset)))
+  }
+  const encoded = params.toString()
+  if (!encoded) {
+    return path
+  }
+  return `${path}?${encoded}`
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers({
     ...authHeaders(),
@@ -566,8 +593,8 @@ export async function parseApiError(response: Response): Promise<ApiError> {
 
 export const api = {
   overview: () => request<OverviewResponse>('/api/overview'),
-  tenants: () => request<TenantSummary[]>('/api/tenants'),
-  projects: () => request<ProjectSummary[]>('/api/projects'),
+  tenants: (query?: ListQuery) => request<TenantSummary[]>(withListQuery('/api/tenants', query)),
+  projects: (query?: ListQuery) => request<ProjectSummary[]>(withListQuery('/api/projects', query)),
   namespaceClaims: {
     list: () => request<NamespaceClaimSummary[]>('/api/namespaceclaims'),
     detail: (name: string) =>
@@ -588,7 +615,8 @@ export const api = {
       })
   },
   catalog: (options?: RequestOptions) => request<CatalogEntry[]>('/api/catalog', options),
-  instances: () => request<InstanceSummary[]>('/api/instances'),
+  instances: (query?: ListQuery, options?: RequestOptions) =>
+    request<InstanceSummary[]>(withListQuery('/api/instances', query), options),
   instance: (name: string, options?: RequestOptions) =>
     request<InstanceDetail>(`/api/instances/${encodeURIComponent(name)}`, options),
   audit: (query = '') => request<AuditEventSummary[]>(`/api/audit${query ? `?q=${encodeURIComponent(query)}` : ''}`),
@@ -746,12 +774,12 @@ export const api = {
   },
 
   repositories: {
-    list: (project: string) =>
-      request<RepositorySummary[]>(`/api/projects/${encodeURIComponent(project)}/repositories`),
-    listProject: (project: string) =>
-      request<RepositorySummary[]>(`/api/projects/${encodeURIComponent(project)}/repositories`),
-    listTenant: (tenant: string) =>
-      request<RepositorySummary[]>(`/api/tenants/${encodeURIComponent(tenant)}/repositories`),
+    list: (project: string, query?: ListQuery) =>
+      request<RepositorySummary[]>(withListQuery(`/api/projects/${encodeURIComponent(project)}/repositories`, query)),
+    listProject: (project: string, query?: ListQuery) =>
+      request<RepositorySummary[]>(withListQuery(`/api/projects/${encodeURIComponent(project)}/repositories`, query)),
+    listTenant: (tenant: string, query?: ListQuery) =>
+      request<RepositorySummary[]>(withListQuery(`/api/tenants/${encodeURIComponent(tenant)}/repositories`, query)),
     create: (project: string, body: CreateRepositoryRequest) =>
       request<{ name: string; message: string }>(`/api/projects/${encodeURIComponent(project)}/repositories`, {
         method: 'POST',

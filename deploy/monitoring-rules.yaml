@@ -1,0 +1,61 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: servicer-alerts
+  namespace: servicer-system
+  labels:
+    app.kubernetes.io/name: servicer
+spec:
+  groups:
+    - name: servicer.bff
+      rules:
+        - alert: ServicerBFFAuthFailuresHigh
+          expr: increase(servicer_bff_authentication_failures_total[10m]) > 25
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer BFF authentication failures are elevated.
+            description: Authentication failures exceeded 25 in 10 minutes.
+        - alert: ServicerBFFRateLimitBlocksHigh
+          expr: increase(servicer_bff_login_rate_limit_blocks_total[10m]) > 50
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer BFF login throttling is elevated.
+            description: Login rate limiter blocked more than 50 requests in 10 minutes.
+        - alert: ServicerBFFRepositoryMirrorFailures
+          expr: increase(servicer_bff_repository_mirror_total{status="failed"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Servicer repository mirror failures detected.
+            description: At least one repository mirror operation failed in the last 10 minutes.
+        - alert: ServicerBFFNamespaceProxyDenialsHigh
+          expr: increase(servicer_bff_namespace_proxy_denials_total[10m]) > 20
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer namespace proxy denials are elevated.
+            description: Namespace proxy denied more than 20 requests in 10 minutes.
+    - name: servicer.controllers
+      rules:
+        - alert: ServicerControllerReconcileFailures
+          expr: increase(servicer_controller_serviceinstance_reconcile_failures_total[10m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer ServiceInstance reconciliation failures detected.
+            description: One or more ServiceInstance reconcile stages failed in the last 10 minutes.
+        - alert: ServicerControllerDeliveryPublishFailures
+          expr: increase(servicer_controller_delivery_publish_total{status="failed"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Servicer GitOps delivery publishing failed.
+            description: Delivery publishing to Git failed at least once in the last 10 minutes.

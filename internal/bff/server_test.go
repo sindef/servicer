@@ -1240,6 +1240,9 @@ func TestAuditEndpointSupportsStructuredFilters(t *testing.T) {
 	if events[0].Type != "ActionRequest" || events[0].Action != "restart" || events[0].Actor != "alice@example.com" {
 		t.Fatalf("unexpected filtered event %#v", events[0])
 	}
+	if events[0].RequestID != "req-audit-123" {
+		t.Fatalf("expected request id to be retained in action audit event, got %#v", events[0])
+	}
 }
 
 func TestAuditEndpointRetainsEventsInConfigMaps(t *testing.T) {
@@ -1357,6 +1360,114 @@ func TestInstancesListSupportsPaginationAndQueryFiltering(t *testing.T) {
 	}
 }
 
+func TestTenantsListSupportsPaginationAndQueryFiltering(t *testing.T) {
+	server := testServer(t)
+	for _, tenant := range []string{"acme-ops-a", "acme-ops-b"} {
+		if err := server.client.Create(context.Background(), &platformv1alpha1.Tenant{
+			ObjectMeta: metav1.ObjectMeta{Name: tenant},
+			Spec: platformv1alpha1.TenantSpec{
+				DisplayName:           strings.ToUpper(tenant),
+				Owners:                platformv1alpha1.OwnersSpec{Users: []string{"alice@example.com"}},
+				QuotaProfileRef:       platformv1alpha1.LocalObjectReference{Name: "standard"},
+				AllowedServiceClasses: []string{"valkey"},
+			},
+			Status: platformv1alpha1.TenantStatus{Phase: "Ready"},
+		}); err != nil {
+			t.Fatalf("create tenant %q: %v", tenant, err)
+		}
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/tenants?q=ops&limit=1&offset=1", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "platform-admin")
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var tenants []TenantSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &tenants); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(tenants) != 1 || tenants[0].Name != "acme-ops-b" {
+		t.Fatalf("expected one paginated tenant (acme-ops-b), got %#v", tenants)
+	}
+}
+
+func TestProjectsListSupportsPaginationAndQueryFiltering(t *testing.T) {
+	server := testServer(t)
+	for _, project := range []string{"acme-lab-a", "acme-lab-b"} {
+		if err := server.client.Create(context.Background(), &platformv1alpha1.Project{
+			ObjectMeta: metav1.ObjectMeta{Name: project},
+			Spec: platformv1alpha1.ProjectSpec{
+				TenantRef:         platformv1alpha1.LocalObjectReference{Name: "acme"},
+				DisplayName:       strings.ToUpper(project),
+				Environment:       platformv1alpha1.EnvironmentDevelopment,
+				NamespaceStrategy: platformv1alpha1.NamespaceStrategySpec{Mode: platformv1alpha1.NamespaceStrategyDedicated, Prefix: project},
+			},
+			Status: platformv1alpha1.ProjectStatus{
+				Phase:     "Ready",
+				Placement: platformv1alpha1.PlacementStatus{ClusterName: "east-1"},
+			},
+		}); err != nil {
+			t.Fatalf("create project %q: %v", project, err)
+		}
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/projects?q=lab&limit=1&offset=1", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var projects []ProjectSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &projects); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(projects) != 1 || projects[0].Name != "acme-lab-b" {
+		t.Fatalf("expected one paginated project (acme-lab-b), got %#v", projects)
+	}
+}
+
+func TestProjectRepositoriesListSupportsPaginationAndQueryFiltering(t *testing.T) {
+	server := testServer(t)
+	for _, body := range []string{
+		`{"name":"store-a","displayName":"Store A","url":"https://github.com/acme/store-a.git","authType":"none"}`,
+		`{"name":"store-b","displayName":"Store B","url":"https://github.com/acme/store-b.git","authType":"none"}`,
+		`{"name":"platform-core","displayName":"Platform Core","url":"https://github.com/acme/platform-core.git","authType":"none"}`,
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/projects/acme-prod/repositories", strings.NewReader(body))
+		request.Header.Set("X-Servicer-User", "alice@example.com")
+		request.Header.Set("X-Servicer-Roles", "tenant-operator")
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("expected status 201, got %d: %s", response.Code, response.Body.String())
+		}
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/projects/acme-prod/repositories?q=store&limit=1&offset=1", nil)
+	request.Header.Set("X-Servicer-User", "alice@example.com")
+	request.Header.Set("X-Servicer-Roles", "service-consumer")
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var repos []RepositorySummary
+	if err := json.Unmarshal(response.Body.Bytes(), &repos); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "store-b" {
+		t.Fatalf("expected one paginated repository (store-b), got %#v", repos)
+	}
+}
+
 func TestWriteErrorIncludesRequestIDWhenPresent(t *testing.T) {
 	server := testServer(t)
 	response := httptest.NewRecorder()
@@ -1372,6 +1483,9 @@ func TestWriteErrorIncludesRequestIDWhenPresent(t *testing.T) {
 	}
 	if got := response.Header().Get("X-Request-Id"); got != "req-test-123" {
 		t.Fatalf("expected echoed request id header, got %q", got)
+	}
+	if got := response.Header().Get("X-Correlation-Id"); got != "req-test-123" {
+		t.Fatalf("expected correlation id header to match request id, got %q", got)
 	}
 	var payload map[string]string
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
@@ -1402,6 +1516,12 @@ func TestMetricsEndpointExposesPrometheusMetrics(t *testing.T) {
 	}
 	if !strings.Contains(body, "servicer_bff_authentication_failures_total") {
 		t.Fatalf("expected auth failure metric, got %s", body)
+	}
+	if !strings.Contains(body, "servicer_bff_login_rate_limit_blocks_total") {
+		t.Fatalf("expected login rate-limit block metric, got %s", body)
+	}
+	if !strings.Contains(body, "servicer_bff_login_rate_limit_evictions_total") {
+		t.Fatalf("expected login rate-limit eviction metric, got %s", body)
 	}
 	if !strings.Contains(body, "servicer_bff_repository_mirror_total") {
 		t.Fatalf("expected repository mirror metric, got %s", body)
@@ -2279,7 +2399,11 @@ func testBlockedYugabyteInstance() *platformv1alpha1.ServiceInstance {
 func testAction() *platformv1alpha1.ActionRequest {
 	now := metav1.Now()
 	return &platformv1alpha1.ActionRequest{
-		ObjectMeta: metav1.ObjectMeta{Name: "session-cache-restart", CreationTimestamp: now},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "session-cache-restart",
+			CreationTimestamp: now,
+			Annotations:       map[string]string{"servicer.io/request-id": "req-audit-123"},
+		},
 		Spec: platformv1alpha1.ActionRequestSpec{
 			TargetRef:   platformv1alpha1.TypedObjectReference{APIVersion: platformv1alpha1.GroupVersion.String(), Kind: "ServiceInstance", Name: "session-cache"},
 			Action:      "restart",
