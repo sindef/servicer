@@ -35,3 +35,11 @@ For any preview product moving toward production support:
 - Add product drills to automated e2e coverage.
 - Update [Product support matrix](product-support-matrix.md).
 - Update production catalog and operator package pins in the same release.
+
+## Production Hardening Gaps
+
+Current launch-grade behavior is documented in the production, audit, repository lifecycle, threat model, and scale-limit docs. Known remaining gaps that require operator awareness:
+
+- Login rate limiting only has a per-pod memory backend; production deployments need explicit acceptance and compensating IdP/ingress controls if multiple BFF replicas are used.
+- Audit records persist mutating API requests and credential reveal/download requests, but auth login/logout evidence still depends on IdP logs and BFF JSON logs.
+- High-volume BFF list endpoints support `limit`, `offset`, and `q`, but responses do not yet include total counts or continuation tokens.

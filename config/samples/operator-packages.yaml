@@ -76,6 +76,8 @@ spec:
       yugaware.resources.requests.memory: 1Gi
       postgres.resources.requests.cpu: 250m
       postgres.resources.requests.memory: 512Mi
+      # DEMO ONLY: initial local YugabyteDB Anywhere user for Kind/demo bring-up.
+      # Replace with environment-owned bootstrap credentials outside demos.
       yugaware.defaultUser.enabled: "true"
       yugaware.defaultUser.username: servicer-demo
       yugaware.defaultUser.email: servicer-demo@example.com

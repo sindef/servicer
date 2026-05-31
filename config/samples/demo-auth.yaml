@@ -1,3 +1,7 @@
+#
+# DEMO ONLY: seeded local login for the Kind/demo environment.
+# Do not apply this password hash or user binding to production clusters.
+#
 apiVersion: platform.servicer.io/v1alpha1
 kind: AuthProvider
 metadata:

@@ -158,6 +158,8 @@ Then open:
 http://localhost:8080
 ```
 
+For production ingress, replace the sample host and `SERVICER_AUTH_EXTERNAL_BASE_URL` before rollout. The tagged install manifest includes placeholder values such as `servicer.example.com`; those are not production defaults.
+
 ## Demo environment
 
 `hack/demo-setup.sh` is the primary demo/bootstrap path and is intended to be representative of the real platform shape, not a one-off toy environment.
@@ -194,13 +196,15 @@ Then open:
 http://localhost:5173
 ```
 
-Sample login for the seeded demo auth objects:
+Demo-only sample login for the seeded local auth objects:
 
 ```text
 username: demo-admin
 password: demo-admin
 provider: Local
 ```
+
+These credentials are only for the Kind demo seeded by `config/samples/demo-auth.yaml`. Do not apply them to production clusters.
 
 ### Tear the demo down
 
@@ -321,9 +325,11 @@ Optional bootstrap env vars for first-run access:
 - `SERVICER_BOOTSTRAP_ADMIN_EMAIL`
 - `SERVICER_SESSION_SECRET`
 
+External OIDC and LDAP users must be linked to Servicer `User` resources through `spec.externalIdentities` before they can receive Servicer roles. Local password users require `spec.localAuth.enabled=true` and a password hash Secret. See [Production install](docs/production-install.md) for production auth, request correlation, and rate-limiter requirements.
+
 ## Secrets note
 
-This repo does not intentionally store live production credentials. It does include demo/bootstrap defaults in sample manifests where certain upstream operators require initial local-only credentials to self-initialize during demo bring-up.
+This repo does not intentionally store live production credentials. It does include demo/bootstrap defaults in sample manifests where certain upstream operators require initial local-only credentials to self-initialize during demo bring-up. Anything under `config/samples` or `config/deploy` that contains a password, kubeconfig, local image tag, or `*.local` identity is demo-only unless a production doc explicitly says otherwise.
 
 ## Licensing
 
