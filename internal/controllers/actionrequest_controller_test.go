@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -491,6 +492,118 @@ func TestActionRequestReconcilerGrantsNamespaceAccess(t *testing.T) {
 	}
 }
 
+func TestActionRequestReconcilerRejectsNamespaceAccessWithoutConfiguredExternalURLInProduction(t *testing.T) {
+	reconciler := newNamespaceActionRequestReconcilerWithConfig(t, namespaceGrantAccessActionRequestFixture("team-space-access-prod", map[string]any{
+		"subject":    "bob@example.com",
+		"defaultUrl": "https://ignored.example.com",
+	}), true, "", nil)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "team-space-access-prod"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var action platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "team-space-access-prod"}, &action); err != nil {
+		t.Fatalf("Get ActionRequest returned error: %v", err)
+	}
+	if action.Status.Phase != "Failed" {
+		t.Fatalf("expected action phase Failed, got %#v", action.Status)
+	}
+	if !strings.Contains(action.Status.Result.Message, "controller external URL") {
+		t.Fatalf("expected clear production URL error, got %q", action.Status.Result.Message)
+	}
+
+	var secret corev1.Secret
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "servicer-access-bob-example-com-kubeconfig", Namespace: "acme-prod-team-space"}, &secret); err == nil {
+		t.Fatalf("expected no namespace access kubeconfig Secret to be created")
+	}
+}
+
+func TestActionRequestReconcilerWritesNamespaceAccessKubeconfigForSpecialCharacterSubject(t *testing.T) {
+	subject := "alice+team@example.com:ops/01"
+	reconciler := newNamespaceActionRequestReconcilerWithConfig(t, namespaceGrantAccessActionRequestFixture("team-space-access-special", map[string]any{
+		"subject":    subject,
+		"defaultUrl": "https://servicer.example.com",
+	}), false, "https://servicer.example.com", nil)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "team-space-access-special"}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var secret corev1.Secret
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: namespaceAccessSecretName(subject), Namespace: "acme-prod-team-space"}, &secret); err != nil {
+		t.Fatalf("Get kubeconfig Secret returned error: %v", err)
+	}
+	cfg, err := clientcmd.Load(secret.Data["kubeconfig"])
+	if err != nil {
+		t.Fatalf("expected kubeconfig to parse via client-go: %v\n%s", err, string(secret.Data["kubeconfig"]))
+	}
+	if len(cfg.AuthInfos) != 1 || len(cfg.Contexts) != 1 {
+		t.Fatalf("expected one auth info and one context, got auth=%d contexts=%d", len(cfg.AuthInfos), len(cfg.Contexts))
+	}
+	for key := range cfg.AuthInfos {
+		if strings.ContainsAny(key, "\n\r\t:") {
+			t.Fatalf("expected sanitized kubeconfig auth key, got %q", key)
+		}
+	}
+}
+
+func TestNamespaceAccessKubeconfigTLSModes(t *testing.T) {
+	tests := []struct {
+		name     string
+		caData   []byte
+		expectCA bool
+	}{
+		{
+			name:     "public tls without custom ca",
+			caData:   nil,
+			expectCA: false,
+		},
+		{
+			name:     "custom ca included",
+			caData:   []byte("-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUY2E=\n-----END CERTIFICATE-----"),
+			expectCA: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := "bob@example.com"
+			reconciler := newNamespaceActionRequestReconcilerWithConfig(t, namespaceGrantAccessActionRequestFixture("team-space-access-"+safeKubernetesName(tc.name, 16), map[string]any{
+				"subject":    subject,
+				"defaultUrl": "https://servicer.example.com",
+			}), false, "https://servicer.example.com", tc.caData)
+
+			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "team-space-access-" + safeKubernetesName(tc.name, 16)}}); err != nil {
+				t.Fatalf("Reconcile returned error: %v", err)
+			}
+
+			var secret corev1.Secret
+			if err := reconciler.Get(context.Background(), client.ObjectKey{Name: namespaceAccessSecretName(subject), Namespace: "acme-prod-team-space"}, &secret); err != nil {
+				t.Fatalf("Get kubeconfig Secret returned error: %v", err)
+			}
+			cfg, err := clientcmd.Load(secret.Data["kubeconfig"])
+			if err != nil {
+				t.Fatalf("expected kubeconfig to parse: %v\n%s", err, string(secret.Data["kubeconfig"]))
+			}
+			cluster, ok := cfg.Clusters["servicer-platform"]
+			if !ok || cluster == nil {
+				t.Fatalf("expected servicer-platform cluster in kubeconfig")
+			}
+			if cluster.InsecureSkipTLSVerify {
+				t.Fatalf("expected insecure-skip-tls-verify to be disabled")
+			}
+			if tc.expectCA {
+				if string(cluster.CertificateAuthorityData) != string(tc.caData) {
+					t.Fatalf("expected configured CA data in kubeconfig")
+				}
+			} else if len(cluster.CertificateAuthorityData) != 0 {
+				t.Fatalf("expected no custom CA data for public-TLS mode")
+			}
+		})
+	}
+}
+
 func newActionRequestReconciler(t *testing.T, actionRequest *platformv1alpha1.ActionRequest) *ActionRequestReconciler {
 	t.Helper()
 	return newActionRequestReconcilerWithExtras(t, actionRequest)
@@ -629,6 +742,10 @@ func newNATSActionRequestReconciler(t *testing.T, actionRequest *platformv1alpha
 }
 
 func newNamespaceActionRequestReconciler(t *testing.T, actionRequest *platformv1alpha1.ActionRequest) *ActionRequestReconciler {
+	return newNamespaceActionRequestReconcilerWithConfig(t, actionRequest, false, "", nil)
+}
+
+func newNamespaceActionRequestReconcilerWithConfig(t *testing.T, actionRequest *platformv1alpha1.ActionRequest, productionMode bool, externalURL string, namespaceAccessCAData []byte) *ActionRequestReconciler {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -656,7 +773,14 @@ func newNamespaceActionRequestReconciler(t *testing.T, actionRequest *platformv1
 			actionRequest,
 		).
 		Build()
-	return &ActionRequestReconciler{Client: client, Scheme: scheme, Adapters: registry}
+	return &ActionRequestReconciler{
+		Client:                     client,
+		Scheme:                     scheme,
+		Adapters:                   registry,
+		ProductionMode:             productionMode,
+		NamespaceAccessExternalURL: externalURL,
+		NamespaceAccessCAData:      append([]byte(nil), namespaceAccessCAData...),
+	}
 }
 
 func tenantFixture() *platformv1alpha1.Tenant {

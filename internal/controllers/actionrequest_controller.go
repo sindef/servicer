@@ -3,9 +3,12 @@ package controllers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,6 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,8 +36,11 @@ import (
 // ActionRequestReconciler reconciles ActionRequest resources.
 type ActionRequestReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Adapters *adapters.Registry
+	Scheme                     *runtime.Scheme
+	Adapters                   *adapters.Registry
+	ProductionMode             bool
+	NamespaceAccessExternalURL string
+	NamespaceAccessCAData      []byte
 }
 
 type resolvedActionRequest struct {
@@ -616,7 +624,7 @@ func (r *ActionRequestReconciler) executeNamespaceAction(ctx context.Context, se
 			Retryable:    true,
 		}, nil
 	case string(adapters.ActionGrantAccess):
-		params, err := namespaceAccessParameters(actionRequest)
+		params, err := r.namespaceAccessParameters(actionRequest)
 		if err != nil {
 			return adapters.ActionExecutionResult{}, err
 		}
@@ -1371,15 +1379,17 @@ func quotaHard(actionRequest *platformv1alpha1.ActionRequest) (corev1.ResourceLi
 }
 
 type namespaceAccessParams struct {
-	Subject    string
-	DefaultURL string
+	Subject string
+	BaseURL string
+	CAData  []byte
 }
 
-func namespaceAccessParameters(actionRequest *platformv1alpha1.ActionRequest) (namespaceAccessParams, error) {
+func (r *ActionRequestReconciler) namespaceAccessParameters(actionRequest *platformv1alpha1.ActionRequest) (namespaceAccessParams, error) {
 	params := namespaceAccessParams{
-		Subject:    strings.TrimSpace(actionRequest.Spec.RequestedBy.Subject),
-		DefaultURL: "https://servicer.local",
+		Subject: strings.TrimSpace(actionRequest.Spec.RequestedBy.Subject),
+		CAData:  append([]byte(nil), r.NamespaceAccessCAData...),
 	}
+	requestURL := ""
 	if actionRequest.Spec.Parameters != nil && len(actionRequest.Spec.Parameters.Raw) > 0 {
 		raw := map[string]string{}
 		if err := json.Unmarshal(actionRequest.Spec.Parameters.Raw, &raw); err != nil {
@@ -1389,19 +1399,65 @@ func namespaceAccessParameters(actionRequest *platformv1alpha1.ActionRequest) (n
 			params.Subject = subject
 		}
 		if defaultURL := strings.TrimSpace(raw["defaultUrl"]); defaultURL != "" {
-			params.DefaultURL = strings.TrimRight(defaultURL, "/")
+			requestURL = defaultURL
 		}
 		if defaultURL := strings.TrimSpace(raw["default_url"]); defaultURL != "" {
-			params.DefaultURL = strings.TrimRight(defaultURL, "/")
+			requestURL = defaultURL
 		}
 	}
 	if params.Subject == "" {
 		return namespaceAccessParams{}, fmt.Errorf("grant-access action requires parameters.subject or requestedBy.subject")
 	}
-	if params.DefaultURL == "" {
-		return namespaceAccessParams{}, fmt.Errorf("grant-access action requires parameters.defaultUrl")
+	configuredURL := strings.TrimSpace(r.NamespaceAccessExternalURL)
+	if r.ProductionMode {
+		if configuredURL == "" {
+			return namespaceAccessParams{}, fmt.Errorf("grant-access action requires controller external URL in production mode; set --external-url (or SERVICER_EXTERNAL_URL/SERVICER_AUTH_EXTERNAL_BASE_URL)")
+		}
+		normalized, err := normalizeNamespaceAccessBaseURL(configuredURL)
+		if err != nil {
+			return namespaceAccessParams{}, fmt.Errorf("invalid controller external URL for namespace access kubeconfig: %w", err)
+		}
+		params.BaseURL = normalized
+		return params, nil
 	}
+	baseURL := configuredURL
+	if baseURL == "" {
+		baseURL = requestURL
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		return namespaceAccessParams{}, fmt.Errorf("grant-access action requires parameters.defaultUrl or controller external URL")
+	}
+	normalized, err := normalizeNamespaceAccessBaseURL(baseURL)
+	if err != nil {
+		return namespaceAccessParams{}, err
+	}
+	params.BaseURL = normalized
 	return params, nil
+}
+
+func normalizeNamespaceAccessBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("external URL is required")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("external URL must be a valid URL")
+	}
+	if !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" {
+		return "", fmt.Errorf("external URL must be an absolute HTTPS URL")
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return "", fmt.Errorf("external URL must use https")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("external URL must not include embedded credentials")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("external URL must not include query string or fragment")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 type natsStreamActionParams struct {
@@ -1521,19 +1577,23 @@ func (r *ActionRequestReconciler) ensureNamespaceAccess(ctx context.Context, ser
 			Labels:    labels,
 			Annotations: map[string]string{
 				"servicer.io/access-subject": params.Subject,
-				"servicer.io/default-url":    params.DefaultURL,
+				"servicer.io/default-url":    params.BaseURL,
 				"servicer.io/action-request": actionName,
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			"kubeconfig":  []byte(namespaceAccessKubeconfig(params, namespace, token)),
-			"default_url": []byte(params.DefaultURL),
+			"default_url": []byte(params.BaseURL),
 			"namespace":   []byte(namespace),
 			"subject":     []byte(params.Subject),
 			"token":       []byte(token),
 		},
 	}
+	kubeconfig, err := namespaceAccessKubeconfig(params, namespace, token)
+	if err != nil {
+		return err
+	}
+	secret.Data["kubeconfig"] = kubeconfig
 	return r.applySecret(ctx, secret)
 }
 
@@ -1660,27 +1720,45 @@ func safeKubernetesName(value string, maxLength int) string {
 	return name
 }
 
-func namespaceAccessKubeconfig(params namespaceAccessParams, namespace, token string) string {
-	server := fmt.Sprintf("%s/api/kubernetes/namespaces/%s", strings.TrimRight(params.DefaultURL, "/"), namespace)
-	return fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- name: servicer-platform
-  cluster:
-    insecure-skip-tls-verify: true
-    server: %s
-contexts:
-- name: %s
-  context:
-    cluster: servicer-platform
-    namespace: %s
-    user: %s
-current-context: %s
-users:
-- name: %s
-  user:
-    token: %s
-`, server, namespace, namespace, params.Subject, namespace, params.Subject, token)
+func namespaceAccessKubeconfig(params namespaceAccessParams, namespace, token string) ([]byte, error) {
+	server := fmt.Sprintf("%s/api/kubernetes/namespaces/%s", strings.TrimRight(params.BaseURL, "/"), namespace)
+	config := clientcmdapi.NewConfig()
+	const clusterName = "servicer-platform"
+	userName := namespaceAccessKubeconfigUserName(params.Subject)
+	contextName := namespaceAccessKubeconfigContextName(namespace, params.Subject)
+
+	config.Clusters[clusterName] = &clientcmdapi.Cluster{
+		Server: server,
+	}
+	if len(params.CAData) > 0 {
+		config.Clusters[clusterName].CertificateAuthorityData = append([]byte(nil), params.CAData...)
+	}
+	config.AuthInfos[userName] = &clientcmdapi.AuthInfo{Token: token}
+	config.Contexts[contextName] = &clientcmdapi.Context{
+		Cluster:   clusterName,
+		AuthInfo:  userName,
+		Namespace: namespace,
+	}
+	config.CurrentContext = contextName
+	return clientcmd.Write(*config)
+}
+
+func namespaceAccessKubeconfigUserName(subject string) string {
+	base := safeKubernetesName(subject, 32)
+	return fmt.Sprintf("servicer-%s-%s", base, shortStableHash(subject, 8))
+}
+
+func namespaceAccessKubeconfigContextName(namespace, subject string) string {
+	return fmt.Sprintf("ns-%s-%s", safeKubernetesName(namespace, 28), shortStableHash(subject, 8))
+}
+
+func shortStableHash(value string, size int) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	encoded := hex.EncodeToString(sum[:])
+	if size <= 0 || size >= len(encoded) {
+		return encoded
+	}
+	return encoded[:size]
 }
 
 func failoverCandidate(actionRequest *platformv1alpha1.ActionRequest) (string, error) {

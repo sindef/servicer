@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/base64"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 
@@ -49,6 +51,8 @@ func main() {
 	var systemNamespace string
 	var webhookServiceName string
 	var webhookCertSecretName string
+	var externalURL string
+	var namespaceAccessCAData string
 	productionMode := truthyEnv("SERVICER_PRODUCTION")
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -70,6 +74,8 @@ func main() {
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", false, "Enable admission webhooks for Servicer APIs.")
 	flag.BoolVar(&webhookBootstrapOnly, "webhook-bootstrap-only", false, "Generate webhook serving certificates and patch webhook configurations, then exit.")
 	flag.BoolVar(&productionMode, "production", productionMode, "Require production delivery guarantees during reconciliation.")
+	flag.StringVar(&externalURL, "external-url", firstNonEmpty(strings.TrimSpace(os.Getenv("SERVICER_EXTERNAL_URL")), strings.TrimSpace(os.Getenv("SERVICER_AUTH_EXTERNAL_BASE_URL"))), "External HTTPS URL used for generated namespace access kubeconfigs.")
+	flag.StringVar(&namespaceAccessCAData, "namespace-access-ca-data", strings.TrimSpace(os.Getenv("SERVICER_NAMESPACE_ACCESS_CA_DATA")), "Optional PEM (or base64-encoded PEM) CA bundle for generated namespace access kubeconfigs.")
 	flag.StringVar(&systemNamespace, "system-namespace", "servicer-system", "Namespace where Servicer control-plane components run.")
 	flag.StringVar(&webhookServiceName, "webhook-service-name", "servicer-webhook-service", "Service name used by admission webhook configurations.")
 	flag.StringVar(&webhookCertSecretName, "webhook-cert-secret-name", "servicer-webhook-server-cert", "Secret name that stores webhook serving certificates.")
@@ -78,6 +84,11 @@ func main() {
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
 	deliveryRepoURL = emptyIfUnresolvedEnv(deliveryRepoURL)
+	namespaceAccessCABytes, err := decodeNamespaceAccessCAData(namespaceAccessCAData)
+	if err != nil {
+		ctrl.Log.WithName("setup").Error(err, "unable to parse namespace access CA bundle")
+		os.Exit(1)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 
@@ -166,7 +177,14 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "unable to create service instance controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ActionRequestReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Adapters: adapterRegistry}).SetupWithManager(mgr); err != nil {
+	if err := (&controllers.ActionRequestReconciler{
+		Client:                     mgr.GetClient(),
+		Scheme:                     mgr.GetScheme(),
+		Adapters:                   adapterRegistry,
+		ProductionMode:             productionMode,
+		NamespaceAccessExternalURL: externalURL,
+		NamespaceAccessCAData:      namespaceAccessCABytes,
+	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to create action request controller")
 		os.Exit(1)
 	}
@@ -264,4 +282,35 @@ func emptyIfUnresolvedEnv(value string) string {
 func truthyEnv(key string) bool {
 	value := strings.TrimSpace(os.Getenv(key))
 	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func decodeNamespaceAccessCAData(raw string) ([]byte, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if strings.Contains(trimmed, "BEGIN CERTIFICATE") {
+		return []byte(trimmed), nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(trimmed)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(trimmed)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("SERVICER_NAMESPACE_ACCESS_CA_DATA must be PEM or base64-encoded PEM: %w", err)
+	}
+	text := strings.TrimSpace(string(decoded))
+	if !strings.Contains(text, "BEGIN CERTIFICATE") {
+		return nil, fmt.Errorf("SERVICER_NAMESPACE_ACCESS_CA_DATA must decode to PEM certificate data")
+	}
+	return []byte(text), nil
 }
