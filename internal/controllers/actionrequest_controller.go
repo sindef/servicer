@@ -102,6 +102,17 @@ func (r *ActionRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
+	if approvalPending(&actionRequest, resolved.capability) && actionRequest.Status.OperationState == actionOperationStateApplied {
+		if _, _, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+			current.Status.ObservedGeneration = current.Generation
+			r.applyFailedStatus(current, "ApprovalInvalidState", "approval-invalid-state", "Action request approval cannot be reset to required after execution has started.", false)
+			current.Status.OperationState = actionOperationStateComplete
+		}); updateErr != nil {
+			return ctrl.Result{}, updateErr
+		}
+		return ctrl.Result{}, nil
+	}
+
 	if approvalPending(&actionRequest, resolved.capability) {
 		if _, _, updateErr := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
 			current.Status.ObservedGeneration = current.Generation
@@ -198,6 +209,17 @@ func (r *ActionRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 			return ctrl.Result{}, nil
 		}
+		if !validActionOperationState(preparedAction.Status.OperationState) {
+			_, _, err := r.patchActionRequestStatus(ctx, req.NamespacedName, func(current *platformv1alpha1.ActionRequest) {
+				current.Status.ObservedGeneration = current.Generation
+				r.applyFailedStatus(current, "InvalidOperationState", "invalid-operation-state", fmt.Sprintf("Action request is in unsupported operation state %q.", current.Status.OperationState), false)
+				current.Status.OperationState = actionOperationStateComplete
+			})
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
 		if preparedAction.Status.OperationState != actionOperationStatePrepared {
 			return ctrl.Result{}, nil
 		}
@@ -258,6 +280,23 @@ func (r *ActionRequestReconciler) patchActionRequestStatus(ctx context.Context, 
 		return nil
 	})
 	return patched, changed, err
+}
+
+func (r *ActionRequestReconciler) patchServiceInstanceStatus(ctx context.Context, key types.NamespacedName, mutate func(*platformv1alpha1.ServiceInstance) error) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current platformv1alpha1.ServiceInstance
+		if err := r.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		before := current.DeepCopy()
+		if err := mutate(&current); err != nil {
+			return err
+		}
+		if equality.Semantic.DeepEqual(before.Status, current.Status) {
+			return nil
+		}
+		return r.Status().Patch(ctx, &current, client.MergeFrom(before))
+	})
 }
 
 func (r *ActionRequestReconciler) executeAction(ctx context.Context, resolved resolvedActionRequest, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
@@ -648,9 +687,9 @@ func (r *ActionRequestReconciler) executeMySQLAction(ctx context.Context, servic
 	case string(adapters.ActionScale), string(adapters.ActionRestart), string(adapters.ActionRotateCredentials):
 		return r.executeStatefulSetBackedAction(ctx, serviceContext, actionRequest, operationID, "MySQL")
 	case string(adapters.ActionFailover):
-		return r.failoverMySQLPrimary(ctx, serviceContext, actionRequest)
+		return r.failoverMySQLPrimary(ctx, serviceContext, actionRequest, operationID)
 	case string(adapters.ActionRollbackFailover):
-		return r.rollbackMySQLPrimary(ctx, serviceContext, actionRequest)
+		return r.rollbackMySQLPrimary(ctx, serviceContext, actionRequest, operationID)
 	case string(adapters.ActionBackup):
 		if serviceContext.Instance == nil {
 			return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
@@ -677,7 +716,7 @@ func (r *ActionRequestReconciler) executeMySQLAction(ctx context.Context, servic
 	}
 }
 
-func (r *ActionRequestReconciler) failoverMySQLPrimary(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) failoverMySQLPrimary(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
 	if serviceContext.Instance == nil {
 		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
 	}
@@ -692,6 +731,18 @@ func (r *ActionRequestReconciler) failoverMySQLPrimary(ctx context.Context, serv
 	if err != nil {
 		return adapters.ActionExecutionResult{}, err
 	}
+	if strings.TrimSpace(params.PrimaryCluster) == candidate {
+		return adapters.ActionExecutionResult{
+			Phase: "Succeeded",
+			OperationRef: &platformv1alpha1.TypedObjectReference{
+				APIVersion: platformv1alpha1.GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       serviceContext.Instance.Name,
+			},
+			Message:   fmt.Sprintf("MySQL failover for operation %q already promoted cluster %q.", operationID, candidate),
+			Retryable: false,
+		}, nil
+	}
 	currentPrimary := params.PrimaryCluster
 	if currentPrimary == "" {
 		currentPrimary = serviceContext.Instance.Status.Placement.ClusterName
@@ -705,7 +756,7 @@ func (r *ActionRequestReconciler) failoverMySQLPrimary(ctx context.Context, serv
 	return r.persistMySQLActionParameters(ctx, serviceContext.Instance, params, fmt.Sprintf("MySQL failover promoted standby cluster %q.", candidate))
 }
 
-func (r *ActionRequestReconciler) rollbackMySQLPrimary(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest) (adapters.ActionExecutionResult, error) {
+func (r *ActionRequestReconciler) rollbackMySQLPrimary(ctx context.Context, serviceContext adapters.ServiceContext, actionRequest *platformv1alpha1.ActionRequest, operationID string) (adapters.ActionExecutionResult, error) {
 	if serviceContext.Instance == nil {
 		return adapters.ActionExecutionResult{}, fmt.Errorf("service instance context is required")
 	}
@@ -726,6 +777,18 @@ func (r *ActionRequestReconciler) rollbackMySQLPrimary(ctx context.Context, serv
 	currentPrimary := params.PrimaryCluster
 	if currentPrimary == "" {
 		currentPrimary = serviceContext.Instance.Status.Placement.ClusterName
+	}
+	if target == currentPrimary {
+		return adapters.ActionExecutionResult{
+			Phase: "Succeeded",
+			OperationRef: &platformv1alpha1.TypedObjectReference{
+				APIVersion: platformv1alpha1.GroupVersion.String(),
+				Kind:       "ServiceInstance",
+				Name:       serviceContext.Instance.Name,
+			},
+			Message:   fmt.Sprintf("MySQL rollback for operation %q already promoted cluster %q.", operationID, target),
+			Retryable: false,
+		}, nil
 	}
 	params.PreviousPrimaryCluster = currentPrimary
 	params.PrimaryCluster = target
@@ -980,66 +1043,87 @@ func (r *ActionRequestReconciler) executeValkeyAction(ctx context.Context, servi
 		if err != nil {
 			return adapters.ActionExecutionResult{}, err
 		}
-		if err := applyValkeyFailoverPreflight(serviceContext.Instance, candidate); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		_ = promoteValkeyPrimary(serviceContext.Instance, candidate, "Standby cluster %q promoted from previous primary %q.")
-		if err := r.Status().Update(ctx, serviceContext.Instance); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		return adapters.ActionExecutionResult{
+		result := adapters.ActionExecutionResult{
 			Phase: "Succeeded",
 			OperationRef: &platformv1alpha1.TypedObjectReference{
 				APIVersion: platformv1alpha1.GroupVersion.String(),
 				Kind:       "ServiceInstance",
 				Name:       serviceContext.Instance.Name,
 			},
-			Message:   fmt.Sprintf("Valkey failover promoted standby cluster %q.", candidate),
 			Retryable: false,
-		}, nil
+		}
+		if err := r.patchServiceInstanceStatus(ctx, types.NamespacedName{Name: serviceContext.Instance.Name}, func(instance *platformv1alpha1.ServiceInstance) error {
+			if strings.TrimSpace(instance.Status.CacheTopology.PrimaryCluster) == candidate {
+				result.Message = fmt.Sprintf("Valkey failover for operation %q already promoted standby cluster %q.", operationID, candidate)
+				return nil
+			}
+			if err := applyValkeyFailoverPreflight(instance, candidate); err != nil {
+				return err
+			}
+			_ = promoteValkeyPrimary(instance, candidate, "Standby cluster %q promoted from previous primary %q.")
+			result.Message = fmt.Sprintf("Valkey failover promoted standby cluster %q.", candidate)
+			return nil
+		}); err != nil {
+			return adapters.ActionExecutionResult{}, err
+		}
+		return result, nil
 	case string(adapters.ActionRollbackFailover):
 		targetPrimary, err := rollbackTarget(actionRequest, serviceContext.Instance)
 		if err != nil {
 			return adapters.ActionExecutionResult{}, err
 		}
-		if err := applyValkeyFailoverPreflight(serviceContext.Instance, targetPrimary); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		previousPrimary := promoteValkeyPrimary(serviceContext.Instance, targetPrimary, "Rollback promoted cluster %q from active primary %q.")
-		if err := r.Status().Update(ctx, serviceContext.Instance); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		return adapters.ActionExecutionResult{
+		result := adapters.ActionExecutionResult{
 			Phase: "Succeeded",
 			OperationRef: &platformv1alpha1.TypedObjectReference{
 				APIVersion: platformv1alpha1.GroupVersion.String(),
 				Kind:       "ServiceInstance",
 				Name:       serviceContext.Instance.Name,
 			},
-			Message:   fmt.Sprintf("Valkey rollback promoted cluster %q from %q.", targetPrimary, previousPrimary),
 			Retryable: false,
-		}, nil
+		}
+		if err := r.patchServiceInstanceStatus(ctx, types.NamespacedName{Name: serviceContext.Instance.Name}, func(instance *platformv1alpha1.ServiceInstance) error {
+			if strings.TrimSpace(instance.Status.CacheTopology.PrimaryCluster) == targetPrimary {
+				result.Message = fmt.Sprintf("Valkey rollback for operation %q already promoted cluster %q.", operationID, targetPrimary)
+				return nil
+			}
+			if err := applyValkeyFailoverPreflight(instance, targetPrimary); err != nil {
+				return err
+			}
+			previousPrimary := promoteValkeyPrimary(instance, targetPrimary, "Rollback promoted cluster %q from active primary %q.")
+			result.Message = fmt.Sprintf("Valkey rollback promoted cluster %q from %q.", targetPrimary, previousPrimary)
+			return nil
+		}); err != nil {
+			return adapters.ActionExecutionResult{}, err
+		}
+		return result, nil
 	case string(adapters.ActionResyncStandby):
 		standbyCluster, err := standbyTarget(actionRequest)
 		if err != nil {
 			return adapters.ActionExecutionResult{}, err
 		}
-		if err := markValkeyStandbyResyncRequested(serviceContext.Instance, standbyCluster, actionRequest.Name); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		if err := r.Status().Update(ctx, serviceContext.Instance); err != nil {
-			return adapters.ActionExecutionResult{}, err
-		}
-		return adapters.ActionExecutionResult{
+		result := adapters.ActionExecutionResult{
 			Phase: "Succeeded",
 			OperationRef: &platformv1alpha1.TypedObjectReference{
 				APIVersion: platformv1alpha1.GroupVersion.String(),
 				Kind:       "ServiceInstance",
 				Name:       serviceContext.Instance.Name,
 			},
-			Message:   fmt.Sprintf("Valkey standby cluster %q marked for resynchronization.", standbyCluster),
 			Retryable: true,
-		}, nil
+		}
+		if err := r.patchServiceInstanceStatus(ctx, types.NamespacedName{Name: serviceContext.Instance.Name}, func(instance *platformv1alpha1.ServiceInstance) error {
+			if valkeyStandbyAlreadyResyncing(instance, standbyCluster) {
+				result.Message = fmt.Sprintf("Valkey standby cluster %q already marked for resynchronization by operation %q.", standbyCluster, operationID)
+				return nil
+			}
+			if err := markValkeyStandbyResyncRequested(instance, standbyCluster, actionRequest.Name); err != nil {
+				return err
+			}
+			result.Message = fmt.Sprintf("Valkey standby cluster %q marked for resynchronization.", standbyCluster)
+			return nil
+		}); err != nil {
+			return adapters.ActionExecutionResult{}, err
+		}
+		return result, nil
 	default:
 		return adapters.ActionExecutionResult{}, fmt.Errorf("unsupported Valkey action %q", actionRequest.Spec.Action)
 	}
@@ -1299,6 +1383,15 @@ func normalizedActionPhase(phase string) string {
 		return trimmed
 	default:
 		return "Queued"
+	}
+}
+
+func validActionOperationState(state string) bool {
+	switch strings.TrimSpace(state) {
+	case "", actionOperationStatePrepared, actionOperationStateApplied, actionOperationStateComplete:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1888,4 +1981,15 @@ func markValkeyStandbyResyncRequested(instance *platformv1alpha1.ServiceInstance
 		return nil
 	}
 	return fmt.Errorf("standby cluster %q is not known", standbyCluster)
+}
+
+func valkeyStandbyAlreadyResyncing(instance *platformv1alpha1.ServiceInstance, standbyCluster string) bool {
+	for i := range instance.Status.CacheTopology.StandbyClusters {
+		standby := instance.Status.CacheTopology.StandbyClusters[i]
+		if standby.ClusterName != standbyCluster {
+			continue
+		}
+		return standby.ResyncRequired && !standby.Ready
+	}
+	return false
 }

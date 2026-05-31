@@ -149,6 +149,90 @@ func TestActionRequestReconcilerRotateIsIdempotentWhenReplayed(t *testing.T) {
 	}
 }
 
+func TestActionRequestReconcilerDoesNotFailValkeyFailoverAfterStatusConflict(t *testing.T) {
+	action := valkeyActionRequestFixture("session-cache-failover-conflict", string(adapters.ActionFailover), map[string]any{"candidateCluster": "west-2"})
+	action.Spec.Approval.Mode = platformv1alpha1.ApprovalModeApproved
+	action.Spec.Approval.ApprovedBy = []string{"manager@example.com"}
+	reconciler := newValkeyActionRequestReconciler(t, action)
+	baseClient := reconciler.Client
+	reconciler.Client = &conflictOnStatusPatchClient{Client: baseClient, failPatchCall: 3, failAllPatchesAfter: true}
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}})
+	if err == nil || !apierrors.IsConflict(err) {
+		t.Fatalf("expected status conflict error on completion patch, got %v", err)
+	}
+
+	var instance platformv1alpha1.ServiceInstance
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: "session-cache"}, &instance); err != nil {
+		t.Fatalf("Get ServiceInstance returned error: %v", err)
+	}
+	if instance.Status.CacheTopology.PrimaryCluster != "west-2" {
+		t.Fatalf("expected failover side effect before conflict, got %#v", instance.Status.CacheTopology)
+	}
+
+	reconciler.Client = baseClient
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}}); err != nil {
+		t.Fatalf("second reconcile returned error: %v", err)
+	}
+
+	var request platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: action.Name}, &request); err != nil {
+		t.Fatalf("Get ActionRequest returned error: %v", err)
+	}
+	if request.Status.Phase != "Succeeded" {
+		t.Fatalf("expected action to succeed after replay, got %q", request.Status.Phase)
+	}
+	if request.Status.OperationState != actionOperationStateComplete {
+		t.Fatalf("expected complete operation state after replay, got %q", request.Status.OperationState)
+	}
+}
+
+func TestActionRequestReconcilerGrantAccessReplayKeepsIssuedToken(t *testing.T) {
+	action := namespaceGrantAccessActionRequestFixture("team-space-access-conflict", map[string]any{
+		"subject":    "bob@example.com",
+		"defaultUrl": "https://servicer.example.com",
+	})
+	reconciler := newNamespaceActionRequestReconciler(t, action)
+	baseClient := reconciler.Client
+	reconciler.Client = &conflictOnStatusPatchClient{Client: baseClient, failPatchCall: 2, failAllPatchesAfter: true}
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}})
+	if err == nil || !apierrors.IsConflict(err) {
+		t.Fatalf("expected status conflict error on completion patch, got %v", err)
+	}
+
+	secretName := namespaceAccessSecretName("bob@example.com")
+	var firstSecret corev1.Secret
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: secretName, Namespace: "acme-prod-team-space"}, &firstSecret); err != nil {
+		t.Fatalf("Get first kubeconfig Secret returned error: %v", err)
+	}
+	firstToken := string(firstSecret.Data["token"])
+	if firstToken == "" {
+		t.Fatalf("expected issued token in first reconcile")
+	}
+
+	reconciler.Client = baseClient
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}}); err != nil {
+		t.Fatalf("second reconcile returned error: %v", err)
+	}
+
+	var secondSecret corev1.Secret
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: secretName, Namespace: "acme-prod-team-space"}, &secondSecret); err != nil {
+		t.Fatalf("Get second kubeconfig Secret returned error: %v", err)
+	}
+	if got := string(secondSecret.Data["token"]); got != firstToken {
+		t.Fatalf("expected stable namespace access token across replay, got %q then %q", firstToken, got)
+	}
+
+	var request platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: action.Name}, &request); err != nil {
+		t.Fatalf("Get ActionRequest returned error: %v", err)
+	}
+	if request.Status.Phase != "Succeeded" {
+		t.Fatalf("expected access action to succeed after replay, got %q", request.Status.Phase)
+	}
+}
+
 func TestActionRequestReconcilerLoadsRuntimeStatefulSetForMySQLRotate(t *testing.T) {
 	actionRequest := valkeyActionRequestFixture("orders-mysql-rotate", string(adapters.ActionRotateCredentials), nil)
 	actionRequest.Spec.TargetRef.Name = "orders-mysql"

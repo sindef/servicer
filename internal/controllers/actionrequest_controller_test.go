@@ -214,6 +214,69 @@ func TestActionRequestReconcilerRejectsApprovedActionWithoutApproverIdentity(t *
 	}
 }
 
+func TestActionRequestReconcilerRejectsInvalidOperationState(t *testing.T) {
+	action := valkeyActionRequestFixture("session-cache-invalid-operation-state", string(adapters.ActionScale), map[string]any{"replicas": 5})
+	now := metav1.Now()
+	action.Status = platformv1alpha1.ActionRequestStatus{
+		ObservedGeneration: action.Generation,
+		Phase:              "Running",
+		OperationID:        "op-invalid",
+		OperationState:     "Corrupted",
+		StartedAt:          &now,
+	}
+	reconciler := newValkeyActionRequestReconciler(t, action)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updated platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: action.Name}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "Failed" {
+		t.Fatalf("expected phase Failed, got %q", updated.Status.Phase)
+	}
+	if updated.Status.Result.Code != "invalid-operation-state" {
+		t.Fatalf("expected result code invalid-operation-state, got %q", updated.Status.Result.Code)
+	}
+	if updated.Status.OperationState != actionOperationStateComplete {
+		t.Fatalf("expected operation state %q, got %q", actionOperationStateComplete, updated.Status.OperationState)
+	}
+}
+
+func TestActionRequestReconcilerRejectsApprovalResetAfterExecutionStarted(t *testing.T) {
+	action := valkeyActionRequestFixture("session-cache-failover-approval-reset", string(adapters.ActionFailover), map[string]any{"candidateCluster": "west-2"})
+	action.Spec.Approval.Mode = platformv1alpha1.ApprovalModeRequired
+	now := metav1.Now()
+	action.Status = platformv1alpha1.ActionRequestStatus{
+		ObservedGeneration: action.Generation,
+		Phase:              "Running",
+		OperationID:        "op-failover",
+		OperationState:     actionOperationStateApplied,
+		StartedAt:          &now,
+	}
+	reconciler := newValkeyActionRequestReconciler(t, action)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: action.Name}}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	var updated platformv1alpha1.ActionRequest
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Name: action.Name}, &updated); err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if updated.Status.Phase != "Failed" {
+		t.Fatalf("expected phase Failed, got %q", updated.Status.Phase)
+	}
+	if updated.Status.Result.Code != "approval-invalid-state" {
+		t.Fatalf("expected result code approval-invalid-state, got %q", updated.Status.Result.Code)
+	}
+	if updated.Status.OperationState != actionOperationStateComplete {
+		t.Fatalf("expected operation state %q, got %q", actionOperationStateComplete, updated.Status.OperationState)
+	}
+}
+
 func TestActionRequestReconcilerAppliesValkeyScale(t *testing.T) {
 	reconciler := newValkeyActionRequestReconciler(t, valkeyActionRequestFixture("session-cache-scale", string(adapters.ActionScale), map[string]any{"replicas": 5}))
 
