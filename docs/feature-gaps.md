@@ -43,3 +43,16 @@ Current launch-grade behavior is documented in the production, audit, repository
 - Login rate limiting only has a per-pod memory backend; production deployments need explicit acceptance and compensating IdP/ingress controls if multiple BFF replicas are used.
 - Audit records persist mutating API requests and credential reveal/download requests, but auth login/logout evidence still depends on IdP logs and BFF JSON logs.
 - High-volume BFF list endpoints support `limit`, `offset`, and `q`, but responses do not yet include total counts or continuation tokens.
+
+## Launch Exceptions (Owned)
+
+The current deferred exceptions and blockers are tracked in [plan/production-readiness-checklist.md](/home/mnorris/repos/servicer/plan/production-readiness-checklist.md). Exceptions that require explicit owner sign-off before GA:
+
+- Finding 8 (per-replica login limiter): Owner `Platform security`.
+- Finding 10 (namespace token lookup model): Owner `BFF/API`.
+- Finding 30 (residual manager RBAC breadth): Owner `Platform controllers`.
+- Finding 33 (network egress overlays): Owner `SRE/networking`.
+- Finding 42 (credential reveal re-auth/MFA backend enforcement): Owner `Security UX + auth`.
+- Finding 46 (committed `web/dist` policy): Owner `Release engineering`.
+
+Active launch blockers are tracked in [plan/do-not-ship.md](/home/mnorris/repos/servicer/plan/do-not-ship.md).
