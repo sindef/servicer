@@ -450,6 +450,12 @@ func normalizeManifestObject(obj *unstructured.Unstructured) {
 }
 
 func extractTarGz(destDir string, data []byte) error {
+	root, err := os.OpenRoot(destDir)
+	if err != nil {
+		return fmt.Errorf("opening chart destination: %w", err)
+	}
+	defer root.Close()
+
 	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("opening chart archive: %w", err)
@@ -466,26 +472,25 @@ func extractTarGz(destDir string, data []byte) error {
 			return fmt.Errorf("reading chart archive: %w", err)
 		}
 
-		targetPath := filepath.Join(destDir, header.Name) // #nosec G305 -- Path is validated to remain under destDir before use.
-		cleanTarget := filepath.Clean(targetPath)
-		if !strings.HasPrefix(cleanTarget, filepath.Clean(destDir)+string(os.PathSeparator)) && cleanTarget != filepath.Clean(destDir) {
-			return fmt.Errorf("chart archive contains invalid path %q", header.Name)
+		relativeTarget, err := chartArchivePath(header.Name)
+		if err != nil {
+			return err
 		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(cleanTarget, 0o750); err != nil {
+			if err := root.MkdirAll(relativeTarget, 0o750); err != nil {
 				return fmt.Errorf("creating chart directory: %w", err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o750); err != nil {
+			if err := root.MkdirAll(filepath.Dir(relativeTarget), 0o750); err != nil {
 				return fmt.Errorf("creating chart parent directory: %w", err)
 			}
 			fileMode, err := chartFileMode(header.Mode)
 			if err != nil {
 				return err
 			}
-			file, err := os.OpenFile(cleanTarget, os.O_CREATE|os.O_RDWR|os.O_TRUNC, fileMode)
+			file, err := root.OpenFile(relativeTarget, os.O_CREATE|os.O_RDWR|os.O_TRUNC, fileMode)
 			if err != nil {
 				return fmt.Errorf("creating chart file: %w", err)
 			}
@@ -509,6 +514,17 @@ func extractTarGz(destDir string, data []byte) error {
 			}
 		}
 	}
+}
+
+func chartArchivePath(name string) (string, error) {
+	cleanName := filepath.Clean(name)
+	if filepath.IsAbs(cleanName) || cleanName == "." || cleanName == ".." {
+		return "", fmt.Errorf("chart archive contains invalid path %q", name)
+	}
+	if strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("chart archive contains invalid path %q", name)
+	}
+	return cleanName, nil
 }
 
 func chartFileMode(mode int64) (os.FileMode, error) {
