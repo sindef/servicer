@@ -3,7 +3,7 @@ module github.com/sindef/servicer
 go 1.26.4
 
 require (
-	github.com/coreos/go-oidc/v3 v3.18.0
+	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/crypto v0.53.0
