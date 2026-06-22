@@ -8,10 +8,10 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/crypto v0.53.0
 	golang.org/x/oauth2 v0.36.0
-	k8s.io/api v0.36.1
+	k8s.io/api v0.36.2
 	k8s.io/apiextensions-apiserver v0.36.1
 	k8s.io/apimachinery v0.36.2
-	k8s.io/client-go v0.36.1
+	k8s.io/client-go v0.36.2
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/yaml v1.6.0
 )
