@@ -23,13 +23,13 @@
     "vue-router": "^5.1.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.1",
-    "@axe-core/playwright": "^4.10.2",
+    "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.61.1",
     "@types/js-yaml": "^4.0.9",
+    "@vitejs/plugin-vue": "^6.0.1",
     "typescript": "^7.0.2",
     "vite": "^8.0.16",
-    "vue-tsc": "^3.3.7",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "vue-tsc": "^3.3.7"
   }
 }
