@@ -1,6 +1,6 @@
 module github.com/sindef/servicer
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0
