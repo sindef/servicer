@@ -12,6 +12,10 @@ env:
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/servicer
   GOVULNCHECK_VERSION: v1.1.4
   GOSEC_VERSION: v2.22.5
+  # Pin the toolchain to the version set up below. go.mod requires go 1.26.6,
+  # which carries the patched standard library, so CI must not silently fetch
+  # and run a different toolchain.
+  GOTOOLCHAIN: local
 
 jobs:
   validate:
