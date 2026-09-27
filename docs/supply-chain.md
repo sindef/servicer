@@ -3,6 +3,9 @@
 Release controls:
 
 - Go dependency verification in CI
+- builder stages pin the Go toolchain (`GOTOOLCHAIN`) so image builds honor the
+  `go` directive in `go.mod` even when the digest-pinned builder image ships an
+  older toolchain
 - `govulncheck` for Go vulnerability reachability
 - `gosec` static security checks
 - Helm CLI smoke test against the manager-pinned Helm version
