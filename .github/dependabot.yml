@@ -1,28 +1,89 @@
+# Dependabot is the dependency update tool for this repository because the
+# repository is hosted on GitHub. Renovate (renovate.json) is only added for
+# hosts where Dependabot is unavailable, so it is intentionally absent here.
+#
+# Noise control:
+# - every ecosystem is checked once a week
+# - minor and patch updates per ecosystem land in one grouped pull request
+# - open-pull-requests-limit keeps the backlog of update pull requests small
+# - groups default to `applies-to: version-updates`, so security updates keep
+#   opening as separate, immediate pull requests
 version: 2
 updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+    groups:
+      go-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "npm"
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      github-actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
-  - package-ecosystem: "gomod"
+  # Base images for the bff, manager, syncer, tools and web Containerfiles
+  # (root of the repository) are pinned by tag and digest.
+  - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
-      - "go"
+      - "docker"
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
