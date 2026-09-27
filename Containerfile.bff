@@ -1,4 +1,10 @@
 FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
+
+# This image sets GOTOOLCHAIN=local, but go.mod requires a patched standard
+# library (go >= 1.26.6). Pin the toolchain so the go command fetches and uses
+# go1.26.6 from the module proxy instead of failing on the base image's 1.26.5.
+ENV GOTOOLCHAIN=go1.26.6
+
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
