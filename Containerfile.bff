@@ -1,4 +1,10 @@
 FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
+
+# The module requires go 1.26.6, which carries the patched standard library.
+# This base image is digest-pinned to 1.26.5, so allow the go command to fetch
+# the required toolchain rather than fail under the image's GOTOOLCHAIN default.
+ENV GOTOOLCHAIN=auto
+
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
