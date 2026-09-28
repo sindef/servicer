@@ -259,6 +259,33 @@ kubectl kustomize config/samples > /dev/null
 ./hack/networkpolicy-smoke.sh
 ```
 
+### End-to-end (KinD) gates
+
+The KinD end-to-end suites run in GitHub Actions. No suite is dispatch-only:
+
+- `.github/workflows/e2e-backup-restore.yml` runs `./hack/e2e-backup-restore.sh`
+  on every pull request against `master`/`release/**`, on every push to those
+  branches, and weekly. This is the primary pull request e2e gate.
+- `.github/workflows/e2e-product-operators.yml` runs
+  `./hack/e2e-product-operators.sh` on every pull request, on every push to
+  `master`/`release/**`, and weekly.
+- `.github/workflows/e2e-upgrade.yml` runs `./hack/e2e-upgrade.sh` on every
+  pull request, on every push to `master`/`release/**`, on `v*` tags, and
+  weekly. Manual dispatches can override the previous release with the
+  `previous_version` input.
+- `.github/workflows/e2e-gitops.yml` runs `./hack/e2e-gitops.sh` weekly, since
+  installing Argo CD into KinD is too heavy for a pull request gate.
+
+Run any of them locally from the repository root with Docker, `kind`, `kubectl`
+and Go available:
+
+```bash
+./hack/e2e-backup-restore.sh
+./hack/e2e-product-operators.sh
+./hack/e2e-upgrade.sh
+./hack/e2e-gitops.sh
+```
+
 ### Container builds
 
 ```bash

@@ -1,25 +1,22 @@
-name: Product Operator E2E
+name: GitOps E2E
 
-# Gates pull requests too: this suite pulls the upstream CloudNativePG release
-# manifest, so it gets a longer install wait than the other KinD suites.
+# Weekly and on demand only: hack/e2e-gitops.sh installs Argo CD into KinD and
+# waits for the repo server, which is too heavy and too network dependent for a
+# pull request gate. The pull request gate lives in e2e-backup-restore.yml.
 on:
-  push:
-    branches: ["master", "release/**"]
-  pull_request:
-    branches: ["master", "release/**"]
   schedule:
-    - cron: "30 5 * * 1"
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 concurrency:
-  group: e2e-product-operators-${{ github.ref }}
+  group: e2e-gitops-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  product-operators:
-    name: KinD product operators
+  gitops:
+    name: KinD GitOps
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
@@ -40,5 +37,5 @@ jobs:
         with:
           install_only: true
 
-      - name: Run product operator e2e
-        run: ./hack/e2e-product-operators.sh
+      - name: Run GitOps e2e
+        run: ./hack/e2e-gitops.sh

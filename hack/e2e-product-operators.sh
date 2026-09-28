@@ -23,7 +23,7 @@ kubectl apply -f config/crd/bases
 kubectl wait --for=condition=Established crd --all --timeout=90s
 
 kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.25/releases/cnpg-1.25.4.yaml
-kubectl wait -n cnpg-system --for=condition=Available deploy/cnpg-controller-manager --timeout=180s
+kubectl wait -n cnpg-system --for=condition=Available deploy/cnpg-controller-manager --timeout=300s
 
 kubectl apply -k config/samples
 go test ./internal/adapters ./internal/controllers
