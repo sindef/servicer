@@ -1,3 +1,8 @@
+# Single source of truth for Servicer Prometheus alerts:
+# config/observability/prometheus-rules.yaml. deploy/kustomization.yaml
+# references this overlay as a base. Do not reintroduce a second copy of the
+# rule set (the deleted deploy/monitoring-rules.yaml diverged on alert
+# thresholds and on the namespace proxy denials alert, which lives here).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

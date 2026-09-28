@@ -14,4 +14,5 @@ resources:
   - web.yaml
   - network-policies.yaml
   - ingress.yaml
+  - ../config/observability
   - ../config/backup
