@@ -80,6 +80,17 @@ jobs:
         working-directory: web
         run: npm run test:unit
 
+      # The axe/Playwright suite drives the built SPA in a real browser through
+      # web/playwright.config.ts, whose webServer command builds and previews it.
+      # Only Chromium is installed because the config defines no other project.
+      - name: Install Playwright browsers
+        working-directory: web
+        run: node ./node_modules/@playwright/test/cli.js install --with-deps chromium
+
+      - name: Accessibility tests (axe/Playwright)
+        working-directory: web
+        run: npm run test:a11y
+
       - name: Build web
         working-directory: web
         run: npm run build
