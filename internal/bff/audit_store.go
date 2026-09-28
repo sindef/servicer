@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -71,7 +72,9 @@ func (s *auditStore) retained(ctx context.Context) ([]AuditEventSummary, error) 
 		}
 		if auditEventBefore(event, cutoff) {
 			stale := configMap
-			_ = s.client.Delete(ctx, &stale)
+			if err := s.client.Delete(ctx, &stale); err != nil {
+				slog.Error("failed to delete expired audit ConfigMap", "error", err.Error(), "name", stale.Name, "namespace", stale.Namespace)
+			}
 			continue
 		}
 		events = append(events, event)
