@@ -52,6 +52,10 @@ const out = process.argv[3]
 const nodeModules = path.join(root, 'web', 'node_modules')
 const summary = []
 const missing = []
+// Approved exceptions are reviewed as part of release hygiene: packages that
+// ship no license file upstream are listed here with the version resolved by
+// web/package-lock.json. Revisit this set whenever the web dependency tree
+// moves, before refreshing dist/THIRD_PARTY_LICENSES.
 const approved = new Set([
   '@esbuild/linux-x64@0.27.7',
   '@rollup/rollup-linux-x64-gnu@4.60.4',

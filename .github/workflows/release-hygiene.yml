@@ -1,0 +1,122 @@
+name: Release hygiene
+
+# Verifies that the committed third-party license bundle is the current output
+# of hack/generate-third-party-licenses.sh. The generator rewrites
+# dist/THIRD_PARTY_LICENSES/ from go.mod, go.sum, web/package-lock.json and the
+# resolved Go module / npm package trees, so the check needs registry access and
+# produces a tree-wide diff whenever dependencies move.
+#
+# The registry-free companion gate, hack/check-license-bundle.py, runs in the
+# Build workflow on every pull request. This workflow starts with the same check
+# so the committed bundle is known to be self-consistent before regeneration.
+#
+# Triggers:
+#   * schedule: weekly regeneration; the job fails when the committed bundle
+#     drifts from the generator output.
+#   * workflow_dispatch: same check on demand.
+#   * workflow_dispatch with refresh=true: regenerate, commit and push the
+#     bundle to master so the check passes again.
+#
+# Refresh locally with ./hack/generate-third-party-licenses.sh and commit the
+# result when the machine running the check has registry access.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: "Regenerate dist/THIRD_PARTY_LICENSES and commit it to master"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-hygiene
+  cancel-in-progress: false
+
+jobs:
+  licenses:
+    name: Third-party license bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      # Write is used only by the refresh dispatch path below, which commits the
+      # regenerated bundle back to master.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Check committed bundle consistency
+        # Offline gate shared with the Build workflow; fails fast when the
+        # committed bundle is malformed before the registry-backed regeneration
+        # below rewrites and diffs it.
+        run: python3 hack/check-license-bundle.py
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          # Keep in sync with the `go` directive in go.mod.
+          go-version: "1.26.6"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24.11.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Regenerate third-party license bundle
+        run: ./hack/generate-third-party-licenses.sh
+
+      - name: Stage regenerated bundle
+        run: git add -A -- dist/THIRD_PARTY_LICENSES
+
+      - name: Detect bundle drift
+        id: drift
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet -- dist/THIRD_PARTY_LICENSES; then
+            echo "changed=false" >>"${GITHUB_OUTPUT}"
+            echo "Committed bundle matches hack/generate-third-party-licenses.sh output."
+            exit 0
+          fi
+          echo "changed=true" >>"${GITHUB_OUTPUT}"
+          git --no-pager diff --cached --stat -- dist/THIRD_PARTY_LICENSES | tail -n 3
+          echo "::warning::dist/THIRD_PARTY_LICENSES differs from the generated bundle."
+
+      - name: Fail when the committed bundle is stale
+        if: ${{ steps.drift.outputs.changed == 'true' && inputs.refresh != true }}
+        run: |
+          echo "::error::dist/THIRD_PARTY_LICENSES does not match hack/generate-third-party-licenses.sh."
+          echo "Run ./hack/generate-third-party-licenses.sh on a machine with registry access and commit"
+          echo "the result, or dispatch this workflow with refresh=true on master."
+          echo "If the generator reported unapproved missing license files, review them and extend the"
+          echo "approved exception set in hack/generate-third-party-licenses.sh before refreshing."
+          exit 1
+
+      - name: Commit refreshed bundle
+        if: ${{ inputs.refresh == true && steps.drift.outputs.changed == 'true' }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_NAME}" != "master" ]; then
+            echo "::error::refresh=true is only supported on master (got ${GITHUB_REF_NAME})."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(licenses): refresh third-party license bundle"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Upload generated bundle
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: third-party-licenses
+          path: dist/THIRD_PARTY_LICENSES
+          if-no-files-found: error
+          retention-days: 14
