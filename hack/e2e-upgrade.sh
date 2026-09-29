@@ -21,6 +21,12 @@ if ! kind get clusters | grep -qx "${CLUSTER}"; then
 fi
 kubectl config use-context "kind-${CLUSTER}" >/dev/null
 kubectl apply -f config/crd/bases
+# The deploy render now carries the Servicer Prometheus rules and ServiceMonitors
+# from config/observability, so the monitoring CRDs are part of the install
+# contract and must exist before the server-side dry-run below (same upstream
+# manifest fetch pattern as the product operator e2e).
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.80.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.80.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
 kubectl wait --for=condition=Established crd --all --timeout=90s
 kubectl apply -f api/v1alpha1/fixtures/stored-objects.yaml
 

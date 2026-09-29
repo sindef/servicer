@@ -345,6 +345,24 @@ and web packages keep their own licenses and notices. See
 `./hack/generate-third-party-licenses.sh` before publishing release artifacts so
 the generated `dist/THIRD_PARTY_LICENSES/` bundle is shipped beside them.
 
+Regenerate the committed bundle and check it for drift:
+
+```bash
+./hack/generate-third-party-licenses.sh
+git diff --stat dist/THIRD_PARTY_LICENSES
+```
+
+Check the committed bundle without registry access (the `Build` workflow runs the
+same check on every pull request):
+
+```bash
+python3 hack/check-license-bundle.py
+```
+
+The `Release hygiene` workflow runs the same generator weekly and fails when the
+committed bundle drifts from its output. Dispatch that workflow on `master` with
+`refresh=true` to commit a refreshed bundle from CI.
+
 ## Additional docs
 
 - [Feature gap analysis](docs/feature-gaps.md)

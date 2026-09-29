@@ -55,6 +55,14 @@ spec:
           annotations:
             summary: Servicer BFF login rate limits are frequently blocking requests.
             description: Login bursts are triggering BFF rate-limiter blocks above normal baseline.
+        - alert: ServicerBFFNamespaceProxyDenialsHigh
+          expr: increase(servicer_bff_namespace_proxy_denials_total[10m]) > 20
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Servicer namespace proxy denials are elevated.
+            description: Namespace proxy denied more than 20 requests in 10 minutes.
         - alert: ServicerRepositoryMirrorFailures
           expr: increase(servicer_bff_repository_mirror_total{status="failed"}[10m]) > 0
           for: 2m
