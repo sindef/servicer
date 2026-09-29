@@ -14,16 +14,22 @@ require() {
 require kind
 require kubectl
 require go
+require curl
 
 if ! kind get clusters | grep -qx "${CLUSTER}"; then
   kind create cluster --name "${CLUSTER}" --image "${KIND_IMAGE}"
 fi
 kubectl config use-context "kind-${CLUSTER}" >/dev/null
+CNPG_MANIFEST_URL="https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.25/releases/cnpg-1.25.4.yaml"
 kubectl apply -f config/crd/bases
 kubectl wait --for=condition=Established crd --all --timeout=90s
 
-kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.25/releases/cnpg-1.25.4.yaml
-kubectl wait -n cnpg-system --for=condition=Available deploy/cnpg-controller-manager --timeout=180s
+# Server-side apply: the poolers CRD is large enough that kubectl's default
+# client-side "last-applied-configuration" annotation exceeds the 256 KiB
+# metadata.annotations limit and the install fails.
+curl -fsSL "${CNPG_MANIFEST_URL}" -o /tmp/cnpg-release.yaml
+kubectl apply --server-side --force-conflicts -f /tmp/cnpg-release.yaml
+kubectl wait -n cnpg-system --for=condition=Available deploy/cnpg-controller-manager --timeout=300s
 
 kubectl apply -k config/samples
 go test ./internal/adapters ./internal/controllers
