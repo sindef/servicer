@@ -8,6 +8,7 @@ Servicer production installs use the `deploy/` kustomization. The install assume
 - manager `SERVICER_EXTERNAL_URL` (or `SERVICER_AUTH_EXTERNAL_BASE_URL`) is set to the same canonical external HTTPS URL for namespace grant-access kubeconfigs
 - generated delivery artifacts are committed and pushed to a GitOps repository
 - Argo CD syncs the committed artifacts to target clusters
+- the `PrometheusRule` and `ServiceMonitor` CRDs from Prometheus Operator exist in the cluster. The install renders the Servicer alert rules and scrape targets from `config/observability` (SLO and operations alerts documented in [Observability](observability.md)); on clusters without those CRDs, prune the monitoring subset in an environment overlay instead of applying the base as-is.
 - the local development syncer sidecar is not part of the production path
 
 Before applying `deploy/`, replace these values:

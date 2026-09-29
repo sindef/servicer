@@ -29,4 +29,4 @@ Controller scale testing must watch Kubernetes API QPS, controller cache memory,
 
 Load tests should exercise overview, list/detail, repository, audit, and Kubernetes proxy endpoints at the object counts above before each GA release candidate.
 
-Recommended baseline Prometheus alerts for auth failures, rate limiting, repository mirror failures, delivery publish failures, reconcile failures, and namespace proxy denials are defined in `deploy/monitoring-rules.yaml` (apply when Prometheus Operator `PrometheusRule` CRD is available).
+Recommended baseline Prometheus alerts for auth failures, rate limiting, repository mirror failures, delivery publish failures, reconcile failures, and namespace proxy denials are defined in `config/observability/prometheus-rules.yaml`. `kubectl kustomize deploy` renders this canonical rule set, and the Prometheus Operator overlay applies the same file via `kubectl apply -k config/observability` when the `PrometheusRule`/`ServiceMonitor` CRDs are available.

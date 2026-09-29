@@ -44,6 +44,12 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
+      - name: Validate third-party license bundle
+        # Registry-free self-consistency gate for dist/THIRD_PARTY_LICENSES. The
+        # registry-backed regeneration drift check stays in the Release hygiene
+        # workflow; this step fails fast on a hand-edited or half-committed bundle.
+        run: python3 hack/check-license-bundle.py
+
       - name: Go test
         run: go test -race -coverprofile=coverage.out ./...
 
