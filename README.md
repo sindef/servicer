@@ -231,8 +231,14 @@ npm run lint
 npm run test:unit
 npm run build
 npm run build:budget
+node ./node_modules/@playwright/test/cli.js install --with-deps chromium
 npm run test:a11y
 ```
+
+The accessibility suite is an axe/Playwright run against the built UI. It is
+executed by the `Validate` job in the `Build` workflow, which installs the
+Chromium browser before `npm run test:a11y`; install it locally with the
+command above.
 
 ### Frontend dependency audit
 
