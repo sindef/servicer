@@ -87,9 +87,11 @@ run_validate_checks() {
   log "Running validate checks (matching CI validate job)"
   require_cmd go
   require_cmd npm
+  require_cmd python3
   require_cmd kubectl
 
   go mod verify
+  python3 hack/check-license-bundle.py
   go test -race -coverprofile=coverage.out ./...
   go run golang.org/x/vuln/cmd/govulncheck@latest ./...
   go run github.com/securego/gosec/v2/cmd/gosec@latest ./...

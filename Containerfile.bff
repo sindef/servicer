@@ -10,7 +10,21 @@ WORKDIR /build
 
 # Fetch deps first (layer cache)
 COPY go.mod go.sum ./
-RUN go mod download
+# The module proxy occasionally drops large module zips with an HTTP/2 stream
+# error, which would fail an otherwise healthy build, so retry a bounded number
+# of times. go.sum verification is unchanged: every attempt re-reads and
+# verifies the same modules.
+RUN attempt=1; \
+    until go mod download; do \
+      if [ "${attempt}" -ge 3 ]; then \
+        echo "go mod download failed after ${attempt} attempts" >&2; \
+        exit 1; \
+      fi; \
+      echo "go mod download failed (attempt ${attempt}); retrying in 15s" >&2; \
+      attempt=$((attempt + 1)); \
+      sleep 15; \
+    done; \
+    echo "downloaded Go modules in ${attempt} attempt(s)"
 
 # Build static binary
 COPY . .
