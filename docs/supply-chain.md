@@ -10,6 +10,9 @@ Release controls:
 - `gosec` static security checks
 - Helm CLI smoke test against the manager-pinned Helm version
 - Trivy filesystem scan in validation
+- third-party license bundle regeneration and drift check (`Release hygiene`
+  workflow, weekly and on demand; regeneration needs access to the Go module
+  graph and the npm registry)
 - Trivy image scans for every release image
 - BuildKit SBOM and provenance generation for every image
 - keyless cosign signing for tagged release images

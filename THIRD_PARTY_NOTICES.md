@@ -39,7 +39,15 @@ recorded in:
 
 Any unapproved missing license files are emitted to
 `dist/THIRD_PARTY_LICENSES/web/MISSING_LICENSE_FILES.tsv` and the generator
-fails.
+fails. Approved exceptions are reviewed in `hack/generate-third-party-licenses.sh`
+and must be revisited whenever the web dependency tree moves.
+
+The committed bundle is checked in CI. The `Release hygiene` workflow
+(`.github/workflows/release-hygiene.yml`) regenerates it, and fails when
+`dist/THIRD_PARTY_LICENSES/` would change. It runs weekly and on demand;
+dispatching it on `master` with `refresh=true` commits the refreshed bundle.
+Refresh locally with `./hack/generate-third-party-licenses.sh` and commit the
+result when the machine has registry access.
 
 Known license families in the current web dependency tree are permissive:
 MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, and Python-2.0.
