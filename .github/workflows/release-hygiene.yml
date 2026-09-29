@@ -6,6 +6,10 @@ name: Release hygiene
 # resolved Go module / npm package trees, so the check needs registry access and
 # produces a tree-wide diff whenever dependencies move.
 #
+# The registry-free companion gate, hack/check-license-bundle.py, runs in the
+# Build workflow on every pull request. This workflow starts with the same check
+# so the committed bundle is known to be self-consistent before regeneration.
+#
 # Triggers:
 #   * schedule: weekly regeneration; the job fails when the committed bundle
 #     drifts from the generator output.
@@ -44,6 +48,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Check committed bundle consistency
+        # Offline gate shared with the Build workflow; fails fast when the
+        # committed bundle is malformed before the registry-backed regeneration
+        # below rewrites and diffs it.
+        run: python3 hack/check-license-bundle.py
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e

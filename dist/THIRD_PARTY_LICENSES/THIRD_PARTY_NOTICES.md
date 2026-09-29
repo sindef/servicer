@@ -42,7 +42,14 @@ Any unapproved missing license files are emitted to
 fails. Approved exceptions are reviewed in `hack/generate-third-party-licenses.sh`
 and must be revisited whenever the web dependency tree moves.
 
-The committed bundle is checked in CI. The `Release hygiene` workflow
+The committed bundle is checked in CI. On every pull request the `Build`
+workflow runs the registry-free companion check
+`hack/check-license-bundle.py`, which fails when the committed bundle is
+internally inconsistent: a manifest row without a license directory (or the
+reverse), an approved exception that no longer matches the reviewed set in
+`hack/generate-third-party-licenses.sh`, an empty or malformed license
+directory, or a `SERVICER-LICENSE` / `THIRD_PARTY_NOTICES.md` copy that no
+longer matches the repository file. The `Release hygiene` workflow
 (`.github/workflows/release-hygiene.yml`) regenerates it, and fails when
 `dist/THIRD_PARTY_LICENSES/` would change. It runs weekly and on demand;
 dispatching it on `master` with `refresh=true` commits the refreshed bundle.

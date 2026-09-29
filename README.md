@@ -346,6 +346,13 @@ Regenerate the committed bundle and check it for drift:
 git diff --stat dist/THIRD_PARTY_LICENSES
 ```
 
+Check the committed bundle without registry access (the `Build` workflow runs the
+same check on every pull request):
+
+```bash
+python3 hack/check-license-bundle.py
+```
+
 The `Release hygiene` workflow runs the same generator weekly and fails when the
 committed bundle drifts from its output. Dispatch that workflow on `master` with
 `refresh=true` to commit a refreshed bundle from CI.
