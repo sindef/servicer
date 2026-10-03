@@ -106,6 +106,13 @@ Each Git tag matching `v*` also publishes a rendered install manifest as a GitHu
 servicer-install-<version>.yaml
 ```
 
+Publishing that asset requires a green end-to-end run on the tagged commit. The
+`Build` workflow calls every e2e workflow as a release gate, and the
+`publish-install-manifest` and `release-security` jobs wait for all of them, so a
+tag cannot publish a release without passing e2e. The same suites run nightly and
+on pull requests that target `release/**` branches; see
+[End-to-end suites](#end-to-end-suites).
+
 ### Quick install from a tagged release
 
 ```bash
@@ -263,6 +270,26 @@ kubectl kustomize deploy > /dev/null
 kubectl kustomize config/samples > /dev/null
 ./hack/manifest-policy.sh deploy
 ./hack/networkpolicy-smoke.sh
+```
+
+### End-to-end suites
+
+Each `hack/e2e-*.sh` script drives a KinD cluster (Docker, `kind`, `kubectl` and,
+for some suites, `go` must be installed):
+
+```bash
+./hack/e2e-upgrade.sh              # release-to-release upgrade dry-run
+./hack/e2e-backup-restore.sh       # control-plane backup and restore
+./hack/e2e-gitops.sh               # Git delivery repo plus Argo CD Application
+./hack/e2e-product-operators.sh    # operator-backed product baseline
+```
+
+Each suite is wired into `.github/workflows/e2e-*.yml`, which runs nightly, on
+pull requests targeting `release/**`, on demand via `workflow_dispatch`, and as a
+release gate from the `Build` workflow. Check that wiring without a cluster:
+
+```bash
+python3 hack/check-e2e-ci-coverage.py
 ```
 
 ### Container builds
