@@ -1,12 +1,32 @@
 name: Product Operator E2E
 
+# Proves the operator-backed product path on a KinD cluster: the CloudNativePG
+# operator is installed, the samples are reconciled and the adapter/controller
+# suites run against the live cluster.
+#
+# Triggers:
+#   * schedule: nightly run against the default branch
+#   * pull_request to release/**: release pull requests exercise the product
+#     operator path before a release tag exists
+#   * workflow_dispatch: on demand
+#   * workflow_call: tag-release gate in .github/workflows/build.yml, where the
+#     release jobs depend on this run
 on:
+  workflow_call:
   workflow_dispatch:
+  schedule:
+    - cron: "11 4 * * *"
+  pull_request:
+    branches: ["release/**"]
+
+permissions:
+  contents: read
 
 jobs:
   product-operators:
     name: KinD product operators
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 

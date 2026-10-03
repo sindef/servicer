@@ -1,13 +1,17 @@
-name: Backup Restore E2E
+name: GitOps E2E
 
-# Proves control-plane backup and restore across two KinD clusters: the manager
-# reconciles a ServiceInstance, hack/control-plane-backup.sh captures the state
-# and the restore replays it into a clean cluster.
+# Proves the GitOps delivery path end to end on a KinD cluster: the manager
+# publishes the ServiceInstance artifact into a Git remote, creates the Argo CD
+# Application that consumes it, and hack/e2e-gitops.sh asserts the published
+# commit and the rendered source path.
+#
+# The script needs go (it runs the delivery-repo and controller suites and
+# starts cmd/manager), kubectl, git and a live KinD cluster.
 #
 # Triggers:
 #   * schedule: nightly run against the default branch
-#   * pull_request to release/**: release pull requests exercise backup and
-#     restore before a release tag exists
+#   * pull_request to release/**: release pull requests exercise GitOps delivery
+#     before a release tag exists
 #   * workflow_dispatch: on demand
 #   * workflow_call: tag-release gate in .github/workflows/build.yml, where the
 #     release jobs depend on this run
@@ -15,7 +19,7 @@ on:
   workflow_call:
   workflow_dispatch:
   schedule:
-    - cron: "37 3 * * *"
+    - cron: "51 3 * * *"
   pull_request:
     branches: ["release/**"]
 
@@ -23,12 +27,14 @@ permissions:
   contents: read
 
 jobs:
-  backup-restore:
-    name: KinD backup restore
+  gitops:
+    name: KinD GitOps delivery
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
@@ -47,5 +53,5 @@ jobs:
         with:
           install_only: true
 
-      - name: Run backup/restore e2e
-        run: ./hack/e2e-backup-restore.sh
+      - name: Run GitOps e2e
+        run: ./hack/e2e-gitops.sh

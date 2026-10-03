@@ -1,17 +1,43 @@
 name: Upgrade E2E
 
+# Proves the upgrade path on a KinD cluster: the previously released install
+# manifest and the manifest rendered from the working tree must both pass a
+# server-side dry-run on top of the stored-object fixtures.
+#
+# Triggers:
+#   * schedule: nightly run against the default branch
+#   * pull_request to release/**: release pull requests exercise the upgrade
+#     path before a release tag exists
+#   * workflow_dispatch: on demand
+#   * workflow_call: tag-release gate in .github/workflows/build.yml, where the
+#     release jobs depend on this run
 on:
+  workflow_call:
+    inputs:
+      previous_version:
+        description: Previous released Servicer version
+        required: false
+        type: string
+        default: v0.1.0
   workflow_dispatch:
     inputs:
       previous_version:
         description: Previous released Servicer version
         required: false
         default: v0.1.0
+  schedule:
+    - cron: "23 3 * * *"
+  pull_request:
+    branches: ["release/**"]
+
+permissions:
+  contents: read
 
 jobs:
   upgrade:
     name: KinD upgrade
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -29,5 +55,7 @@ jobs:
 
       - name: Run upgrade e2e
         env:
+          # Empty for scheduled and pull request runs; the script then falls back
+          # to its own default (v0.1.0).
           PREVIOUS_VERSION: ${{ inputs.previous_version }}
         run: ./hack/e2e-upgrade.sh
