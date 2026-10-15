@@ -50,6 +50,12 @@ jobs:
         # workflow; this step fails fast on a hand-edited or half-committed bundle.
         run: python3 hack/check-license-bundle.py
 
+      - name: Validate e2e CI coverage
+        # Keeps every hack/e2e-*.sh suite wired into a workflow and keeps the
+        # tag-release jobs depending on the e2e gates, so a suite cannot drift
+        # back into "exists but never runs".
+        run: python3 hack/check-e2e-ci-coverage.py
+
       - name: Go test
         run: go test -race -coverprofile=coverage.out ./...
 
@@ -372,6 +378,40 @@ jobs:
           cache-to: type=gha,mode=max
 
 
+  # Tag-release gate. Every KinD e2e suite runs against the tagged commit and
+  # the release jobs below depend on all of them, so publishing an install
+  # manifest or a signed image requires a green e2e run on the same commit.
+  # The called workflows also run nightly and on release pull requests; the
+  # build/PR path does not call them, so an ordinary pull request does not pay
+  # for the KinD suites.
+  e2e-upgrade:
+    name: E2E gate (upgrade)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e-upgrade.yml
+
+  e2e-backup-restore:
+    name: E2E gate (backup restore)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e-backup-restore.yml
+
+  e2e-gitops:
+    name: E2E gate (GitOps delivery)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e-gitops.yml
+
+  e2e-product-operators:
+    name: E2E gate (product operators)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e-product-operators.yml
+
   publish-install-manifest:
     name: Publish install manifest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -382,6 +422,10 @@ jobs:
       - build-syncer
       - build-web
       - build-tools
+      - e2e-upgrade
+      - e2e-backup-restore
+      - e2e-gitops
+      - e2e-product-operators
     permissions:
       contents: write
     steps:
@@ -419,6 +463,10 @@ jobs:
       - build-syncer
       - build-web
       - build-tools
+      - e2e-upgrade
+      - e2e-backup-restore
+      - e2e-gitops
+      - e2e-product-operators
     permissions:
       contents: read
       packages: write
