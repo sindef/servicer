@@ -1,0 +1,41 @@
+name: GitOps E2E
+
+# Weekly and on demand only: hack/e2e-gitops.sh installs Argo CD into KinD and
+# waits for the repo server, which is too heavy and too network dependent for a
+# pull request gate. The pull request gate lives in e2e-backup-restore.yml.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-gitops-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitops:
+    name: KinD GitOps
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.6"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d
+        with:
+          version: v1.32.2
+
+      - name: Set up KinD
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2
+        with:
+          install_only: true
+
+      - name: Run GitOps e2e
+        run: ./hack/e2e-gitops.sh

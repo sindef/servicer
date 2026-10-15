@@ -4,10 +4,15 @@ metadata:
   name: fixture-tenant
 spec:
   displayName: Fixture Tenant
+  owners:
+    users:
+      - fixture@servicer.local
   quotaProfileRef:
     name: standard
+  allowedServiceClasses:
+    - namespace
   lifecycle:
-    phase: Active
+    phase: active
 ---
 apiVersion: platform.servicer.io/v1alpha1
 kind: Project
@@ -19,7 +24,7 @@ spec:
   displayName: Fixture Project
   environment: production
   namespaceStrategy:
-    mode: Dedicated
+    mode: dedicated
     prefix: fixture
 ---
 apiVersion: platform.servicer.io/v1alpha1
@@ -33,4 +38,8 @@ spec:
     name: namespace
   servicePlanRef:
     name: namespace-team
-  deletionPolicy: Delete
+  deletionPolicy: delete
+  exposure:
+    mode: cluster-internal
+  secretPolicy:
+    deliveryMode: manual
