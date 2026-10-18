@@ -59,15 +59,17 @@ Evidence: `0432841`, `.github/workflows/build.yml`, `.github/workflows/e2e-gitop
 
 ## Current Do-Not-Ship Items and Verification
 
-### Finding 9: Namespace proxy scope still too broad
+### Finding 9: Namespace proxy scope
 
-- Current code still uses path heuristics:
-  - `internal/bff/kubernetes_proxy.go:149-157`
-  - `/apis/` requests are allowed unless mismatched namespace appears in path.
-- Verification command:
-  - `go test ./internal/bff -run 'TestNamespaceProxyForwardsGrantedReadOnlyRequest|TestKubernetesRootProxySupportsKubectlDiscovery|TestKubernetesRootProxyRejectsDifferentNamespace'`
-  - Result: `ok  	github.com/sindef/servicer/internal/bff	0.076s`
-- Conclusion: tests pass, but they do **not** enforce explicit namespace-scoped resource allowlisting. Blocker remains open.
+- Status: allowlist enforcement landed on this branch; the owner's review sign-off is still pending.
+- The BFF namespace proxy and the grant-access Role now share one explicit namespace-scoped allowlist:
+  - `internal/namespaceaccess/policy.go` (table, `PathAllowed`)
+  - consumed by `internal/bff/kubernetes_proxy.go` and `internal/controllers/actionrequest_controller.go`
+- Cluster-wide lists (`/apis/apps/v1/deployments`), cluster-scoped resources (`/apis/rbac.authorization.k8s.io/v1/clusterroles`), other namespaces, ungranted in-namespace resources, and write methods all return 403 and never reach upstream.
+- Verification commands:
+  - `go test ./internal/namespaceaccess` — allowlist unit coverage, including cluster-scoped denials
+  - `go test ./internal/bff -run 'NamespaceProxy|KubernetesRootProxy'` — handler coverage, including `TestNamespaceProxyRejectsClusterScopedReads` and `TestKubernetesRootProxyRejectsClusterScopedReads`
+- Conclusion: the `/apis/` path heuristic is gone. The proxy rejects cluster-scoped paths with 403 by construction because every accepted object path must repeat the token namespace as its literal namespace segment.
 
 ### Finding 47: Unresolved third-party license metadata
 

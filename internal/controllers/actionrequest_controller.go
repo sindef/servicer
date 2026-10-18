@@ -14,6 +14,7 @@ import (
 
 	platformv1alpha1 "github.com/sindef/servicer/api/v1alpha1"
 	"github.com/sindef/servicer/internal/adapters"
+	"github.com/sindef/servicer/internal/namespaceaccess"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -1631,12 +1632,9 @@ func (r *ActionRequestReconciler) ensureNamespaceAccess(ctx context.Context, ser
 			Namespace: namespace,
 			Labels:    labels,
 		},
-		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"configmaps", "events", "limitranges", "persistentvolumeclaims", "pods", "pods/log", "resourcequotas", "services"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"daemonsets", "deployments", "replicasets", "statefulsets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"batch"}, Resources: []string{"cronjobs", "jobs"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
-		},
+		// The granted Role and the BFF namespace proxy path allowlist share one
+		// table, so the proxy can never expose more than the grant.
+		Rules: namespaceaccess.PolicyRules(),
 	}
 	if err := r.applyRole(ctx, role); err != nil {
 		return err

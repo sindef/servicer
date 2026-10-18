@@ -2016,6 +2016,65 @@ func TestNamespaceProxyForwardsGrantedReadOnlyRequest(t *testing.T) {
 	}
 }
 
+func TestNamespaceProxyRejectsClusterScopedReads(t *testing.T) {
+	var upstreamCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"kind":"DeploymentList","items":[]}`))
+	}))
+	defer upstream.Close()
+
+	server := testServerWithConfig(t, &rest.Config{Host: upstream.URL})
+	paths := []string{
+		"/api/kubernetes/namespaces/acme-prod-team-space/apis/apps/v1/deployments",
+		"/api/kubernetes/namespaces/acme-prod-team-space/apis/rbac.authorization.k8s.io/v1/clusterroles",
+		"/api/kubernetes/namespaces/acme-prod-team-space/apis/rbac.authorization.k8s.io/v1/clusterrolebindings",
+		"/api/kubernetes/namespaces/acme-prod-team-space/api/v1/pods",
+		"/api/kubernetes/namespaces/acme-prod-team-space/api/v1/namespaces",
+		"/api/kubernetes/namespaces/acme-prod-team-space/api/v1/namespaces/other-team-space/pods",
+		"/api/kubernetes/namespaces/acme-prod-team-space/api/v1/nodes",
+		"/api/kubernetes/namespaces/acme-prod-team-space/api/v1/namespaces/acme-prod-team-space/secrets",
+		"/api/kubernetes/namespaces/acme-prod-team-space/apis/apps/v1/deployments?fieldSelector=metadata.namespace%3Dacme-prod-team-space",
+	}
+	for _, path := range paths {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer test-access-token")
+
+		server.Handler().ServeHTTP(response, request)
+
+		if response.Code != http.StatusForbidden {
+			t.Errorf("expected status 403 for %q, got %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+	if upstreamCalls != 0 {
+		t.Errorf("expected no upstream request for denied paths, got %d", upstreamCalls)
+	}
+}
+
+func TestKubernetesRootProxyRejectsClusterScopedReads(t *testing.T) {
+	server := testServerWithConfig(t, &rest.Config{Host: "https://example.invalid"})
+	for _, path := range []string{
+		"/apis/apps/v1/deployments",
+		"/apis/rbac.authorization.k8s.io/v1/clusterroles",
+		"/api/v1/pods",
+		"/api/v1/namespaces",
+		"/api/v1/nodes",
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer test-access-token")
+		request.Header.Set("User-Agent", "kubectl/v1.29")
+
+		server.Handler().ServeHTTP(response, request)
+
+		if response.Code != http.StatusForbidden {
+			t.Errorf("expected status 403 for %q, got %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestKubernetesRootProxySupportsKubectlDiscovery(t *testing.T) {
 	var upstreamPath string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

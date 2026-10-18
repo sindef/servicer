@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/sindef/servicer/internal/namespaceaccess"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -49,7 +50,7 @@ func (s *Server) handleKubernetesNamespaceProxy(w http.ResponseWriter, r *http.R
 		http.Error(w, "Access token is not valid for this namespace", http.StatusForbidden)
 		return
 	}
-	if !namespaceProxyPathAllowed(namespace, upstreamPath) {
+	if !namespaceaccess.PathAllowed(namespace, upstreamPath) {
 		if s.metrics != nil {
 			s.metrics.namespaceProxyDenialsTotal.Inc()
 		}
@@ -83,7 +84,7 @@ func (s *Server) handleKubernetesRootProxy(w http.ResponseWriter, r *http.Reques
 	if namespace == "" {
 		namespace = secret.Namespace
 	}
-	if !namespaceProxyPathAllowed(namespace, r.URL.Path) {
+	if !namespaceaccess.PathAllowed(namespace, r.URL.Path) {
 		if s.metrics != nil {
 			s.metrics.namespaceProxyDenialsTotal.Inc()
 		}
@@ -144,23 +145,6 @@ func bearerToken(header string) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[1])
-}
-
-func namespaceProxyPathAllowed(namespace, upstreamPath string) bool {
-	switch {
-	case upstreamPath == "/api", upstreamPath == "/apis", upstreamPath == "/version":
-		return true
-	case upstreamPath == "/api/v1" || strings.HasPrefix(upstreamPath, "/apis/"):
-		return !strings.Contains(upstreamPath, "/namespaces/") || strings.Contains(upstreamPath, "/namespaces/"+namespace+"/")
-	case upstreamPath == "/api/v1/namespaces/"+namespace:
-		return true
-	case strings.HasPrefix(upstreamPath, "/api/v1/namespaces/"+namespace+"/"):
-		return true
-	case strings.HasPrefix(upstreamPath, "/openapi/"):
-		return true
-	default:
-		return false
-	}
 }
 
 func (s *Server) forwardKubernetesRequest(w http.ResponseWriter, r *http.Request, upstreamPath string) {
