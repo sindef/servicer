@@ -54,6 +54,18 @@ mkdir -p "$(dirname "${BACKUP_DIR}")"
 
 create_cluster "${SOURCE_CLUSTER}"
 kubectl apply -k config/samples
+
+# The sample ClusterTarget points at an empty placeholder kubeconfig, so the
+# manager would keep the target in PendingCredentials and demo-prod would stay
+# PendingPlacement forever. Point the connection Secret at this source cluster
+# (same patch pattern as hack/demo-setup.sh).
+mkdir -p .e2e
+kind get kubeconfig --name "${SOURCE_CLUSTER}" > .e2e/local-dev-kubeconfig
+kubectl create secret generic local-dev-kubeconfig \
+  --namespace servicer-system \
+  --from-file=kubeconfig=.e2e/local-dev-kubeconfig \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 go run ./cmd/manager --metrics-bind-address=:0 --health-probe-bind-address=:18082 --delivery-root .e2e/source-delivery &
 MANAGER_PID="$!"
 trap 'kill "${MANAGER_PID}" >/dev/null 2>&1 || true' EXIT
@@ -73,6 +85,11 @@ spec:
     name: namespace
   servicePlanRef:
     name: namespace-team
+  deletionPolicy: delete
+  exposure:
+    mode: cluster-internal
+  secretPolicy:
+    deliveryMode: manual
 EOF
 wait_for_jsonpath "serviceinstance/backup-namespace" "{.status.artifact.count}" "3"
 ./hack/control-plane-backup.sh backup "${BACKUP_DIR}"

@@ -1,19 +1,34 @@
 name: Backup Restore E2E
 
+# Pull request gate: hack/e2e-backup-restore.sh backs up a KinD control plane
+# and restores it into a second cluster, so regressions in the backup helpers
+# fail before merge instead of only on a manual dispatch.
 on:
+  push:
+    branches: ["master", "release/**"]
+  pull_request:
+    branches: ["master", "release/**"]
+  schedule:
+    # Weekly safety net for drift that no single pull request exercises.
+    - cron: "0 4 * * 1"
   workflow_dispatch:
+
+concurrency:
+  group: e2e-backup-restore-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backup-restore:
     name: KinD backup restore
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
           cache: true
           cache-dependency-path: go.sum
 
