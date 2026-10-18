@@ -29,8 +29,9 @@ need_bin() {
   }
 }
 
-sanitize_json() {
-  python3 - <<'PY'
+# Passed with -c rather than as a heredoc on stdin: stdin carries the kubectl
+# JSON being sanitized.
+SANITIZE_PY="$(cat <<'PY'
 import json, sys
 
 DROP_META = {
@@ -60,7 +61,8 @@ def clean(obj):
         return [clean(v) for v in obj]
     return obj
 
-payload = json.load(sys.stdin)
+raw = sys.stdin.read()
+payload = json.loads(raw) if raw.strip() else {"apiVersion": "v1", "kind": "List", "items": []}
 if isinstance(payload, dict) and payload.get("kind") == "List":
     items = [clean(item) for item in payload.get("items", [])]
     payload = {"apiVersion": "v1", "kind": "List", "items": items}
@@ -69,6 +71,10 @@ else:
 json.dump(payload, sys.stdout, indent=2, sort_keys=True)
 sys.stdout.write("\n")
 PY
+)"
+
+sanitize_json() {
+  python3 -c "$SANITIZE_PY"
 }
 
 backup_resources() {
@@ -155,6 +161,8 @@ restore_dir() {
     echo "applying $(basename "$file")"
     kubectl apply -f "$file"
   done
+  # A fresh cluster has no servicer-system namespace yet.
+  kubectl create namespace servicer-system --dry-run=client -o yaml | kubectl apply -f -
   for file in "$input_dir"/namespaces/servicer-system/*.json; do
     echo "applying servicer-system/$(basename "$file")"
     kubectl apply -f "$file"
