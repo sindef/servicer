@@ -3,6 +3,7 @@ package adapters
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -44,7 +45,18 @@ func ResolveDatabaseName(instanceName, requested string) string {
 		name = "db_" + name
 	}
 	if len(name) > maxDatabaseNameLength {
-		name = strings.TrimRight(name[:maxDatabaseNameLength], "_")
+		// Truncate on rune boundaries: slicing by bytes here could split a
+		// multi-byte rune and hand invalid UTF-8 to PostgreSQL/MySQL and to the
+		// derived Kubernetes object names.
+		var b strings.Builder
+		b.Grow(maxDatabaseNameLength)
+		for _, r := range name {
+			if b.Len()+utf8.RuneLen(r) > maxDatabaseNameLength {
+				break
+			}
+			b.WriteRune(r)
+		}
+		name = strings.TrimRight(b.String(), "_")
 	}
 	if name == "" {
 		return "db"
