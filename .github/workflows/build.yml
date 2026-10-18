@@ -10,7 +10,12 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/servicer
-  GOVULNCHECK_VERSION: v1.1.4
+  # Must be a govulncheck release whose golang.org/x/tools can parse the pinned
+  # Go toolchain. v1.1.4 pins x/tools v0.29.0, whose go/ssa builder panics on
+  # Go 1.27 sources ("unexpected expr: *ast.KeyValueExpr"), which killed the
+  # vulnerability scan step. v1.9.0 pins x/tools v0.52.0 and builds the same
+  # package graph cleanly.
+  GOVULNCHECK_VERSION: v1.9.0
   GOSEC_VERSION: v2.22.5
 
 jobs:
