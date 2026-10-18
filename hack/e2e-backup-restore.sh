@@ -91,7 +91,9 @@ spec:
   secretPolicy:
     deliveryMode: manual
 EOF
-wait_for_jsonpath "serviceinstance/backup-namespace" "{.status.artifact.count}" "3"
+# The namespace adapter renders Namespace, ResourceQuota, LimitRange and
+# NetworkPolicy (see internal/adapters/namespace_adapter_test.go).
+wait_for_jsonpath "serviceinstance/backup-namespace" "{.status.artifact.count}" "4"
 ./hack/control-plane-backup.sh backup "${BACKUP_DIR}"
 kill "${MANAGER_PID}" >/dev/null 2>&1 || true
 trap - EXIT

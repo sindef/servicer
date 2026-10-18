@@ -11,7 +11,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/servicer
   GOVULNCHECK_VERSION: v1.9.0
-  GOSEC_VERSION: v2.29.0
+  # gosec v2.29.0 (latest tag) bundles golang.org/x/tools v0.49.0, which cannot
+  # read Go 1.27 export data ("export data version 5"). Pin the upstream commit
+  # that moves to x/tools v0.52.0 until a release carries it.
+  GOSEC_VERSION: v2.29.1-0.20261015133444-707f2271f665
 
 jobs:
   validate:
