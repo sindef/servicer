@@ -3,6 +3,7 @@ package adapters
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -43,11 +44,28 @@ func ResolveDatabaseName(instanceName, requested string) string {
 	if name[0] >= '0' && name[0] <= '9' {
 		name = "db_" + name
 	}
-	if len(name) > maxDatabaseNameLength {
-		name = strings.TrimRight(name[:maxDatabaseNameLength], "_")
-	}
+	name = truncateDatabaseName(name, maxDatabaseNameLength)
 	if name == "" {
 		return "db"
 	}
 	return name
+}
+
+// truncateDatabaseName limits name to max bytes without splitting a rune, so the
+// result stays valid UTF-8 and fits within PostgreSQL's identifier byte limit.
+func truncateDatabaseName(name string, max int) string {
+	if len(name) <= max {
+		return name
+	}
+
+	var b strings.Builder
+	b.Grow(max)
+	for _, r := range name {
+		size := utf8.RuneLen(r)
+		if b.Len()+size > max {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimRight(b.String(), "_")
 }
