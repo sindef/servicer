@@ -3,6 +3,7 @@ package adapters
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -44,10 +45,27 @@ func ResolveDatabaseName(instanceName, requested string) string {
 		name = "db_" + name
 	}
 	if len(name) > maxDatabaseNameLength {
-		name = strings.TrimRight(name[:maxDatabaseNameLength], "_")
+		name = strings.TrimRight(truncateRunes(name, maxDatabaseNameLength), "_")
 	}
 	if name == "" {
 		return "db"
 	}
 	return name
+}
+
+// truncateRunes cuts name to at most maxBytes bytes without splitting a
+// multi-byte rune, so the result is always valid UTF-8.
+func truncateRunes(name string, maxBytes int) string {
+	if len(name) <= maxBytes {
+		return name
+	}
+	end := 0
+	for i, r := range name {
+		size := utf8.RuneLen(r)
+		if size < 0 || i+size > maxBytes {
+			break
+		}
+		end = i + size
+	}
+	return name[:end]
 }
