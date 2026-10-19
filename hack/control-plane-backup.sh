@@ -149,6 +149,11 @@ backup() {
   echo "backup written to $output_dir"
 }
 
+# kubectl apply rejects a List with no items ("no objects passed to apply").
+has_items() {
+  python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("items", [None]) else 1)' "$1"
+}
+
 restore_dir() {
   local input_dir="$1"
   [[ -d "$input_dir" ]] || {
@@ -158,16 +163,19 @@ restore_dir() {
 
   shopt -s nullglob
   for file in "$input_dir"/cluster/*.json; do
+    has_items "$file" || continue
     echo "applying $(basename "$file")"
     kubectl apply -f "$file"
   done
   # A fresh cluster has no servicer-system namespace yet.
   kubectl create namespace servicer-system --dry-run=client -o yaml | kubectl apply -f -
   for file in "$input_dir"/namespaces/servicer-system/*.json; do
+    has_items "$file" || continue
     echo "applying servicer-system/$(basename "$file")"
     kubectl apply -f "$file"
   done
   for file in "$input_dir"/namespaces/argocd/*.json; do
+    has_items "$file" || continue
     echo "applying argocd/$(basename "$file")"
     kubectl apply -f "$file" || true
   done
