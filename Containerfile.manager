@@ -1,10 +1,10 @@
-FROM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 ARG HELM_VERSION=v4.2.0
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
-# go.mod requires a toolchain newer than the pinned builder image, so allow Go
-# to fetch the patched toolchain instead of failing with GOTOOLCHAIN=local.
+# The builder image tracks the go.mod toolchain; if go.mod moves ahead of it,
+# let Go fetch the required toolchain instead of failing with GOTOOLCHAIN=local.
 ENV GOTOOLCHAIN=auto
 
 WORKDIR /build
