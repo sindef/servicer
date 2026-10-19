@@ -32,6 +32,9 @@ kubectl apply -f api/v1alpha1/fixtures/stored-objects.yaml
 
 ./hack/render-deploy-manifest.sh "${PREVIOUS_VERSION}" >/tmp/servicer-previous.yaml
 ./hack/render-deploy-manifest.sh "${CURRENT_VERSION}" >/tmp/servicer-current.yaml
+# A server-side dry-run never persists the rendered Namespace, so every
+# namespaced object in the render would fail with NotFound. Create it for real.
+kubectl create namespace servicer-system --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply --dry-run=server -f /tmp/servicer-previous.yaml >/dev/null
 kubectl apply --dry-run=server -f /tmp/servicer-current.yaml >/dev/null
 kubectl apply --dry-run=server -f api/v1alpha1/fixtures/stored-objects.yaml >/dev/null

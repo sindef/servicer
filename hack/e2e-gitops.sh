@@ -101,7 +101,9 @@ spec:
     name: namespace-team
 EOF
 
-wait_for_jsonpath "serviceinstance/${INSTANCE_NAME}" "{.status.artifact.count}" "3"
+# The namespace adapter renders Namespace, ResourceQuota, LimitRange and
+# NetworkPolicy (see internal/adapters/namespace_adapter_test.go).
+wait_for_jsonpath "serviceinstance/${INSTANCE_NAME}" "{.status.artifact.count}" "4"
 commit="$(git --git-dir "${DELIVERY_REMOTE}" rev-parse refs/heads/main)"
 if [[ -z "${commit}" ]]; then
   echo "delivery repo did not receive a commit" >&2

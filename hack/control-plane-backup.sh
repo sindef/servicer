@@ -29,8 +29,9 @@ need_bin() {
   }
 }
 
-sanitize_json() {
-  python3 - <<'PY'
+# Passed with -c rather than as a heredoc on stdin: stdin carries the kubectl
+# JSON being sanitized.
+SANITIZE_PY="$(cat <<'PY'
 import json, sys
 
 DROP_META = {
@@ -60,7 +61,8 @@ def clean(obj):
         return [clean(v) for v in obj]
     return obj
 
-payload = json.load(sys.stdin)
+raw = sys.stdin.read()
+payload = json.loads(raw) if raw.strip() else {"apiVersion": "v1", "kind": "List", "items": []}
 if isinstance(payload, dict) and payload.get("kind") == "List":
     items = [clean(item) for item in payload.get("items", [])]
     payload = {"apiVersion": "v1", "kind": "List", "items": items}
@@ -69,6 +71,10 @@ else:
 json.dump(payload, sys.stdout, indent=2, sort_keys=True)
 sys.stdout.write("\n")
 PY
+)"
+
+sanitize_json() {
+  python3 -c "$SANITIZE_PY"
 }
 
 backup_resources() {
@@ -143,6 +149,11 @@ backup() {
   echo "backup written to $output_dir"
 }
 
+# kubectl apply rejects a List with no items ("no objects passed to apply").
+has_items() {
+  python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("items", [None]) else 1)' "$1"
+}
+
 restore_dir() {
   local input_dir="$1"
   [[ -d "$input_dir" ]] || {
@@ -152,14 +163,19 @@ restore_dir() {
 
   shopt -s nullglob
   for file in "$input_dir"/cluster/*.json; do
+    has_items "$file" || continue
     echo "applying $(basename "$file")"
     kubectl apply -f "$file"
   done
+  # A fresh cluster has no servicer-system namespace yet.
+  kubectl create namespace servicer-system --dry-run=client -o yaml | kubectl apply -f -
   for file in "$input_dir"/namespaces/servicer-system/*.json; do
+    has_items "$file" || continue
     echo "applying servicer-system/$(basename "$file")"
     kubectl apply -f "$file"
   done
   for file in "$input_dir"/namespaces/argocd/*.json; do
+    has_items "$file" || continue
     echo "applying argocd/$(basename "$file")"
     kubectl apply -f "$file" || true
   done

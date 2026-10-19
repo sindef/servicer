@@ -1,6 +1,16 @@
 name: Upgrade E2E
 
+# Gates pull requests by rendering the previous and current install manifests
+# and server-dry-running them plus the stored-object fixtures, which proves the
+# current CRDs still accept previously stored objects.
 on:
+  push:
+    branches: ["master", "release/**"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["master", "release/**"]
+  schedule:
+    - cron: "0 5 * * 1"
   workflow_dispatch:
     inputs:
       previous_version:
@@ -8,26 +18,33 @@ on:
         required: false
         default: v0.1.0
 
+concurrency:
+  group: e2e-upgrade-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   upgrade:
     name: KinD upgrade
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e
         with:
           version: v1.32.2
 
       - name: Set up KinD
-        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa
         with:
           install_only: true
 
       - name: Run upgrade e2e
         env:
-          PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          # Falls back to the default for push and schedule runs, where the
+          # workflow_dispatch input is absent.
+          PREVIOUS_VERSION: ${{ github.event.inputs.previous_version || 'v0.1.0' }}
         run: ./hack/e2e-upgrade.sh

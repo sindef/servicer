@@ -775,7 +775,7 @@ func writeError(w http.ResponseWriter, args ...any) {
 		err, _ = args[0].(error)
 	case 2:
 		r, _ = args[0].(*http.Request)
-		err, _ = args[1].(error)
+		err, _ = args[1].(error) // #nosec G602 -- Guarded by the len(args) == 2 case.
 	}
 	if err == nil {
 		err = errors.New("internal server error")
