@@ -180,6 +180,35 @@ func TestClusterTargetReconcilerMapsConnectionSecretToTarget(t *testing.T) {
 	}
 }
 
+func TestServicePlanReconcilerMapsServiceClassToPlans(t *testing.T) {
+	scheme := inventoryTestScheme(t)
+	namespacePlan := &platformv1alpha1.ServicePlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "namespace-team"},
+		Spec:       platformv1alpha1.ServicePlanSpec{ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "namespace"}},
+	}
+	otherPlan := &platformv1alpha1.ServicePlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "valkey-dev"},
+		Spec:       platformv1alpha1.ServicePlanSpec{ServiceClassRef: platformv1alpha1.LocalObjectReference{Name: "valkey"}},
+	}
+	reconciler := &ServicePlanReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(namespacePlan, otherPlan).
+			Build(),
+		Scheme: scheme,
+	}
+
+	requests := reconciler.servicePlansForServiceClass(context.Background(), &platformv1alpha1.ServiceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "namespace"},
+	})
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 reconcile request, got %#v", requests)
+	}
+	if requests[0].NamespacedName.Name != "namespace-team" {
+		t.Fatalf("expected request for namespace-team, got %#v", requests[0])
+	}
+}
+
 func TestEffectiveRequiredPackagesForClusterTargetIncludesPublishedServiceClasses(t *testing.T) {
 	scheme := inventoryTestScheme(t)
 	target := &platformv1alpha1.ClusterTarget{

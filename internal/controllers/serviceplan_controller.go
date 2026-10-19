@@ -11,8 +11,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // ServicePlanReconciler reconciles ServicePlan resources.
@@ -98,7 +101,36 @@ func (r *ServicePlanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 func (r *ServicePlanReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&platformv1alpha1.ServicePlan{}).
+		// A plan's phase follows its parent class, and only Failed plans requeue,
+		// so a plan reconciled before its class settles would otherwise stay
+		// PendingServiceClass or Draft until something else touched it.
+		Watches(
+			&platformv1alpha1.ServiceClass{},
+			handler.EnqueueRequestsFromMapFunc(r.servicePlansForServiceClass),
+		).
 		Complete(r)
+}
+
+func (r *ServicePlanReconciler) servicePlansForServiceClass(ctx context.Context, obj client.Object) []reconcile.Request {
+	serviceClass, ok := obj.(*platformv1alpha1.ServiceClass)
+	if !ok {
+		return nil
+	}
+
+	var plans platformv1alpha1.ServicePlanList
+	if err := r.List(ctx, &plans); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(plans.Items))
+	for i := range plans.Items {
+		plan := &plans.Items[i]
+		if plan.Spec.ServiceClassRef.Name != serviceClass.Name {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: plan.Name}})
+	}
+	return requests
 }
 
 func servicePlanContains(items []string, target string) bool {
