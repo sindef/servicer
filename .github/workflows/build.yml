@@ -26,9 +26,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          # Keep in sync with the `go` directive in go.mod; 1.27.2 carries the
-          # standard library fixes that govulncheck requires.
-          go-version: "1.27.2"
+          # Keep in sync with the `go` directive in go.mod; 1.27.3 carries the
+          # standard library fixes that govulncheck requires (GO-2026-6809).
+          go-version: "1.27.3"
           cache: true
           cache-dependency-path: go.sum
 
