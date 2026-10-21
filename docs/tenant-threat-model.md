@@ -31,7 +31,8 @@ Namespace proxy behavior:
 - Namespace kubeconfig downloads are only produced by completed namespace `grant-access` ActionRequests.
 - The generated kubeconfig points back through the BFF namespace proxy, not directly at the target cluster.
 - Generated namespace kubeconfigs do not use `insecure-skip-tls-verify`; they rely on public TLS trust or include `certificate-authority-data` when `SERVICER_NAMESPACE_ACCESS_CA_DATA` is configured on the manager.
-- The proxy accepts bearer tokens from the grant Secret and allows read-only namespace API discovery/read paths for the granted namespace.
+- The proxy accepts bearer tokens from the grant Secret and allows read-only namespace API discovery plus read paths that are explicitly scoped to the granted namespace (`/api/v1/namespaces/<namespace>/...` and `/apis/<group>/<version>/namespaces/<namespace>/...`).
+- Cluster-scoped collections such as `/apis/apps/v1/deployments` and `/apis/rbac.authorization.k8s.io/v1/clusterroles`, cluster-wide list queries, and requests for other namespaces are denied, even with a valid namespace access token.
 - Requests for other namespaces, write methods, or non-namespace paths are denied and counted by `servicer_bff_namespace_proxy_denials_total`.
 
 Negative authorization coverage lives in BFF tests for cross-tenant service, namespace, credential, and Kubernetes proxy access. New BFF endpoints must add a negative authorization test before merge.

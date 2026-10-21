@@ -43,7 +43,6 @@ Current launch-grade behavior is documented in the production, audit, repository
 - Login rate limiting only has a per-pod memory backend; production deployments need explicit acceptance and compensating IdP/ingress controls if multiple BFF replicas are used.
 - Audit records persist mutating API requests and credential reveal/download requests, but auth login/logout evidence still depends on IdP logs and BFF JSON logs.
 - High-volume BFF list endpoints support `limit`, `offset`, and `q`, but responses do not yet include total counts or continuation tokens.
-- The BFF namespace proxy authorizes read requests with per-namespace path checks rather than an explicit per-resource allowlist, so a namespace access token also covers cluster-scoped `/apis/` read paths. See [Tenant threat model](tenant-threat-model.md) for the current proxy behavior and `internal/bff/kubernetes_proxy.go` for the rules.
 
 ## Launch Exceptions (Owned)
 
