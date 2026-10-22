@@ -44,10 +44,25 @@ func ResolveDatabaseName(instanceName, requested string) string {
 		name = "db_" + name
 	}
 	if len(name) > maxDatabaseNameLength {
-		name = strings.TrimRight(name[:maxDatabaseNameLength], "_")
+		name = truncateDatabaseName(name)
 	}
 	if name == "" {
 		return "db"
 	}
 	return name
+}
+
+// truncateDatabaseName returns the longest prefix of name within
+// maxDatabaseNameLength bytes that ends on a rune boundary, so multi-byte runes
+// are never split into invalid UTF-8. Trailing separators are trimmed so the
+// result stays a valid identifier prefix.
+func truncateDatabaseName(name string) string {
+	end := 0
+	for start := range name {
+		if start > maxDatabaseNameLength {
+			break
+		}
+		end = start
+	}
+	return strings.TrimRight(name[:end], "_")
 }
