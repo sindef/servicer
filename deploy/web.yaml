@@ -14,7 +14,12 @@ spec:
         app.kubernetes.io/name: web
     spec:
       securityContext:
+        # Containerfile.web ends with `USER 101:101`, so pin the same
+        # unprivileged uid/gid here. nginx needs no root: it listens on 8080,
+        # and the image makes /etc/nginx/conf.d and /var/cache/nginx writable.
         runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:

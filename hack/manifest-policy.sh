@@ -27,6 +27,12 @@ if grep -Eq 'apiGroups:[[:space:]]*\[[[:space:]]*"?\*"?[[:space:]]*\]' "$rendere
   exit 1
 fi
 
+# Every pod that asks for runAsNonRoot must point at an image whose build sets a
+# non-root user. The kubelet refuses a container whose image user is root with
+# "container has runAsNonRoot and image will run as root", so a manifest-only
+# grep for the marker is not enough: the image build has to agree with it.
+python3 "$(dirname "$0")/check-image-users.py" "$rendered"
+
 required=(
   'kind: PodDisruptionBudget'
   'kind: NetworkPolicy'

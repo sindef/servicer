@@ -6,7 +6,7 @@ WORKDIR /build
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
-COPY web/ .
+COPY web/ ./
 RUN npm run build
 
 # ---- runtime ----
@@ -20,9 +20,27 @@ RUN rm /etc/nginx/conf.d/default.conf
 
 COPY --from=builder /build/dist /usr/share/nginx/html
 COPY web/nginx.conf.template /etc/nginx/templates/default.conf.template
+# Unprivileged main config: no root-only `user` directive, and the PID file and
+# temp paths point at directories the nginx user can write.
+COPY web/nginx-main.conf /etc/nginx/nginx.conf
+
+# The upstream image runs as root and owns /etc/nginx/conf.d and /var/cache/nginx
+# as root. Production manifests (deploy/web.yaml) set runAsNonRoot: true, so the
+# container runs as the image's unprivileged nginx user (uid/gid 101) and needs
+# both directories writable:
+#   * /etc/nginx/conf.d receives the entrypoint's envsubst-generated config, and
+#   * /var/cache/nginx holds the client body and proxy temp files.
+RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp \
+             /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp \
+             /var/cache/nginx/scgi_temp && \
+    chown -R 101:101 /var/cache/nginx /etc/nginx/conf.d && \
+    chmod 0755 /var/cache/nginx /etc/nginx/conf.d
 
 # nginx docker image auto-runs envsubst on /etc/nginx/templates/*.template
 # and writes output to /etc/nginx/conf.d/ — no custom entrypoint needed.
 # BFF_URL must be set at runtime, e.g. http://servicer-bff:8090
+# The bundled entrypoint only needs to write that generated file, so it does not
+# need root; uid 101 keeps the pod compatible with runAsNonRoot: true.
+USER 101:101
 
 EXPOSE 8080
