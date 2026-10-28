@@ -60,6 +60,17 @@ kubectl config use-context "kind-${CLUSTER}" >/dev/null
 kubectl apply -f config/crd/bases
 kubectl wait --for=condition=Established crd --all --timeout=90s
 kubectl apply -k config/samples
+
+# The sample ClusterTarget points at an empty placeholder kubeconfig, so the
+# manager would keep the target in PendingCredentials and demo-prod would stay
+# PendingPlacement forever. Point the connection Secret at this KinD cluster
+# (same patch pattern as hack/e2e-backup-restore.sh and hack/demo-setup.sh).
+kind get kubeconfig --name "${CLUSTER}" > .e2e/local-dev-kubeconfig
+kubectl create secret generic local-dev-kubeconfig \
+  --namespace servicer-system \
+  --from-file=kubeconfig=.e2e/local-dev-kubeconfig \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.3/manifests/install.yaml
 kubectl wait -n argocd --for=condition=Available deploy/argocd-repo-server --timeout=180s
