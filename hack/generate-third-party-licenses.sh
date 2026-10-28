@@ -29,16 +29,29 @@ cp "${ROOT}/THIRD_PARTY_NOTICES.md" "${OUT}/THIRD_PARTY_NOTICES.md"
 
 pushd "${ROOT}" >/dev/null
 GOFLAGS="-mod=readonly" go mod download all
-go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{"\t"}}{{.Dir}}{{end}}' all |
-  while IFS=$'\t' read -r module version dir; do
-    [[ -n "${module}" && -n "${dir}" && -d "${dir}" ]] || continue
-    target="${OUT}/go/$(sanitize "${module}@${version}")"
+modules="$(mktemp)"
+missing_go="$(mktemp)"
+go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{"\t"}}{{.Dir}}{{end}}' all >"${modules}"
+: >"${OUT}/go/GO_MODULES.tsv"
+: >"${missing_go}"
+while IFS=$'\t' read -r module version dir; do
+  [[ -n "${module}" && -n "${version}" ]] || continue
+  printf '%s\t%s\n' "${module}" "${version}" >>"${OUT}/go/GO_MODULES.tsv"
+  target="${OUT}/go/$(sanitize "${module}@${version}")"
+  if [[ -n "${dir}" && -d "${dir}" ]]; then
     copy_license_files "${dir}" "${target}"
-    if ! find "${target}" -type f | grep -q .; then
-      rmdir "${target}" 2>/dev/null || true
-      printf '%s\t%s\t%s\n' "${module}" "${version}" "NO_LICENSE_FILE_FOUND" >>"${OUT}/go/MISSING_LICENSE_FILES.tsv"
-    fi
-  done
+  fi
+  if ! find "${target}" -type f 2>/dev/null | grep -q .; then
+    rmdir "${target}" 2>/dev/null || true
+    printf '%s\t%s\t%s\n' "${module}" "${version}" "NO_LICENSE_FILE_FOUND" >>"${missing_go}"
+  fi
+done <"${modules}"
+rm -f "${modules}"
+sort -u -o "${OUT}/go/GO_MODULES.tsv" "${OUT}/go/GO_MODULES.tsv"
+if [[ -s "${missing_go}" ]]; then
+  sort -u -o "${OUT}/go/MISSING_LICENSE_FILES.tsv" "${missing_go}"
+fi
+rm -f "${missing_go}"
 popd >/dev/null
 
 npm --prefix "${ROOT}/web" ci --ignore-scripts
@@ -50,19 +63,18 @@ const path = require('path')
 const root = process.argv[2]
 const out = process.argv[3]
 const nodeModules = path.join(root, 'web', 'node_modules')
-const summary = []
-const missing = []
 // Approved exceptions are reviewed as part of release hygiene: packages that
 // ship no license file upstream are listed here with the version resolved by
 // web/package-lock.json. Revisit this set whenever the web dependency tree
 // moves, before refreshing dist/THIRD_PARTY_LICENSES.
 const approved = new Set([
-  '@esbuild/linux-x64@0.27.7',
-  '@rollup/rollup-linux-x64-gnu@4.60.4',
-  '@vue/devtools-api@6.6.4'
+  '@rolldown/binding-linux-x64-gnu@1.2.13'
 ])
 const approvedMatches = []
 
+// Walk the installed tree, including nested node_modules directories that hold
+// a second copy of a package at a different version. Both copies ship in the
+// build, so both must appear in the committed manifest.
 function packages(dir) {
   if (!fs.existsSync(dir)) return []
   const entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -76,6 +88,8 @@ function packages(dir) {
     }
     const manifest = path.join(full, 'package.json')
     if (fs.existsSync(manifest)) found.push(full)
+    const nested = path.join(full, 'node_modules')
+    if (fs.existsSync(nested)) found.push(...packages(nested))
   }
   return found
 }
@@ -89,23 +103,32 @@ function copyRecursive(src, dest) {
   fs.copyFileSync(src, dest)
 }
 
+const records = new Map()
 for (const dir of packages(nodeModules)) {
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
   if (manifest.private === true) continue
   const name = manifest.name || path.basename(dir)
   const version = manifest.version || 'unknown'
   const license = typeof manifest.license === 'string' ? manifest.license : JSON.stringify(manifest.license || '')
-  const target = path.join(out, 'web', sanitize(`${name}@${version}`))
-  summary.push([name, version, license || 'UNKNOWN'].join('\t'))
+  const key = `${name}@${version}`
+  if (records.has(key)) continue
+  records.set(key, { dir, name, version, license: license || 'UNKNOWN' })
+}
+
+const summary = []
+const missing = []
+for (const record of records.values()) {
+  const target = path.join(out, 'web', sanitize(`${record.name}@${record.version}`))
+  summary.push([record.name, record.version, record.license].join('\t'))
 
   let copied = 0
-  for (const file of fs.readdirSync(dir)) {
+  for (const file of fs.readdirSync(record.dir)) {
     if (/^(licen[sc]e|copying|notice)/i.test(file)) {
-      copyRecursive(path.join(dir, file), path.join(target, file))
+      copyRecursive(path.join(record.dir, file), path.join(target, file))
       copied++
     }
   }
-  if (copied === 0) missing.push([name, version, license || 'UNKNOWN'].join('\t'))
+  if (copied === 0) missing.push([record.name, record.version, record.license].join('\t'))
 }
 
 fs.writeFileSync(path.join(out, 'web', 'PACKAGE_LICENSES.tsv'), summary.sort().join('\n') + '\n')
