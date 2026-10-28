@@ -49,9 +49,11 @@ jobs:
         run: go mod verify
 
       - name: Validate third-party license bundle
-        # Registry-free self-consistency gate for dist/THIRD_PARTY_LICENSES. The
-        # registry-backed regeneration drift check stays in the Release hygiene
-        # workflow; this step fails fast on a hand-edited or half-committed bundle.
+        # Registry-free gate for dist/THIRD_PARTY_LICENSES. It diffs the
+        # committed Go module and npm package manifests against go.mod, go.sum
+        # and web/package-lock.json, so a dependency bump without a refreshed
+        # bundle fails here. The registry-backed regeneration drift check stays
+        # in the Release hygiene workflow.
         run: python3 hack/check-license-bundle.py
 
       - name: Go test
