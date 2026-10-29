@@ -16,6 +16,12 @@ spec:
       serviceAccountName: servicer-manager
       securityContext:
         runAsNonRoot: true
+        # Containerfile.manager sets USER 65532:65532. The delivery SSH key is a
+        # Secret volume, so the kubelet projects its files as root:<fsGroup>.
+        # Without fsGroup they stay root:root and uid 65532 cannot read the key.
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:
@@ -137,7 +143,10 @@ spec:
           secret:
             secretName: servicer-delivery-repo
             optional: true
-            defaultMode: 0400
+            # Group-readable so uid 65532 can read the key through the pod
+            # fsGroup. The projection is root:<fsGroup>; OpenSSH only rejects
+            # "too open" keys owned by the invoking user, so 0440 is accepted.
+            defaultMode: 0440
         - name: webhook-certs
           secret:
             secretName: servicer-webhook-server-cert
