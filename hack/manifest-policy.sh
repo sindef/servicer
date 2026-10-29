@@ -44,6 +44,9 @@ required=(
   'requests:'
   '--leader-elect=true'
   '--metrics-bind-address=:8080'
+  # The manager image runs as uid 65532 and the delivery SSH key is a Secret
+  # volume projected root:<fsGroup>; without fsGroup the key is unreadable.
+  'fsGroup: 65532'
 )
 
 for pattern in "${required[@]}"; do
