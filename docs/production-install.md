@@ -37,6 +37,21 @@ kubectl -n servicer-system create secret generic servicer-delivery-repo \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
+Delivery SSH key permissions:
+
+The deployment key is mounted from the `servicer-delivery-repo` Secret at `/home/nonroot/.ssh` and used by `GIT_SSH_COMMAND`. `Containerfile.manager` sets `USER 65532:65532`, so the key must be readable by uid 65532. Kubernetes projects Secret volumes as `root:<fsGroup>` with the volume `defaultMode`, and without a pod `fsGroup` the files stay `root:root` mode `0400`, which the manager user cannot read. SSH pushes then fail with a permission error.
+
+`deploy/manager.yaml` therefore sets pod `securityContext.runAsUser: 65532`, `runAsGroup: 65532`, and `fsGroup: 65532`, plus `defaultMode: 0440` on the `git-ssh` Secret volume. Keep these values when overlaying the deployment. If you change the manager image user, set `fsGroup` to that user's primary group and keep the volume mode group-readable (`0440`). Do not raise the mode to world-readable.
+
+Verify the running manager can read the key before relying on delivery:
+
+```bash
+kubectl -n servicer-system exec deploy/manager -- \
+  sh -c 'id; ls -l /home/nonroot/.ssh/ssh-privatekey; head -c 1 /home/nonroot/.ssh/ssh-privatekey >/dev/null'
+```
+
+The output must show uid 65532 and a successful read. A `Permission denied` here explains delivery commits that never reach the GitOps repository.
+
 Restart the manager after changing this Secret so the repository URL environment variable refreshes. Production installs run the manager with `SERVICER_PRODUCTION=true`; when the Secret is absent, publishing is not auto-committing, or publishing is not auto-pushing, ServiceInstances that render delivery artifacts are marked `Degraded` with `DeliveryRepoRequired` and are not materialized locally as if delivery succeeded.
 
 The manager clones the configured delivery repository into an ephemeral worktree, commits rendered artifacts with the configured commit identity, and pushes to the configured branch. If the remote is unavailable, the worktree is divergent, or push fails, reconciliation fails and records the Git error in ServiceInstance status instead of silently falling back to local-only delivery.
