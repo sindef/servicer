@@ -108,7 +108,7 @@ run_validate_checks() {
   kubectl kustomize config/deploy > /dev/null
   kubectl kustomize deploy > /dev/null
   kubectl kustomize config/samples > /dev/null
-  ./hack/manifest-policy.sh deploy
+  bash hack/manifest-policy.sh deploy
 }
 
 run_image_build_and_scan() {

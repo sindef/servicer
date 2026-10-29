@@ -9,6 +9,9 @@ metadata:
   annotations:
     servicer.io/backup-path: /backups/servicer-YYYYMMDD-HHMMSS
 spec:
+  # Manual, opt-in Job. The base install does not include it: render it with
+  # bash hack/render-control-plane-restore.sh <backup-path> so BACKUP_PATH points
+  # at a real backup directory on the servicer-control-plane-backups PVC.
   template:
     spec:
       serviceAccountName: servicer-control-plane-backup
@@ -36,7 +39,11 @@ spec:
             - -c
             - |
               set -eu
-              test "$BACKUP_PATH" != "/backups/servicer-YYYYMMDD-HHMMSS"
+              if [ ! -d "${BACKUP_PATH:-}" ]; then
+                echo "BACKUP_PATH is unset or is not a backup directory on the PVC: ${BACKUP_PATH:-<unset>}" >&2
+                echo "Render this Job with bash hack/render-control-plane-restore.sh <backup-path> before applying it." >&2
+                exit 1
+              fi
               /workspace/hack/control-plane-backup.sh restore "$BACKUP_PATH"
           volumeMounts:
             - name: backups

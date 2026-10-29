@@ -8,4 +8,4 @@ Every production plan must define a deletion policy:
 
 Database, volume, and VM products default to snapshot-first deletion. Destructive actions require approval where the adapter marks the action disruptive. Failed deletions must preserve finalizers until cleanup can be retried or explicitly orphaned by a platform admin.
 
-Accidental deletion recovery uses the control-plane backup/restore workflow plus product-specific backup media. GitOps delivery repositories remain the source of truth for generated manifests.
+Accidental deletion recovery uses the [control-plane backup/restore workflow](production-install.md#control-plane-backup-and-restore) plus product-specific backup media. GitOps delivery repositories remain the source of truth for generated manifests.

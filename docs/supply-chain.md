@@ -26,5 +26,5 @@ Production install manifests use release tags. Operators can pin image digests i
 
 Local pre-push parity check:
 
-- `./hack/ci-local-build-security.sh` runs validate checks plus local image
+- `bash hack/ci-local-build-security.sh` runs validate checks plus local image
   build and Trivy vulnerability scans aligned with the CI build workflow.

@@ -122,6 +122,55 @@ The permission boundaries above are derived from current API usage in `internal/
 - `servicer-manager` retains `argoproj.io` application/applicationSet mutation rights because GitOps delivery reconciliation creates, updates, and removes Argo CD objects.
   - Owner: GitOps/delivery maintainers.
 
+## Control-Plane Backup and Restore
+
+The base install (`kubectl apply -k deploy`, the same render `hack/render-deploy-manifest.sh` publishes as the release asset) includes the scheduled control-plane backup: `CronJob/servicer-control-plane-backup`, its `ServiceAccount`/`ClusterRole`/`ClusterRoleBinding`, and the `servicer-control-plane-backups` PersistentVolumeClaim.
+
+The base install does **not** include a restore Job. A restore path is only known when a restore is actually needed, so a pre-installed restore Job would only leave a permanently `Failed` Job and repeated failing pods in `servicer-system`. The restore manifest lives in the opt-in overlay `config/backup/restore/`, which neither `deploy/` nor `config/backup/` references.
+
+Backups are written to the PVC as `/backups/servicer-<YYYYMMDD>-<HHMMSS>` directories. Inspect existing directories from any pod that mounts the PVC, for example by starting a throwaway pod with the tools image:
+
+```bash
+kubectl -n servicer-system run servicer-backup-list --rm -it --restart=Never \
+  --image=ghcr.io/sindef/servicer-tools:v0.1.0 \
+  --overrides='{"spec":{"containers":[{"name":"list","image":"ghcr.io/sindef/servicer-tools:v0.1.0","command":["ls","-1","/backups"],"volumeMounts":[{"name":"backups","mountPath":"/backups"}]}],"volumes":[{"name":"backups","persistentVolumeClaim":{"claimName":"servicer-control-plane-backups"}}]}}'
+```
+
+### Restore On Demand
+
+Render the restore Job with the real backup directory, then apply it. Replace the example path with the directory chosen above:
+
+```bash
+BACKUP_PATH=/backups/servicer-20240513-021700
+bash hack/render-control-plane-restore.sh "${BACKUP_PATH}" | kubectl apply -f -
+
+kubectl -n servicer-system wait --for=condition=Complete \
+  job/servicer-control-plane-restore --timeout=15m
+kubectl -n servicer-system logs job/servicer-control-plane-restore
+```
+
+The helper rejects the template placeholder and relative paths, and the Job container refuses to run when `BACKUP_PATH` is not a directory on the PVC. Delete the finished Job so it does not linger:
+
+```bash
+kubectl -n servicer-system delete job servicer-control-plane-restore
+```
+
+Restore re-applies the backed-up Servicer CRs, `servicer-system` core resources (Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings), Servicer-managed Argo CD Applications, and the `generated/` delivery tree when it was present. It is not an etcd restore and does not cover product workloads, PVs, or third-party operator state.
+
+To restore on a workstation that already holds a backup directory instead of inside the cluster, run the backup helper directly:
+
+```bash
+./hack/control-plane-backup.sh restore /path/to/backups/servicer-20240513-021700
+```
+
+### Removing A Legacy Placeholder Job
+
+Releases that included the restore Job in the base install created `Job/servicer-control-plane-restore` with a template `BACKUP_PATH`, which always failed by design. Current installs no longer render it. Delete the leftover object once after upgrading:
+
+```bash
+kubectl -n servicer-system delete job servicer-control-plane-restore --ignore-not-found
+```
+
 ## Demo-Only Inputs
 
 Do not copy `config/deploy` or `config/samples` credentials into production. The demo path includes local images, local kubeconfigs, `demo-admin` login data, and operator bootstrap constants intended only for Kind/demo validation. Production users, providers, cluster targets, and operator defaults must be created from environment-specific Secrets and reviewed catalog data.
