@@ -1,0 +1,42 @@
+name: Dependency graph
+
+# Branch protection requires the `update-go_modules_graph` status check, but
+# GitHub's automatic dependency submission only reports that check for pushes
+# to the default branch. Pull requests therefore never carried it. This workflow
+# re-derives the resolved Go module graph on pull requests and fails when the
+# committed go.mod/go.sum do not describe it, so a version bump can no longer
+# land with a missing or stale checksum.
+#
+# The dependency snapshot submission itself stays with GitHub's automatic
+# submission, which already runs on every default-branch push; submitting a
+# second snapshot from this workflow would only duplicate graph entries.
+
+on:
+  pull_request:
+    branches: ["master", "release/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-module-graph-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  update-go_modules_graph:
+    name: update-go_modules-graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          # Keep in sync with the `go` directive in go.mod.
+          go-version: "1.27.3"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Validate Go module graph
+        run: python3 hack/check-go-module-graph.py
