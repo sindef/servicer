@@ -23,11 +23,13 @@ instead of waiting for the weekly regeneration job:
   * manifests are sorted, unique, and free of malformed rows
   * no `web/MISSING_LICENSE_FILES.tsv`, which would mean the bundle was
     committed with unapproved missing license files
+  * every version required by `go.mod` and every direct `web/package.json`
+    dependency resolved by `web/package-lock.json` has a bundle entry, so a
+    stale bundle is caught on the pull request instead of the weekly job
 
-What it deliberately does not do: compare the committed bundle against the
-current `go.mod`, `go.sum` and `web/package-lock.json` versions. That is the
-generator output comparison in the `Release hygiene` workflow, and it needs
-registry access.
+What it deliberately does not do: rebuild the full resolved dependency graph
+(`go list -m all`, `npm ci`). That needs registry access and stays in the
+generator output comparison in the `Release hygiene` workflow.
 
 Usage:
     python3 hack/check-license-bundle.py [bundle-directory]
@@ -35,6 +37,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -42,6 +45,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BUNDLE = ROOT / "dist" / "THIRD_PARTY_LICENSES"
 GENERATOR = ROOT / "hack" / "generate-third-party-licenses.sh"
+GO_MOD = ROOT / "go.mod"
+WEB_PACKAGE_JSON = ROOT / "web" / "package.json"
+WEB_PACKAGE_LOCK = ROOT / "web" / "package-lock.json"
 
 LICENSE_FILE_PATTERN = re.compile(r"^(licen[sc]e|copying|notice)", re.IGNORECASE)
 SANITIZE_PATTERN = re.compile(r"[/:@+]")
@@ -204,7 +210,65 @@ def check_web_bundle() -> tuple[int, int]:
                 f"no entry in {WEB_APPROVED}"
             )
 
+    for name, version in sorted(web_direct_requirements().items()):
+        if f"{name}@{version}" not in row_keys:
+            fail(
+                f"dist/THIRD_PARTY_LICENSES/{WEB_MANIFEST}: no row for {name}@{version}, which "
+                f"web/package-lock.json resolves for a web/package.json dependency; regenerate the bundle"
+            )
+
     return (len(row_keys), len(actual_dirs))
+
+
+def go_requirements() -> dict[str, str]:
+    """Module versions declared by go.mod, skipping replaced modules."""
+    requirements: dict[str, str] = {}
+    replaced: set[str] = set()
+    if not GO_MOD.is_file():
+        fail("go.mod: missing; cannot verify the committed Go bundle versions")
+        return {}
+    in_require = False
+    for number, line in enumerate(GO_MOD.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.split("//", 1)[0].strip()
+        if stripped == "":
+            continue
+        if "=>" in stripped:
+            left = stripped.split("=>", 1)[0].split()
+            if left:
+                replaced.add(left[0].strip("()"))
+            continue
+        if stripped.startswith("require ("):
+            in_require = True
+            continue
+        if in_require and stripped == ")":
+            in_require = False
+            continue
+        if in_require or stripped.startswith("require "):
+            fields = stripped.removeprefix("require ").split()
+            if len(fields) < 2:
+                fail(f"go.mod:{number}: cannot parse requirement {line!r}")
+                continue
+            requirements[fields[0]] = fields[1]
+    return {module: version for module, version in requirements.items() if module not in replaced}
+
+
+def web_direct_requirements() -> dict[str, str]:
+    """Versions web/package-lock.json resolves for web/package.json dependencies."""
+    if not WEB_PACKAGE_JSON.is_file() or not WEB_PACKAGE_LOCK.is_file():
+        fail("web/package.json or web/package-lock.json: missing; cannot verify the committed web bundle versions")
+        return {}
+    manifest = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))
+    lock = json.loads(WEB_PACKAGE_LOCK.read_text(encoding="utf-8"))
+    locked = lock.get("packages", {})
+    resolved: dict[str, str] = {}
+    for section in ("dependencies", "devDependencies"):
+        for name in sorted(manifest.get(section, {})):
+            entry = locked.get(f"node_modules/{name}")
+            if not isinstance(entry, dict) or "version" not in entry:
+                fail(f"web/package-lock.json: {name} ({section}) has no resolved node_modules entry")
+                continue
+            resolved[name] = entry["version"]
+    return resolved
 
 
 def check_go_bundle() -> int:
@@ -220,12 +284,22 @@ def check_go_bundle() -> int:
         elif entry.name != "MISSING_LICENSE_FILES.tsv":
             fail(f"{relative(entry)}: unexpected file in the Go bundle; the generator only writes per-module license directories")
     missing = go_dir / "MISSING_LICENSE_FILES.tsv"
+    recorded: set[str] = set()
     if missing.is_file():
         for module, version, note in read_rows(missing, 3):
             if note != "NO_LICENSE_FILE_FOUND":
                 fail(f"{relative(missing)}: unexpected record {module}@{version} {note!r}")
-            if sanitize(f"{module}@{version}") in {entry.name for entry in entries}:
-                fail(f"{relative(go_dir / sanitize(module + '@' + version))}: has a license file but is listed in {missing.name}")
+            key = sanitize(f"{module}@{version}")
+            recorded.add(key)
+            if key in {entry.name for entry in entries}:
+                fail(f"{relative(go_dir / key)}: has a license file but is listed in {missing.name}")
+    for module, version in sorted(go_requirements().items()):
+        key = sanitize(f"{module}@{version}")
+        if not (go_dir / key).is_dir() and key not in recorded:
+            fail(
+                f"dist/THIRD_PARTY_LICENSES/go/{key}: missing for the go.mod requirement "
+                f"{module} {version}; regenerate the bundle"
+            )
     return checked
 
 
