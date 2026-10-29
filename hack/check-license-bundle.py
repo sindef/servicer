@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline self-consistency gate for the committed third-party license bundle.
+"""Offline consistency gate for the committed third-party license bundle.
 
 `hack/generate-third-party-licenses.sh` writes `dist/THIRD_PARTY_LICENSES/` from
 the resolved Go module graph and the installed npm package tree. Regeneration
@@ -8,9 +8,10 @@ hygiene` workflow owns the registry-backed drift check: it regenerates the
 bundle and fails when the committed copy would change.
 
 This script is the registry-free companion gate that runs on every pull request
-(`Build` -> `Validate`). It verifies that the committed bundle is internally
-consistent, so a hand-edited or half-committed refresh is caught immediately
-instead of waiting for the weekly regeneration job:
+(`Build` -> `Validate`). It verifies that the committed bundle is consistent
+with the dependency manifests that need no registry access, so a stale,
+hand-edited or half-committed refresh is caught immediately instead of waiting
+for the weekly regeneration job:
 
   * the bundle mirrors `LICENSE` (as `SERVICER-LICENSE`) and
     `THIRD_PARTY_NOTICES.md` byte for byte
@@ -23,11 +24,19 @@ instead of waiting for the weekly regeneration job:
   * manifests are sorted, unique, and free of malformed rows
   * no `web/MISSING_LICENSE_FILES.tsv`, which would mean the bundle was
     committed with unapproved missing license files
+  * every module `go.mod` requires (direct or indirect) has a bundle entry for
+    exactly that version, so a Go dependency bump without a bundle refresh
+    fails the pull request
+  * every `web/PACKAGE_LICENSES.tsv` row records the version
+    `web/package-lock.json` resolves, and every lock package `npm ci` installs
+    on the reference platform has a row, so a web dependency bump without a
+    bundle refresh fails the pull request
 
-What it deliberately does not do: compare the committed bundle against the
-current `go.mod`, `go.sum` and `web/package-lock.json` versions. That is the
-generator output comparison in the `Release hygiene` workflow, and it needs
-registry access.
+What still needs the registry: equality with the full regenerated graph. The Go
+bundle also carries the test-only modules that `go list -m all` pulls in beyond
+the `go.mod` requires, upstream license texts can change without a version
+bump, and platform-specific npm packages install per platform. The `Release
+hygiene` workflow owns that authoritative comparison.
 
 Usage:
     python3 hack/check-license-bundle.py [bundle-directory]
@@ -35,6 +44,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -42,12 +52,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BUNDLE = ROOT / "dist" / "THIRD_PARTY_LICENSES"
 GENERATOR = ROOT / "hack" / "generate-third-party-licenses.sh"
+GO_MOD = ROOT / "go.mod"
+PACKAGE_LOCK = ROOT / "web" / "package-lock.json"
 
 LICENSE_FILE_PATTERN = re.compile(r"^(licen[sc]e|copying|notice)", re.IGNORECASE)
 SANITIZE_PATTERN = re.compile(r"[/:@+]")
 GO_ENTRY_PATTERN = re.compile(r"^.+_v[0-9]")
 APPROVED_BLOCK_PATTERN = re.compile(r"const approved = new Set\(\[(.*?)\]\)", re.DOTALL)
 APPROVED_ENTRY_PATTERN = re.compile(r"['\"]([^'\"]+)['\"]")
+GO_REQUIRE_BLOCK_PATTERN = re.compile(r"^\s*(\S+)\s+(v\S+)(?:\s*//.*)?$")
+GO_REQUIRE_SINGLE_PATTERN = re.compile(r"^require\s+(\S+)\s+(v\S+)(?:\s*//.*)?$")
+GO_MOD_BLOCK_KEYWORDS = {"require", "exclude", "replace", "retract"}
+
+# npm ci installs optional packages only on platforms matching their os/cpu
+# constraints. CI and the release images build on linux/amd64, so that is the
+# reference platform for deciding which lock packages must appear in the bundle.
+REFERENCE_OS = "linux"
+REFERENCE_CPU = "x64"
 
 WEB_MANIFEST = "web/PACKAGE_LICENSES.tsv"
 WEB_APPROVED = "web/APPROVED_LICENSE_EXCEPTIONS.tsv"
@@ -134,10 +155,17 @@ def generator_approved_exceptions() -> set[str]:
             "(expected `const approved = new Set([...])`)"
         )
         return set()
-    return set(APPROVED_ENTRY_PATTERN.findall(match.group(1)))
+    # The reviewed set is documented with whole-line `//` comments whose prose
+    # may contain apostrophes (for example "Vite 8's rolldown toolchain"). Strip
+    # those comment lines before extracting quoted entries, so comment prose can
+    # never be paired with an entry's quotes and mistaken for an exception key.
+    entry_lines = "\n".join(
+        line for line in match.group(1).splitlines() if not line.strip().startswith("//")
+    )
+    return set(APPROVED_ENTRY_PATTERN.findall(entry_lines))
 
 
-def check_web_bundle() -> tuple[int, int]:
+def check_web_bundle() -> tuple[list[list[str]], int]:
     manifest_path = BUNDLE / WEB_MANIFEST
     approved_path = BUNDLE / WEB_APPROVED
     if not manifest_path.is_file():
@@ -151,7 +179,7 @@ def check_web_bundle() -> tuple[int, int]:
             "in hack/generate-third-party-licenses.sh before refreshing the bundle"
         )
     if not manifest_path.is_file() or not approved_path.is_file():
-        return (0, 0)
+        return ([], 0)
 
     rows = read_rows(manifest_path, 3)
     approved_rows = read_rows(approved_path, 3)
@@ -204,29 +232,150 @@ def check_web_bundle() -> tuple[int, int]:
                 f"no entry in {WEB_APPROVED}"
             )
 
-    return (len(row_keys), len(actual_dirs))
+    return (rows, len(actual_dirs))
 
 
-def check_go_bundle() -> int:
+def go_mod_requires() -> list[tuple[str, str]]:
+    """Direct and indirect requires recorded in go.mod, in file order."""
+    if not GO_MOD.is_file():
+        fail(f"{relative(GO_MOD)}: missing; cannot compare the Go bundle against the module manifest")
+        return []
+    requires: list[tuple[str, str]] = []
+    blocks: list[str] = []
+    for number, line in enumerate(GO_MOD.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        keyword = stripped[:-1].strip() if stripped.endswith("(") else ""
+        if keyword in GO_MOD_BLOCK_KEYWORDS:
+            blocks.append(keyword)
+            continue
+        if stripped == ")" and blocks:
+            blocks.pop()
+            continue
+        if blocks:
+            if blocks[-1] != "require":
+                continue
+            match = GO_REQUIRE_BLOCK_PATTERN.match(line)
+            if match is None:
+                fail(f"{relative(GO_MOD)}:{number}: unparsed require entry {line!r}")
+                continue
+            requires.append((match.group(1), match.group(2)))
+            continue
+        match = GO_REQUIRE_SINGLE_PATTERN.match(stripped)
+        if match is not None:
+            requires.append((match.group(1), match.group(2)))
+    return requires
+
+
+def check_go_mod_versions(bundle_entries: set[str], missing_modules: set[str]) -> None:
+    """Every go.mod require must resolve to a bundle entry of that version."""
+    for module, version in go_mod_requires():
+        if sanitize(f"{module}@{version}") in bundle_entries:
+            continue
+        if f"{module}@{version}" in missing_modules:
+            continue
+        stale = sorted(entry for entry in bundle_entries if entry.startswith(f"{sanitize(module)}_"))
+        detail = f" (the bundle holds {', '.join(stale)})" if stale else ""
+        fail(
+            f"go.mod requires {module} {version} but dist/THIRD_PARTY_LICENSES/go has no license entry "
+            f"for that version{detail}; regenerate the bundle with ./hack/generate-third-party-licenses.sh "
+            "and commit it"
+        )
+
+
+def package_lock_packages() -> dict[str, dict]:
+    """Top-level packages resolved by web/package-lock.json, keyed by name."""
+    if not PACKAGE_LOCK.is_file():
+        fail(f"{relative(PACKAGE_LOCK)}: missing; cannot compare the web bundle against the lockfile")
+        return {}
+    lock = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
+    resolved: dict[str, dict] = {}
+    for path, entry in lock.get("packages", {}).items():
+        # The generator walks the top level of web/node_modules (plus @scope
+        # groups), so nested node_modules trees are out of scope here too.
+        if not isinstance(entry, dict) or path.count("node_modules/") != 1:
+            continue
+        if entry.get("link"):
+            continue
+        name = path.rsplit("node_modules/", 1)[1]
+        if name and entry.get("version"):
+            resolved[name] = entry
+    return resolved
+
+
+def lock_entry_installed_on_reference_platform(entry: dict) -> bool:
+    """True when os/cpu constraints (if any) admit the reference platform."""
+    for key, reference in (("os", REFERENCE_OS), ("cpu", REFERENCE_CPU)):
+        constraint = entry.get(key)
+        if isinstance(constraint, list) and reference not in constraint:
+            return False
+        if isinstance(constraint, str) and constraint != reference:
+            return False
+    return True
+
+
+def check_web_lock_versions(rows: list[list[str]]) -> None:
+    """PACKAGE_LICENSES.tsv must track the versions package-lock.json resolves."""
+    lock = package_lock_packages()
+    if not lock:
+        return
+    manifest: dict[str, str] = {}
+    for name, version, _license in rows:
+        manifest[name] = version
+
+    for name, version in sorted(manifest.items()):
+        entry = lock.get(name)
+        if entry is None:
+            fail(
+                f"{WEB_MANIFEST}: records {name}@{version} but web/package-lock.json does not resolve "
+                "it; regenerate the bundle with ./hack/generate-third-party-licenses.sh and commit it"
+            )
+        elif entry.get("version") != version:
+            fail(
+                f"{WEB_MANIFEST}: records {name}@{version} but web/package-lock.json resolves "
+                f"{name}@{entry.get('version')}; regenerate the bundle with "
+                "./hack/generate-third-party-licenses.sh and commit it"
+            )
+
+    for name in sorted(set(lock) - set(manifest)):
+        entry = lock[name]
+        if entry.get("optional") is True or not lock_entry_installed_on_reference_platform(entry):
+            # Optional and platform-constrained packages install only on
+            # matching platforms, so npm ci may legitimately leave them out of
+            # node_modules and out of the generated manifest.
+            continue
+        fail(
+            f"web/package-lock.json resolves {name}@{entry.get('version')} but {WEB_MANIFEST} has no "
+            "row for it; regenerate the bundle with ./hack/generate-third-party-licenses.sh and "
+            "commit it"
+        )
+
+
+def check_go_bundle() -> tuple[int, set[str], set[str]]:
     go_dir = BUNDLE / "go"
     entries = sorted(go_dir.iterdir())
     checked = 0
+    bundle_entries: set[str] = set()
     for entry in entries:
         if entry.is_dir():
             if not GO_ENTRY_PATTERN.match(entry.name):
                 fail(f"{relative(entry)}: directory name does not look like a sanitized module@version entry")
             check_license_directory(entry)
             checked += 1
+            bundle_entries.add(entry.name)
         elif entry.name != "MISSING_LICENSE_FILES.tsv":
             fail(f"{relative(entry)}: unexpected file in the Go bundle; the generator only writes per-module license directories")
+    missing_modules: set[str] = set()
     missing = go_dir / "MISSING_LICENSE_FILES.tsv"
     if missing.is_file():
         for module, version, note in read_rows(missing, 3):
             if note != "NO_LICENSE_FILE_FOUND":
                 fail(f"{relative(missing)}: unexpected record {module}@{version} {note!r}")
-            if sanitize(f"{module}@{version}") in {entry.name for entry in entries}:
+            if sanitize(f"{module}@{version}") in bundle_entries:
                 fail(f"{relative(go_dir / sanitize(module + '@' + version))}: has a license file but is listed in {missing.name}")
-    return checked
+            missing_modules.add(f"{module}@{version}")
+    return (checked, bundle_entries, missing_modules)
 
 
 def main(argv: list[str]) -> int:
@@ -255,11 +404,15 @@ def main(argv: list[str]) -> int:
     for source_name, bundle_name in MIRRORED_FILES:
         check_mirrored_file(source_name, bundle_name)
 
-    web_packages = web_directories = go_modules = 0
+    web_rows: list[list[str]] = []
+    web_directories = go_modules = 0
     if (BUNDLE / "web").is_dir():
-        web_packages, web_directories = check_web_bundle()
+        web_rows, web_directories = check_web_bundle()
+        if web_rows:
+            check_web_lock_versions(web_rows)
     if (BUNDLE / "go").is_dir():
-        go_modules = check_go_bundle()
+        go_modules, go_entries, go_missing = check_go_bundle()
+        check_go_mod_versions(go_entries, go_missing)
 
     if problems:
         for problem in problems:
@@ -274,8 +427,9 @@ def main(argv: list[str]) -> int:
         return 1
 
     print(
-        "Dependency license bundle is self-consistent "
-        f"({go_modules} Go modules, {web_packages} web packages, {web_directories} web license directories)."
+        "Dependency license bundle is self-consistent and matches the committed dependency "
+        f"manifests ({go_modules} Go modules, {len(web_rows)} web packages, {web_directories} "
+        "web license directories)."
     )
     return 0
 

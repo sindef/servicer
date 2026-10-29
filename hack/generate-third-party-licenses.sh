@@ -57,9 +57,11 @@ const missing = []
 // web/package-lock.json. Revisit this set whenever the web dependency tree
 // moves, before refreshing dist/THIRD_PARTY_LICENSES.
 const approved = new Set([
-  '@esbuild/linux-x64@0.27.7',
-  '@rollup/rollup-linux-x64-gnu@4.60.4',
-  '@vue/devtools-api@6.6.4'
+  // @rolldown/binding-linux-x64-gnu is the linux-x64 native binding that
+  // Vite 8's rolldown toolchain resolves on the CI/build platform. Upstream
+  // publishes no license file inside the package; the rolldown repository is
+  // MIT licensed. Revisit this set whenever the web dependency tree moves.
+  '@rolldown/binding-linux-x64-gnu@1.2.13'
 ])
 const approvedMatches = []
 
@@ -122,9 +124,17 @@ for (const row of missing.sort()) {
 if (approvedMatches.length) {
   fs.writeFileSync(path.join(out, 'web', 'APPROVED_LICENSE_EXCEPTIONS.tsv'), approvedMatches.join('\n') + '\n')
 }
+if (approvedMatches.length) {
+  console.error(`Approved missing-license exceptions kept: ${approvedMatches.length}`)
+  for (const row of approvedMatches) console.error(`  ${row}`)
+}
 if (unresolved.length) {
   fs.writeFileSync(path.join(out, 'web', 'MISSING_LICENSE_FILES.tsv'), unresolved.join('\n') + '\n')
   console.error(`Unapproved missing license files detected: ${unresolved.length}`)
+  for (const row of unresolved) console.error(`  ${row}`)
+  console.error('Review these packages, then record them with their resolved version in the')
+  console.error('approved exception set in hack/generate-third-party-licenses.sh before')
+  console.error('refreshing dist/THIRD_PARTY_LICENSES.')
   process.exit(1)
 }
 NODE

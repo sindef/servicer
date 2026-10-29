@@ -56,8 +56,11 @@ dispatching it on `master` with `refresh=true` commits the refreshed bundle.
 Refresh locally with `./hack/generate-third-party-licenses.sh` and commit the
 result when the machine has registry access.
 
-Known license families in the current web dependency tree are permissive:
-MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, and Python-2.0.
+Known license families in the current web dependency tree: MIT, Apache-2.0,
+BSD-2-Clause, BSD-3-Clause, ISC, PSF-2.0, and MPL-2.0. The MPL-2.0 packages
+(axe-core, @axe-core/playwright, lightningcss and its linux-x64 native
+binding) are weakly copyleft; this bundle redistributes only their license
+texts, not their source.
 
 ## Operator and Service Software
 
