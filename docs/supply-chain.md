@@ -10,9 +10,11 @@ Release controls:
 - `gosec` static security checks
 - Helm CLI smoke test against the manager-pinned Helm version
 - Trivy filesystem scan in validation
-- registry-free third-party license bundle self-consistency check in every pull
-  request (`hack/check-license-bundle.py`, run by the `Build` workflow's
-  `Validate` job)
+- registry-free third-party license bundle check in every pull request
+  (`hack/check-license-bundle.py`, run by the `Build` workflow's `Validate`
+  job); it verifies the bundle is self-consistent and that its versions still
+  match `go.mod` and `web/package-lock.json`, so a dependency bump without a
+  bundle refresh fails on the pull request
 - third-party license bundle regeneration and drift check (`Release hygiene`
   workflow, weekly and on demand; regeneration needs access to the Go module
   graph and the npm registry)

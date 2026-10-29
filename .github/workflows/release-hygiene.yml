@@ -7,8 +7,10 @@ name: Release hygiene
 # produces a tree-wide diff whenever dependencies move.
 #
 # The registry-free companion gate, hack/check-license-bundle.py, runs in the
-# Build workflow on every pull request. This workflow starts with the same check
-# so the committed bundle is known to be self-consistent before regeneration.
+# Build workflow on every pull request. It checks that the committed bundle is
+# self-consistent and that its versions still match go.mod and
+# web/package-lock.json. This workflow starts with the same check so the
+# committed bundle is known to be consistent before regeneration.
 #
 # Triggers:
 #   * schedule: weekly regeneration; the job fails when the committed bundle
