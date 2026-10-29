@@ -48,6 +48,19 @@ type ClusterTargetReconciler struct {
 
 const maxExtractedChartFileBytes int64 = 64 << 20 // 64 MiB per file
 
+// maxPackageFetchBytes caps how many bytes are read from an OperatorPackage
+// source URL, so one oversized response cannot exhaust manager memory.
+const maxPackageFetchBytes int64 = 32 << 20 // 32 MiB
+
+// defaultPackageFetchTimeout caps a single source fetch, so a slow or hung
+// operator manifest host cannot pin the reconcile worker indefinitely.
+const defaultPackageFetchTimeout = 60 * time.Second
+
+// packageFetchClient is the client used for OperatorPackage source fetches.
+// It carries an explicit timeout because the request is not tied to the
+// reconcile context deadline.
+var packageFetchClient = &http.Client{Timeout: defaultPackageFetchTimeout}
+
 func (r *ClusterTargetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var target platformv1alpha1.ClusterTarget
 	if err := r.Get(ctx, req.NamespacedName, &target); err != nil {
@@ -276,7 +289,7 @@ func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, kube
 		}
 	}
 	if pkg.Spec.Source.ManifestURL != "" {
-		body, err := fetchURLBytes(pkg.Spec.Source.ManifestURL)
+		body, err := fetchURLBytes(ctx, pkg.Spec.Source.ManifestURL)
 		if err != nil {
 			return err
 		}
@@ -292,8 +305,12 @@ func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, kube
 	return nil
 }
 
-func fetchURLBytes(url string) ([]byte, error) {
-	resp, err := http.Get(url) // #nosec G107 -- URL is admin-configured OperatorPackage source.
+func fetchURLBytes(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetching %s: %w", url, err)
+	}
+	resp, err := packageFetchClient.Do(req) // #nosec G107 -- URL is admin-configured OperatorPackage source.
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
@@ -301,9 +318,12 @@ func fetchURLBytes(url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetching %s: HTTP %d", url, resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPackageFetchBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", url, err)
+	}
+	if int64(len(body)) > maxPackageFetchBytes {
+		return nil, fmt.Errorf("fetching %s: response body exceeds %d bytes", url, maxPackageFetchBytes)
 	}
 	return body, nil
 }
@@ -351,7 +371,7 @@ func applyManifestBytes(ctx context.Context, targetClient client.Client, body []
 
 func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, targetClient client.Client, pkg *platformv1alpha1.OperatorPackage) error {
 	_ = kubeconfigBytes
-	archiveBytes, err := fetchURLBytes(pkg.Spec.Source.ChartArchiveURL)
+	archiveBytes, err := fetchURLBytes(ctx, pkg.Spec.Source.ChartArchiveURL)
 	if err != nil {
 		return err
 	}
