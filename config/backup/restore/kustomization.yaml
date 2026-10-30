@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Opt-in overlay, referenced by neither deploy/ nor config/backup/, so the
+# base production render never creates the restore Job. Render it with a real
+# backup directory via hack/render-control-plane-restore.sh.
+resources:
+  - control-plane-restore-job.yaml

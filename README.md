@@ -143,7 +143,7 @@ Optional environment overrides:
 - `manager`
 - `bff`
 - `web`
-- backup and restore jobs using `tools`
+- backup and restore jobs using `tools`; restore is opt-in, see [Control-Plane Backup and Restore](docs/production-install.md#control-plane-backup-and-restore)
 - webhook bootstrap/service manifests and RBAC
 
 The web service is a `ClusterIP`. Expose it with port-forward or your own ingress:
