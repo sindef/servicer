@@ -1,5 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Base install ships the backup CronJob, its ServiceAccount/RBAC, and the
+# backups PVC only. The one-shot restore Job lives in the opt-in
+# config/backup/restore overlay (rendered by hack/render-control-plane-restore.sh):
+# its command fails by design until an operator supplies a real backup
+# directory, so including it here would leave a permanently Failed Job in
+# every fresh install.
 resources:
   - control-plane-backup.yaml
-  - control-plane-restore-job.yaml
