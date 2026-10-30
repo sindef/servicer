@@ -2,11 +2,12 @@ name: Upgrade E2E
 
 # Gates pull requests by rendering the previous and current install manifests
 # and server-dry-running them plus the stored-object fixtures, which proves the
-# current CRDs still accept previously stored objects.
+# current CRDs still accept previously stored objects. build.yml also calls this
+# workflow (workflow_call) from its tag-release gate, so `v*` tags no longer
+# trigger it directly: the release run is the tag run.
 on:
   push:
     branches: ["master", "release/**"]
-    tags: ["v*"]
   pull_request:
     branches: ["master", "release/**"]
   schedule:
@@ -17,6 +18,7 @@ on:
         description: Previous released Servicer version
         required: false
         default: v0.1.0
+  workflow_call:
 
 concurrency:
   group: e2e-upgrade-${{ github.ref }}
@@ -44,7 +46,7 @@ jobs:
 
       - name: Run upgrade e2e
         env:
-          # Falls back to the default for push and schedule runs, where the
-          # workflow_dispatch input is absent.
+          # Falls back to the default for push, schedule and workflow_call runs,
+          # where the workflow_dispatch input is absent.
           PREVIOUS_VERSION: ${{ github.event.inputs.previous_version || 'v0.1.0' }}
         run: ./hack/e2e-upgrade.sh
