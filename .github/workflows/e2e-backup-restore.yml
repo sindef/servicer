@@ -12,6 +12,9 @@ on:
     # Weekly safety net for drift that no single pull request exercises.
     - cron: "0 4 * * 1"
   workflow_dispatch:
+  # Called by the Build workflow's tag-release gate (build.yml), so a tagged
+  # release cannot publish artifacts unless this suite passed.
+  workflow_call:
 
 concurrency:
   group: e2e-backup-restore-${{ github.ref }}
