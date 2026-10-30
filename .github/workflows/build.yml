@@ -125,7 +125,7 @@ jobs:
         run: kubectl kustomize deploy > /dev/null
 
       - name: Validate production manifest policy
-        run: ./hack/manifest-policy.sh deploy
+        run: bash hack/manifest-policy.sh deploy
 
       - name: NetworkPolicy manifest smoke
         run: ./hack/networkpolicy-smoke.sh

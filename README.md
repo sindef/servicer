@@ -143,7 +143,7 @@ Optional environment overrides:
 - `manager`
 - `bff`
 - `web`
-- backup and restore jobs using `tools`
+- scheduled control-plane backups plus on-demand restore Jobs using `tools` (restore is opt-in, see [Production install](docs/production-install.md#control-plane-backup-and-restore))
 - webhook bootstrap/service manifests and RBAC
 
 The web service is a `ClusterIP`. Expose it with port-forward or your own ingress:
@@ -261,7 +261,7 @@ npm audit --omit=dev --audit-level=high
 kubectl kustomize config/deploy > /dev/null
 kubectl kustomize deploy > /dev/null
 kubectl kustomize config/samples > /dev/null
-./hack/manifest-policy.sh deploy
+bash hack/manifest-policy.sh deploy
 ./hack/networkpolicy-smoke.sh
 ```
 
@@ -318,7 +318,7 @@ docker build -f Containerfile.tools -t servicer/tools:dev .
 Run the same build + Trivy image scan flow used by CI before pushing:
 
 ```bash
-./hack/ci-local-build-security.sh
+bash hack/ci-local-build-security.sh
 ```
 
 This also runs `./hack/helm-cli-smoke.sh` to verify Helm CLI compatibility
@@ -327,7 +327,7 @@ with the manager's pinned Helm version.
 Fast path when you only want image build/scan (skip validate checks):
 
 ```bash
-./hack/ci-local-build-security.sh --skip-validate
+bash hack/ci-local-build-security.sh --skip-validate
 ```
 
 ### Render versioned install manifests

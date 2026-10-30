@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Opt-in restore overlay. Not referenced by deploy/ or config/backup/, so the
+# base install never creates this Job.
+#
+# Render it with a real backup directory instead of applying the template:
+#   bash hack/render-control-plane-restore.sh /backups/servicer-20240513-021700 | kubectl apply -f -
+#
+# See docs/production-install.md ("Control-Plane Backup and Restore").
+resources:
+  - control-plane-restore-job.yaml

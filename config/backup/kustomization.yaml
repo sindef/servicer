@@ -1,5 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Base install: scheduled backup CronJob, its ServiceAccount/RBAC, and the
+# backup PVC only. The restore Job is deliberately not part of this base,
+# because its BACKUP_PATH is only known when a restore is actually run; an
+# installed restore Job would sit in servicer-system as a permanently Failed
+# Job. Restores use the opt-in overlay in config/backup/restore via
+# hack/render-control-plane-restore.sh <backup-path>.
 resources:
   - control-plane-backup.yaml
-  - control-plane-restore-job.yaml
