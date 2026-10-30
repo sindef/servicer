@@ -49,8 +49,21 @@ internally inconsistent: a manifest row without a license directory (or the
 reverse), an approved exception that no longer matches the reviewed set in
 `hack/generate-third-party-licenses.sh`, an empty or malformed license
 directory, or a `SERVICER-LICENSE` / `THIRD_PARTY_NOTICES.md` copy that no
-longer matches the repository file. The `Release hygiene` workflow
-(`.github/workflows/release-hygiene.yml`) regenerates it, and fails when
+longer matches the repository file.
+
+The same gate also compares versions, so a dependency bump cannot ship license
+texts for the versions it replaced:
+
+- `dist/THIRD_PARTY_LICENSES/go/MODULE_VERSIONS.tsv` records the resolved Go
+  module graph. Every row must appear in `go.sum`, and every `go.mod`
+  requirement must have a row at exactly the required version; the matching
+  license directory (or a `go/MISSING_LICENSE_FILES.tsv` record) must exist.
+- `dist/THIRD_PARTY_LICENSES/web/PACKAGE_LICENSES.tsv` rows must name versions
+  resolved by `web/package-lock.json`, and every lockfile package that npm
+  installs on any platform must have a row.
+
+The `Release hygiene` workflow
+(`.github/workflows/release-hygiene.yml`) regenerates the bundle, and fails when
 `dist/THIRD_PARTY_LICENSES/` would change. It runs weekly and on demand;
 dispatching it on `master` with `refresh=true` commits the refreshed bundle.
 Refresh locally with `./hack/generate-third-party-licenses.sh` and commit the

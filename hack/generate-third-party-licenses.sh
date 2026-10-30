@@ -39,6 +39,13 @@ go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{"\t"}}{{.Dir}}{{en
       printf '%s\t%s\t%s\n' "${module}" "${version}" "NO_LICENSE_FILE_FOUND" >>"${OUT}/go/MISSING_LICENSE_FILES.tsv"
     fi
   done
+
+# Committed record of the resolved module graph. hack/check-license-bundle.py
+# compares it with go.mod and go.sum on every pull request, so a dependency bump
+# that skips regeneration fails the registry-free gate instead of shipping
+# license texts for the versions the graph no longer uses.
+go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{end}}' all |
+  LC_ALL=C sort >"${OUT}/go/MODULE_VERSIONS.tsv"
 popd >/dev/null
 
 npm --prefix "${ROOT}/web" ci --ignore-scripts
@@ -55,11 +62,10 @@ const missing = []
 // Approved exceptions are reviewed as part of release hygiene: packages that
 // ship no license file upstream are listed here with the version resolved by
 // web/package-lock.json. Revisit this set whenever the web dependency tree
-// moves, before refreshing dist/THIRD_PARTY_LICENSES.
+// moves, before refreshing dist/THIRD_PARTY_LICENSES. The committed
+// web/APPROVED_LICENSE_EXCEPTIONS.tsv must match this set exactly.
 const approved = new Set([
-  '@esbuild/linux-x64@0.27.7',
-  '@rollup/rollup-linux-x64-gnu@4.60.4',
-  '@vue/devtools-api@6.6.4'
+  '@rolldown/binding-linux-x64-gnu@1.2.15'
 ])
 const approvedMatches = []
 

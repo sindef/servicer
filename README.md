@@ -397,6 +397,11 @@ same check on every pull request):
 python3 hack/check-license-bundle.py
 ```
 
+That gate compares the committed `dist/THIRD_PARTY_LICENSES/go/MODULE_VERSIONS.tsv`
+and `dist/THIRD_PARTY_LICENSES/web/PACKAGE_LICENSES.tsv` versions against
+`go.mod`, `go.sum` and `web/package-lock.json`, so a dependency bump fails the
+pull request that bumps it until the bundle is regenerated.
+
 The `Release hygiene` workflow runs the same generator weekly and fails when the
 committed bundle drifts from its output. Dispatch that workflow on `master` with
 `refresh=true` to commit a refreshed bundle from CI.
