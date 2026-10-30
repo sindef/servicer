@@ -1,12 +1,16 @@
 name: GitOps E2E
 
-# Weekly and on demand only: hack/e2e-gitops.sh installs Argo CD into KinD and
-# waits for the repo server, which is too heavy and too network dependent for a
-# pull request gate. The pull request gate lives in e2e-backup-restore.yml.
+# Weekly, on demand, and from the Build workflow's tag-release gate:
+# hack/e2e-gitops.sh installs Argo CD into KinD and waits for the repo server,
+# which is too heavy and too network dependent for a pull request gate. The pull
+# request gate lives in e2e-backup-restore.yml. build.yml calls this workflow
+# (workflow_call) for every `v*` tag so a release cannot publish artifacts
+# without a green GitOps delivery run.
 on:
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: e2e-gitops-${{ github.ref }}
