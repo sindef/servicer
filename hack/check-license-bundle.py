@@ -20,14 +20,27 @@ instead of waiting for the weekly regeneration job:
     `hack/generate-third-party-licenses.sh`
   * approved exceptions no longer ship a license file upstream
   * every license directory holds at least one upstream license/notice file
+  * empty directories are ignored: git cannot store them, so they only exist in
+    a working tree where a refresh already deleted the stale license files
   * manifests are sorted, unique, and free of malformed rows
   * no `web/MISSING_LICENSE_FILES.tsv`, which would mean the bundle was
     committed with unapproved missing license files
 
-What it deliberately does not do: compare the committed bundle against the
-current `go.mod`, `go.sum` and `web/package-lock.json` versions. That is the
-generator output comparison in the `Release hygiene` workflow, and it needs
-registry access.
+It also compares the manifest versions against the dependency manifests that
+are committed next to them, without needing registry access:
+
+  * every module required by `go.mod` has a license directory for the required
+    version, so a stale `k8s.io_api_v0.32.1` directory behind a
+    `k8s.io/api v0.37.1` requirement fails here instead of waiting for the
+    weekly regeneration job
+  * every `web/PACKAGE_LICENSES.tsv` row matches the version
+    `web/package-lock.json` resolves for that package name, and no row survives
+    for a package the lockfile no longer resolves
+
+What it deliberately does not do: reproduce the generator output file by file.
+License texts, notice files and the set of installed npm packages still need a
+machine with module proxy and registry access, which is the `Release hygiene`
+workflow's regeneration-and-diff job.
 
 Usage:
     python3 hack/check-license-bundle.py [bundle-directory]
@@ -35,6 +48,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -42,6 +56,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BUNDLE = ROOT / "dist" / "THIRD_PARTY_LICENSES"
 GENERATOR = ROOT / "hack" / "generate-third-party-licenses.sh"
+GO_MOD = ROOT / "go.mod"
+WEB_LOCK = ROOT / "web" / "package-lock.json"
 
 LICENSE_FILE_PATTERN = re.compile(r"^(licen[sc]e|copying|notice)", re.IGNORECASE)
 SANITIZE_PATTERN = re.compile(r"[/:@+]")
@@ -98,6 +114,16 @@ def license_files(directory: Path) -> list[Path]:
     return sorted(path for path in directory.rglob("*") if path.is_file())
 
 
+def populated_directories(directory: Path) -> list[Path]:
+    """Subdirectories that hold at least one file.
+
+    Git cannot store empty directories, so an empty license directory can only
+    appear in a working tree, never in a committed bundle; ignoring it keeps the
+    check meaningful both on a checkout and right after a local refresh.
+    """
+    return sorted(path for path in directory.iterdir() if path.is_dir() and license_files(path))
+
+
 def check_license_directory(directory: Path) -> int:
     files = license_files(directory)
     if not files:
@@ -137,6 +163,90 @@ def generator_approved_exceptions() -> set[str]:
     return set(APPROVED_ENTRY_PATTERN.findall(match.group(1)))
 
 
+def go_mod_requirements() -> dict[str, str]:
+    """Module versions required by the committed `go.mod`."""
+    if not GO_MOD.is_file():
+        fail("go.mod: missing from the repository")
+        return {}
+    requirements: dict[str, str] = {}
+    in_block = False
+    for line in GO_MOD.read_text(encoding="utf-8").splitlines():
+        stripped = line.split("//")[0].strip()
+        if stripped == "":
+            continue
+        if stripped.startswith("require ("):
+            in_block = True
+            continue
+        if in_block and stripped == ")":
+            in_block = False
+            continue
+        if stripped.startswith("require "):
+            entry = stripped[len("require ") :].strip()
+        elif in_block:
+            entry = stripped
+        else:
+            continue
+        fields = entry.split()
+        if len(fields) >= 2 and fields[1].startswith("v"):
+            requirements[fields[0]] = fields[1]
+    return requirements
+
+
+def web_lock_versions() -> dict[str, str]:
+    """Package versions resolved by `web/package-lock.json` (top-level installs)."""
+    if not WEB_LOCK.is_file():
+        fail("web/package-lock.json: missing from the repository")
+        return {}
+    lock = json.loads(WEB_LOCK.read_text(encoding="utf-8"))
+    resolved: dict[str, str] = {}
+    for key, entry in lock.get("packages", {}).items():
+        if not key.startswith("node_modules/"):
+            continue
+        name = key[len("node_modules/") :]
+        if "node_modules/" in name:
+            # Nested duplicate; the generator reports the installed copy.
+            continue
+        version = entry.get("version")
+        if isinstance(version, str) and version:
+            resolved[name] = version
+    return resolved
+
+
+def check_go_version_drift(populated_names: set[str]) -> None:
+    requirements = go_mod_requirements()
+    available: dict[str, set[str]] = {}
+    for name in populated_names:
+        module, _sep, version = name.rpartition("_v")
+        if module:
+            available.setdefault(module, set()).add("v" + version)
+    for module, version in sorted(requirements.items()):
+        if sanitize(f"{module}@{version}") in populated_names:
+            continue
+        stale = sorted(available.get(sanitize(module), set()))
+        detail = f"; the bundle only has {', '.join(stale)}" if stale else ""
+        fail(
+            f"dist/THIRD_PARTY_LICENSES/go/{sanitize(module + '@' + version)}: missing license directory for "
+            f"{module} {version} required by go.mod{detail}. Regenerate the bundle with "
+            "hack/generate-third-party-licenses.sh"
+        )
+
+
+def check_web_version_drift(rows: list[list[str]]) -> None:
+    resolved = web_lock_versions()
+    for name, version, _license in rows:
+        expected = resolved.get(name)
+        if expected is None:
+            fail(
+                f"dist/THIRD_PARTY_LICENSES/{WEB_MANIFEST}: row for {name} {version} has no matching package in "
+                "web/package-lock.json; regenerate the bundle instead of editing it"
+            )
+        elif expected != version:
+            fail(
+                f"dist/THIRD_PARTY_LICENSES/{WEB_MANIFEST}: {name} is listed as {version} but "
+                f"web/package-lock.json resolves {expected}; regenerate the bundle"
+            )
+
+
 def check_web_bundle() -> tuple[int, int]:
     manifest_path = BUNDLE / WEB_MANIFEST
     approved_path = BUNDLE / WEB_APPROVED
@@ -155,6 +265,7 @@ def check_web_bundle() -> tuple[int, int]:
 
     rows = read_rows(manifest_path, 3)
     approved_rows = read_rows(approved_path, 3)
+    check_web_version_drift(rows)
 
     row_keys: list[str] = []
     expected_dirs: dict[str, str] = {}
@@ -165,7 +276,7 @@ def check_web_bundle() -> tuple[int, int]:
         row_keys.append(key)
         expected_dirs[sanitize(key)] = key
 
-    actual_dirs = sorted(path for path in (BUNDLE / "web").iterdir() if path.is_dir())
+    actual_dirs = populated_directories(BUNDLE / "web")
     actual_dir_names = {path.name for path in actual_dirs}
 
     for directory in actual_dirs:
@@ -209,23 +320,29 @@ def check_web_bundle() -> tuple[int, int]:
 
 def check_go_bundle() -> int:
     go_dir = BUNDLE / "go"
-    entries = sorted(go_dir.iterdir())
+    populated = populated_directories(go_dir)
+    populated_names = {entry.name for entry in populated}
     checked = 0
-    for entry in entries:
-        if entry.is_dir():
-            if not GO_ENTRY_PATTERN.match(entry.name):
-                fail(f"{relative(entry)}: directory name does not look like a sanitized module@version entry")
-            check_license_directory(entry)
-            checked += 1
-        elif entry.name != "MISSING_LICENSE_FILES.tsv":
-            fail(f"{relative(entry)}: unexpected file in the Go bundle; the generator only writes per-module license directories")
+    for entry in sorted(go_dir.iterdir()):
+        if not entry.is_dir():
+            if entry.name != "MISSING_LICENSE_FILES.tsv":
+                fail(f"{relative(entry)}: unexpected file in the Go bundle; the generator only writes per-module license directories")
+            continue
+        if entry.name not in populated_names:
+            # Empty directory left behind by a refresh; not committable.
+            continue
+        if not GO_ENTRY_PATTERN.match(entry.name):
+            fail(f"{relative(entry)}: directory name does not look like a sanitized module@version entry")
+        check_license_directory(entry)
+        checked += 1
     missing = go_dir / "MISSING_LICENSE_FILES.tsv"
     if missing.is_file():
         for module, version, note in read_rows(missing, 3):
             if note != "NO_LICENSE_FILE_FOUND":
                 fail(f"{relative(missing)}: unexpected record {module}@{version} {note!r}")
-            if sanitize(f"{module}@{version}") in {entry.name for entry in entries}:
+            if sanitize(f"{module}@{version}") in populated_names:
                 fail(f"{relative(go_dir / sanitize(module + '@' + version))}: has a license file but is listed in {missing.name}")
+    check_go_version_drift(populated_names)
     return checked
 
 
