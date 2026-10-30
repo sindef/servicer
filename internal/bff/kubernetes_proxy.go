@@ -146,21 +146,76 @@ func bearerToken(header string) string {
 	return strings.TrimSpace(parts[1])
 }
 
+// namespaceProxyPathAllowed reports whether upstreamPath is on the namespace
+// access allowlist for namespace. The allowlist is structural: cluster
+// discovery documents plus read paths that are explicitly scoped to the
+// token's own namespace. Anything else, including cluster-scoped collections
+// such as /apis/apps/v1/deployments or
+// /apis/rbac.authorization.k8s.io/v1/clusterroles, is rejected even when the
+// caller holds a valid namespace access token.
 func namespaceProxyPathAllowed(namespace, upstreamPath string) bool {
-	switch {
-	case upstreamPath == "/api", upstreamPath == "/apis", upstreamPath == "/version":
+	if namespace == "" || !strings.HasPrefix(upstreamPath, "/") {
+		return false
+	}
+	segments, ok := proxyPathSegments(upstreamPath)
+	if !ok {
+		return false
+	}
+	if segments[0] == "openapi" {
 		return true
-	case upstreamPath == "/api/v1" || strings.HasPrefix(upstreamPath, "/apis/"):
-		return !strings.Contains(upstreamPath, "/namespaces/") || strings.Contains(upstreamPath, "/namespaces/"+namespace+"/")
-	case upstreamPath == "/api/v1/namespaces/"+namespace:
-		return true
-	case strings.HasPrefix(upstreamPath, "/api/v1/namespaces/"+namespace+"/"):
-		return true
-	case strings.HasPrefix(upstreamPath, "/openapi/"):
-		return true
+	}
+	switch segments[0] {
+	case "version":
+		return len(segments) == 1
+	case "api":
+		if len(segments) == 1 {
+			return true
+		}
+		if segments[1] != "v1" {
+			return false
+		}
+		if len(segments) == 2 {
+			return true
+		}
+		return namespaceScopedProxyPath(segments[2:], namespace)
+	case "apis":
+		// /apis, /apis/<group> and /apis/<group>/<version> are discovery only.
+		if len(segments) <= 3 {
+			return true
+		}
+		return namespaceScopedProxyPath(segments[3:], namespace)
 	default:
 		return false
 	}
+}
+
+// namespaceScopedProxyPath reports whether the remaining path segments start
+// with an explicit "namespaces/<token namespace>" scope.
+func namespaceScopedProxyPath(remaining []string, namespace string) bool {
+	if len(remaining) < 2 || remaining[0] != "namespaces" {
+		return false
+	}
+	return remaining[1] == namespace
+}
+
+// proxyPathSegments splits a proxy path into segments and rejects empty,
+// relative or query-bearing segments so a forwarded path cannot walk out of
+// the allowed namespace scope.
+func proxyPathSegments(upstreamPath string) ([]string, bool) {
+	trimmed := strings.Trim(upstreamPath, "/")
+	if trimmed == "" {
+		return nil, false
+	}
+	segments := strings.Split(trimmed, "/")
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return nil, false
+		}
+		if strings.ContainsAny(segment, "?#") {
+			return nil, false
+		}
+	}
+	return segments, true
 }
 
 func (s *Server) forwardKubernetesRequest(w http.ResponseWriter, r *http.Request, upstreamPath string) {
