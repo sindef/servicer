@@ -7,8 +7,9 @@ metadata:
     app.kubernetes.io/name: servicer
     app.kubernetes.io/component: restore
   annotations:
-    servicer.io/backup-path: /backups/servicer-YYYYMMDD-HHMMSS
+    servicer.io/backup-path: __BACKUP_PATH__
 spec:
+  backoffLimit: 0
   template:
     spec:
       serviceAccountName: servicer-control-plane-backup
@@ -30,13 +31,23 @@ spec:
               drop: ["ALL"]
           env:
             - name: BACKUP_PATH
-              value: /backups/servicer-YYYYMMDD-HHMMSS
+              value: __BACKUP_PATH__
           command:
             - /bin/sh
             - -c
             - |
               set -eu
-              test "$BACKUP_PATH" != "/backups/servicer-YYYYMMDD-HHMMSS"
+              case "$BACKUP_PATH" in
+                /backups/servicer-*) ;;
+                *)
+                  echo "BACKUP_PATH must be a /backups/servicer-<timestamp> directory on the backups PVC" >&2
+                  exit 1
+                  ;;
+              esac
+              if [ ! -d "$BACKUP_PATH" ]; then
+                echo "BACKUP_PATH is not an existing directory on the backups PVC: $BACKUP_PATH" >&2
+                exit 1
+              fi
               /workspace/hack/control-plane-backup.sh restore "$BACKUP_PATH"
           volumeMounts:
             - name: backups
