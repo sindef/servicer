@@ -58,7 +58,8 @@ const missing = []
 // moves, before refreshing dist/THIRD_PARTY_LICENSES.
 const approved = new Set([
   '@esbuild/linux-x64@0.27.7',
-  '@rollup/rollup-linux-x64-gnu@4.60.4',
+  '@rolldown/binding-linux-x64-gnu@1.2.15',
+  '@rolldown/binding-linux-x64-musl@1.2.15',
   '@vue/devtools-api@6.6.4'
 ])
 const approvedMatches = []
