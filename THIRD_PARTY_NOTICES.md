@@ -49,7 +49,11 @@ internally inconsistent: a manifest row without a license directory (or the
 reverse), an approved exception that no longer matches the reviewed set in
 `hack/generate-third-party-licenses.sh`, an empty or malformed license
 directory, or a `SERVICER-LICENSE` / `THIRD_PARTY_NOTICES.md` copy that no
-longer matches the repository file. The `Release hygiene` workflow
+longer matches the repository file. It also fails when a module required by
+`go.mod`, or a dependency declared in `web/package.json`, is absent from the
+bundle or recorded at a version that `web/package-lock.json` no longer
+resolves, so a dependency bump cannot land without a refreshed bundle. The
+`Release hygiene` workflow
 (`.github/workflows/release-hygiene.yml`) regenerates it, and fails when
 `dist/THIRD_PARTY_LICENSES/` would change. It runs weekly and on demand;
 dispatching it on `master` with `refresh=true` commits the refreshed bundle.
