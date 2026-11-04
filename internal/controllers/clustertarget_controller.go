@@ -276,7 +276,7 @@ func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, kube
 		}
 	}
 	if pkg.Spec.Source.ManifestURL != "" {
-		body, err := fetchURLBytes(pkg.Spec.Source.ManifestURL)
+		body, err := fetchURLBytes(ctx, pkg.Spec.Source.ManifestURL)
 		if err != nil {
 			return err
 		}
@@ -292,8 +292,37 @@ func (r *ClusterTargetReconciler) installPackageDirect(ctx context.Context, kube
 	return nil
 }
 
-func fetchURLBytes(url string) ([]byte, error) {
-	resp, err := http.Get(url) // #nosec G107 -- URL is admin-configured OperatorPackage source.
+const (
+	// defaultPackageFetchTimeout bounds one OperatorPackage source fetch so a slow
+	// or hung host cannot stall the (single-worker, leader-elected) reconciler.
+	defaultPackageFetchTimeout = 30 * time.Second
+	// defaultPackageFetchLimit caps how many bytes one package source may return,
+	// so a huge response cannot exhaust manager memory.
+	defaultPackageFetchLimit int64 = 32 << 20 // 32 MiB
+)
+
+// Overridable in tests; production uses the defaults above.
+var (
+	packageFetchTimeout = defaultPackageFetchTimeout
+	packageFetchLimit   = defaultPackageFetchLimit
+)
+
+// fetchURLBytes downloads an admin-configured OperatorPackage source (manifest or
+// chart archive). It is bounded in both time and size: the request is tied to ctx
+// so reconcile cancellation propagates, the client carries an explicit timeout so
+// a hung host fails the reconcile instead of blocking it, and the body is read
+// through io.LimitReader so an oversized response returns an error instead of
+// being buffered whole.
+func fetchURLBytes(ctx context.Context, url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, packageFetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetching %s: %w", url, err)
+	}
+	client := &http.Client{Timeout: packageFetchTimeout}
+	resp, err := client.Do(req) // #nosec G107 -- URL is admin-configured OperatorPackage source.
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
@@ -301,9 +330,15 @@ func fetchURLBytes(url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetching %s: HTTP %d", url, resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > packageFetchLimit {
+		return nil, fmt.Errorf("fetching %s: response of %d bytes exceeds %d byte limit", url, resp.ContentLength, packageFetchLimit)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, packageFetchLimit+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", url, err)
+	}
+	if int64(len(body)) > packageFetchLimit {
+		return nil, fmt.Errorf("fetching %s: response exceeds %d byte limit", url, packageFetchLimit)
 	}
 	return body, nil
 }
@@ -351,7 +386,7 @@ func applyManifestBytes(ctx context.Context, targetClient client.Client, body []
 
 func installPackageHelmChart(ctx context.Context, kubeconfigBytes []byte, targetClient client.Client, pkg *platformv1alpha1.OperatorPackage) error {
 	_ = kubeconfigBytes
-	archiveBytes, err := fetchURLBytes(pkg.Spec.Source.ChartArchiveURL)
+	archiveBytes, err := fetchURLBytes(ctx, pkg.Spec.Source.ChartArchiveURL)
 	if err != nil {
 		return err
 	}
