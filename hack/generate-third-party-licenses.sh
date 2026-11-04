@@ -57,9 +57,9 @@ const missing = []
 // web/package-lock.json. Revisit this set whenever the web dependency tree
 // moves, before refreshing dist/THIRD_PARTY_LICENSES.
 const approved = new Set([
-  '@esbuild/linux-x64@0.27.7',
-  '@rollup/rollup-linux-x64-gnu@4.60.4',
-  '@vue/devtools-api@6.6.4'
+  // Vite 8 bundles with rolldown; its platform-specific binding package ships
+  // no license file upstream. Revisit on every web dependency refresh.
+  '@rolldown/binding-linux-x64-gnu@1.2.15'
 ])
 const approvedMatches = []
 
@@ -125,6 +125,7 @@ if (approvedMatches.length) {
 if (unresolved.length) {
   fs.writeFileSync(path.join(out, 'web', 'MISSING_LICENSE_FILES.tsv'), unresolved.join('\n') + '\n')
   console.error(`Unapproved missing license files detected: ${unresolved.length}`)
+  for (const row of unresolved) console.error(`  ${row.split('\t').slice(0, 2).join('@')}`)
   process.exit(1)
 }
 NODE
