@@ -54,6 +54,25 @@ jobs:
         # workflow; this step fails fast on a hand-edited or half-committed bundle.
         run: python3 hack/check-license-bundle.py
 
+      - name: Verify third-party license bundle is current
+        # Registry-backed drift check for releases only: a tagged build must ship
+        # notices for the dependency graph it actually builds. Pull requests that
+        # change dependencies get the same regeneration check from the Release
+        # hygiene workflow, which is triggered on those paths.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          ./hack/generate-third-party-licenses.sh
+          git add -A -- dist/THIRD_PARTY_LICENSES
+          if git diff --cached --quiet -- dist/THIRD_PARTY_LICENSES; then
+            echo "Committed license bundle matches the generator output."
+            exit 0
+          fi
+          git --no-pager diff --cached --stat -- dist/THIRD_PARTY_LICENSES | tail -n 20
+          echo "::error::dist/THIRD_PARTY_LICENSES is stale for the tagged dependency graph."
+          echo "Run ./hack/generate-third-party-licenses.sh and commit the result before tagging."
+          exit 1
+
       - name: Validate e2e workflow coverage
         # Fails when a hack/e2e-*.sh suite is not invoked by a reusable workflow
         # or when the `v*` tag release jobs can publish without that suite.

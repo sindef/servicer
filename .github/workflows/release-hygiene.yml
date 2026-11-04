@@ -11,6 +11,10 @@ name: Release hygiene
 # so the committed bundle is known to be self-consistent before regeneration.
 #
 # Triggers:
+#   * pull_request: same regeneration and drift check on any pull request that
+#     touches the dependency manifests, the generator, the offline gate or the
+#     bundle itself, so a stale bundle fails the pull request that caused it
+#     instead of waiting for the weekly run.
 #   * schedule: weekly regeneration; the job fails when the committed bundle
 #     drifts from the generator output.
 #   * workflow_dispatch: same check on demand.
@@ -21,6 +25,17 @@ name: Release hygiene
 # result when the machine running the check has registry access.
 
 on:
+  pull_request:
+    branches: ["master", "release/**"]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - "dist/THIRD_PARTY_LICENSES/**"
+      - "hack/generate-third-party-licenses.sh"
+      - "hack/check-license-bundle.py"
+      - ".github/workflows/release-hygiene.yml"
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:

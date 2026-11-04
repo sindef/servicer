@@ -397,9 +397,16 @@ same check on every pull request):
 python3 hack/check-license-bundle.py
 ```
 
-The `Release hygiene` workflow runs the same generator weekly and fails when the
-committed bundle drifts from its output. Dispatch that workflow on `master` with
-`refresh=true` to commit a refreshed bundle from CI.
+That check also fails when a `go.mod` requirement or a direct `web/package.json`
+dependency (resolved through `web/package-lock.json`) has no bundle entry, so a
+dependency bump cannot leave the shipped notices describing an older version.
+
+The `Release hygiene` workflow runs the generator and fails when the committed
+bundle drifts from its output. It runs weekly, on demand, and on pull requests
+that touch the Go module files, the web manifests, the generator or the bundle
+itself. A `v*` tag re-runs the same regeneration drift check in the `Validate`
+job, so a stale bundle blocks the release gate. Dispatch that workflow on
+`master` with `refresh=true` to commit a refreshed bundle from CI.
 
 ## Additional docs
 
