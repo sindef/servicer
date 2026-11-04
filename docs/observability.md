@@ -18,6 +18,8 @@ Required scrape targets:
 - `servicer-system/manager-metrics:8080`
 - `servicer-system/bff:9090`
 
+A `ServiceMonitor` selects Services by their `metadata.labels`, never by pod labels, so each targeted Service must carry the selector's `app.kubernetes.io/name` label: `deploy/manager.yaml` sets it on `manager-metrics` and `deploy/bff.yaml` sets it on `bff`. `hack/check-servicemonitor-targets.py` runs from `hack/manifest-policy.sh` in the Validate job and fails the build when a rendered `ServiceMonitor` selects no Service or when an endpoint port name is missing from the selected Service, so a monitor can no longer ship without a scrape target.
+
 Alerts cover controller reconcile failures, ServiceInstance reconcile failures, delivery publish failures, repository mirror failures, audit persistence failures, auth failures, login rate-limit spikes, namespace proxy denials, backup failures, Argo sync drift, and degraded product health. Custom resource condition alerts require kube-state-metrics custom resource state metrics for Servicer CRDs.
 
 Every BFF response includes `X-Request-Id` and `X-Correlation-Id`. BFF error logs and persisted BFF audit records include the request ID when available, which is the primary correlation key from user-visible API failures to audit records and controller-created resources.

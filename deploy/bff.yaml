@@ -86,6 +86,12 @@ kind: Service
 metadata:
   name: bff
   namespace: servicer-system
+  # The servicer-bff ServiceMonitor in config/observability/service-monitors.yaml
+  # selects Services (not pods) by this label. Without it the monitor matches
+  # nothing and the BFF /metrics port is never scraped, so the servicer_bff_*
+  # alerts documented in docs/observability.md can never fire.
+  labels:
+    app.kubernetes.io/name: bff
 spec:
   selector:
     app.kubernetes.io/name: bff
