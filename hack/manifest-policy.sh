@@ -73,4 +73,11 @@ for bad_path in '__BACKUP_PATH__' 'relative/path' '/etc'; do
   fi
 done
 
+# A ServiceMonitor selects Services by their metadata.labels. A Service that
+# carries no selector label (the bff Service once did) leaves the monitor with
+# no target, so the component's metrics and alerts are dead while the manifests
+# still look valid.
+python3 "${script_dir}/check-servicemonitor-targets.py" --self-test
+python3 "${script_dir}/check-servicemonitor-targets.py" "$rendered"
+
 ./hack/rbac-policy.sh "$manifest"
