@@ -23,11 +23,18 @@ instead of waiting for the weekly regeneration job:
   * manifests are sorted, unique, and free of malformed rows
   * no `web/MISSING_LICENSE_FILES.tsv`, which would mean the bundle was
     committed with unapproved missing license files
+  * the bundle records the versions `go.mod` and `web/package-lock.json`
+    currently resolve: every direct Go requirement has a license directory for
+    the required version (or a recorded no-license-file entry), and every
+    `web/PACKAGE_LICENSES.tsv` row names a package with a version the lockfile
+    still resolves. This needs no registry access, so a dependency bump that
+    forgets to refresh the bundle fails on the pull request that introduces it
+    instead of waiting for the weekly `Release hygiene` regeneration.
 
-What it deliberately does not do: compare the committed bundle against the
-current `go.mod`, `go.sum` and `web/package-lock.json` versions. That is the
-generator output comparison in the `Release hygiene` workflow, and it needs
-registry access.
+What it does not do: prove the bundle is exactly what the generator would
+write. Adding or removing a package without a version change, and any drift
+inside a license file, is still only caught by the generator output comparison
+in the `Release hygiene` workflow, which needs registry access.
 
 Usage:
     python3 hack/check-license-bundle.py [bundle-directory]
@@ -35,6 +42,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -42,12 +50,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BUNDLE = ROOT / "dist" / "THIRD_PARTY_LICENSES"
 GENERATOR = ROOT / "hack" / "generate-third-party-licenses.sh"
+GO_MOD = ROOT / "go.mod"
+WEB_LOCK = ROOT / "web" / "package-lock.json"
 
 LICENSE_FILE_PATTERN = re.compile(r"^(licen[sc]e|copying|notice)", re.IGNORECASE)
 SANITIZE_PATTERN = re.compile(r"[/:@+]")
 GO_ENTRY_PATTERN = re.compile(r"^.+_v[0-9]")
 APPROVED_BLOCK_PATTERN = re.compile(r"const approved = new Set\(\[(.*?)\]\)", re.DOTALL)
 APPROVED_ENTRY_PATTERN = re.compile(r"['\"]([^'\"]+)['\"]")
+GO_REQUIRE_LINE_PATTERN = re.compile(r"^([^\s()]+)\s+(v[^\s]+)$")
 
 WEB_MANIFEST = "web/PACKAGE_LICENSES.tsv"
 WEB_APPROVED = "web/APPROVED_LICENSE_EXCEPTIONS.tsv"
@@ -137,6 +148,123 @@ def generator_approved_exceptions() -> set[str]:
     return set(APPROVED_ENTRY_PATTERN.findall(match.group(1)))
 
 
+def go_direct_requirements() -> dict[str, str]:
+    """Direct (non-indirect) `go.mod` requirements, excluding replaced modules."""
+    if not GO_MOD.is_file():
+        fail("go.mod: missing; cannot verify the bundle against the resolved dependency graph")
+        return {}
+    requirements: dict[str, str] = {}
+    replaced: set[str] = set()
+    block: str | None = None
+    for number, raw in enumerate(GO_MOD.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if line.startswith("//"):
+            continue
+        indirect = re.search(r"//\s*indirect\b", line) is not None
+        code = line.split("//", 1)[0].strip()
+        if code == "":
+            continue
+        if block is None:
+            if code in ("require (", "replace (", "exclude (", "retract ("):
+                block = code.split()[0]
+                continue
+            if code.startswith("replace "):
+                replaced.add(code.split()[1])
+                continue
+            if not code.startswith("require "):
+                continue
+            code = code[len("require "):].strip()
+        else:
+            if code == ")":
+                block = None
+                continue
+            if block == "replace":
+                replaced.add(code.split()[0])
+                continue
+            if block != "require":
+                continue
+        if indirect:
+            continue
+        match = GO_REQUIRE_LINE_PATTERN.match(code)
+        if match is None:
+            fail(f"go.mod:{number}: cannot parse requirement {line!r}")
+            continue
+        requirements[match.group(1)] = match.group(2)
+    return {module: version for module, version in requirements.items() if module not in replaced}
+
+
+def go_bundle_versions() -> tuple[set[str], set[str]]:
+    """License directory names and recorded no-license-file modules in the Go bundle."""
+    go_dir = BUNDLE / "go"
+    directories = {entry.name for entry in go_dir.iterdir() if entry.is_dir()}
+    no_license_file: set[str] = set()
+    missing = go_dir / "MISSING_LICENSE_FILES.tsv"
+    if missing.is_file():
+        for module, version, note in read_rows(missing, 3):
+            if note == "NO_LICENSE_FILE_FOUND":
+                no_license_file.add(f"{module}@{version}")
+    return directories, no_license_file
+
+
+def check_go_bundle_versions(directories: set[str], no_license_file: set[str]) -> None:
+    for module, version in sorted(go_direct_requirements().items()):
+        key = f"{module}@{version}"
+        if sanitize(key) in directories or key in no_license_file:
+            continue
+        fail(
+            f"dist/THIRD_PARTY_LICENSES/go/{sanitize(key)}: missing license directory for the "
+            f"go.mod requirement {module} {version}; the committed bundle records an older "
+            "dependency graph. Regenerate with ./hack/generate-third-party-licenses.sh"
+        )
+
+
+def web_lock_versions() -> dict[str, set[str]] | None:
+    """Package name to resolved version set from `web/package-lock.json`."""
+    if not WEB_LOCK.is_file():
+        fail("web/package-lock.json: missing; cannot verify the bundle against the resolved npm graph")
+        return None
+    try:
+        lock = json.loads(WEB_LOCK.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        fail(f"web/package-lock.json: cannot parse: {error}")
+        return None
+    resolved: dict[str, set[str]] = {}
+    for key, entry in (lock.get("packages") or {}).items():
+        if not isinstance(entry, dict) or entry.get("link") is True:
+            continue
+        version = entry.get("version")
+        if not isinstance(version, str):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str):
+            marker = key.rfind("node_modules/")
+            if marker < 0:
+                continue
+            name = key[marker + len("node_modules/"):]
+        resolved.setdefault(name, set()).add(version)
+    return resolved
+
+
+def check_web_bundle_versions(rows: list[list[str]]) -> None:
+    resolved = web_lock_versions()
+    if resolved is None:
+        return
+    for name, version, _license in rows:
+        versions = resolved.get(name)
+        if versions is None:
+            fail(
+                f"{WEB_MANIFEST}: {name}@{version} is no longer resolved by web/package-lock.json; "
+                "the committed bundle is stale. Regenerate with ./hack/generate-third-party-licenses.sh"
+            )
+            continue
+        if version not in versions:
+            fail(
+                f"{WEB_MANIFEST}: records {name}@{version} but web/package-lock.json resolves "
+                f"{name}@{', '.join(sorted(versions))}; the committed bundle is stale. "
+                "Regenerate with ./hack/generate-third-party-licenses.sh"
+            )
+
+
 def check_web_bundle() -> tuple[int, int]:
     manifest_path = BUNDLE / WEB_MANIFEST
     approved_path = BUNDLE / WEB_APPROVED
@@ -155,6 +283,7 @@ def check_web_bundle() -> tuple[int, int]:
 
     rows = read_rows(manifest_path, 3)
     approved_rows = read_rows(approved_path, 3)
+    check_web_bundle_versions(rows)
 
     row_keys: list[str] = []
     expected_dirs: dict[str, str] = {}
@@ -226,6 +355,7 @@ def check_go_bundle() -> int:
                 fail(f"{relative(missing)}: unexpected record {module}@{version} {note!r}")
             if sanitize(f"{module}@{version}") in {entry.name for entry in entries}:
                 fail(f"{relative(go_dir / sanitize(module + '@' + version))}: has a license file but is listed in {missing.name}")
+    check_go_bundle_versions(*go_bundle_versions())
     return checked
 
 
