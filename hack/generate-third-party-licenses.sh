@@ -15,7 +15,7 @@ copy_license_files() {
     \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) \
     -print0 | sort -z | while IFS= read -r -d '' file; do
       local rel
-      rel="${file#"${source_dir}/"}"
+      rel="${file#${source_dir}/}"
       mkdir -p "${target_dir}/$(dirname "${rel}")"
       cp "${file}" "${target_dir}/${rel}"
     done
@@ -29,16 +29,24 @@ cp "${ROOT}/THIRD_PARTY_NOTICES.md" "${OUT}/THIRD_PARTY_NOTICES.md"
 
 pushd "${ROOT}" >/dev/null
 GOFLAGS="-mod=readonly" go mod download all
-go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{"\t"}}{{.Dir}}{{end}}' all |
-  while IFS=$'\t' read -r module version dir; do
-    [[ -n "${module}" && -n "${dir}" && -d "${dir}" ]] || continue
-    target="${OUT}/go/$(sanitize "${module}@${version}")"
-    copy_license_files "${dir}" "${target}"
-    if ! find "${target}" -type f | grep -q .; then
-      rmdir "${target}" 2>/dev/null || true
-      printf '%s\t%s\t%s\n' "${module}" "${version}" "NO_LICENSE_FILE_FOUND" >>"${OUT}/go/MISSING_LICENSE_FILES.tsv"
-    fi
-  done
+
+# The resolved module graph is written next to the license directories as
+# go/MODULES.tsv. hack/check-license-bundle.py diffs that list against the
+# bundle directories and against go.mod, so a stale bundle is caught on pull
+# requests without registry access.
+MODULES="$(mktemp)"
+trap 'rm -f "${MODULES}"' EXIT
+go list -m -f '{{if not .Main}}{{.Path}}{{"\t"}}{{.Version}}{{"\t"}}{{.Dir}}{{end}}' all >"${MODULES}"
+cut -f1,2 "${MODULES}" | LC_ALL=C sort >"${OUT}/go/MODULES.tsv"
+while IFS=$'\t' read -r module version dir; do
+  [[ -n "${module}" && -n "${dir}" && -d "${dir}" ]] || continue
+  target="${OUT}/go/$(sanitize "${module}@${version}")"
+  copy_license_files "${dir}" "${target}"
+  if ! find "${target}" -type f | grep -q .; then
+    rmdir "${target}" 2>/dev/null || true
+    printf '%s\t%s\t%s\n' "${module}" "${version}" "NO_LICENSE_FILE_FOUND" >>"${OUT}/go/MISSING_LICENSE_FILES.tsv"
+  fi
+done <"${MODULES}"
 popd >/dev/null
 
 npm --prefix "${ROOT}/web" ci --ignore-scripts
@@ -57,9 +65,10 @@ const missing = []
 // web/package-lock.json. Revisit this set whenever the web dependency tree
 // moves, before refreshing dist/THIRD_PARTY_LICENSES.
 const approved = new Set([
-  '@esbuild/linux-x64@0.27.7',
-  '@rollup/rollup-linux-x64-gnu@4.60.4',
-  '@vue/devtools-api@6.6.4'
+  // Prebuilt napi binary package for the Rolldown bundler that Vite 8 uses; the
+  // published tarball ships no license file. The Rolldown toolchain it belongs
+  // to is MIT (dist/THIRD_PARTY_LICENSES/web/rolldown_*/LICENSE).
+  '@rolldown/binding-linux-x64-gnu@1.2.15'
 ])
 const approvedMatches = []
 
@@ -89,13 +98,19 @@ function copyRecursive(src, dest) {
   fs.copyFileSync(src, dest)
 }
 
+// One row and one license directory per resolved name@version, even when the
+// installed tree carries several copies of the same package version.
+const recorded = new Set()
 for (const dir of packages(nodeModules)) {
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
   if (manifest.private === true) continue
   const name = manifest.name || path.basename(dir)
   const version = manifest.version || 'unknown'
+  const key = `${name}@${version}`
+  if (recorded.has(key)) continue
+  recorded.add(key)
   const license = typeof manifest.license === 'string' ? manifest.license : JSON.stringify(manifest.license || '')
-  const target = path.join(out, 'web', sanitize(`${name}@${version}`))
+  const target = path.join(out, 'web', sanitize(key))
   summary.push([name, version, license || 'UNKNOWN'].join('\t'))
 
   let copied = 0
@@ -125,6 +140,12 @@ if (approvedMatches.length) {
 if (unresolved.length) {
   fs.writeFileSync(path.join(out, 'web', 'MISSING_LICENSE_FILES.tsv'), unresolved.join('\n') + '\n')
   console.error(`Unapproved missing license files detected: ${unresolved.length}`)
+  for (const row of unresolved) {
+    const [name, version] = row.split('\t')
+    console.error(`  ${name}@${version}`)
+  }
+  console.error('Review each package: extend the approved exception set above when it ships no license file,')
+  console.error('then re-run this generator.')
   process.exit(1)
 }
 NODE
