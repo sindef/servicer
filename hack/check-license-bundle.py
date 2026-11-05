@@ -98,6 +98,11 @@ def license_files(directory: Path) -> list[Path]:
     return sorted(path for path in directory.rglob("*") if path.is_file())
 
 
+def has_files(directory: Path) -> bool:
+    """A directory with no files anywhere cannot be committed by git."""
+    return any(path.is_file() for path in directory.rglob("*"))
+
+
 def check_license_directory(directory: Path) -> int:
     files = license_files(directory)
     if not files:
@@ -165,7 +170,7 @@ def check_web_bundle() -> tuple[int, int]:
         row_keys.append(key)
         expected_dirs[sanitize(key)] = key
 
-    actual_dirs = sorted(path for path in (BUNDLE / "web").iterdir() if path.is_dir())
+    actual_dirs = sorted(path for path in (BUNDLE / "web").iterdir() if path.is_dir() and has_files(path))
     actual_dir_names = {path.name for path in actual_dirs}
 
     for directory in actual_dirs:
@@ -213,6 +218,8 @@ def check_go_bundle() -> int:
     checked = 0
     for entry in entries:
         if entry.is_dir():
+            if not has_files(entry):
+                continue
             if not GO_ENTRY_PATTERN.match(entry.name):
                 fail(f"{relative(entry)}: directory name does not look like a sanitized module@version entry")
             check_license_directory(entry)
