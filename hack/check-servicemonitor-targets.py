@@ -17,7 +17,10 @@ ServiceMonitor:
   2. each endpoint port name resolves to a port name on one of those Services.
 
 It uses a small dependency-free YAML subset parser because the Validate job runs
-plain `python3` without PyYAML.
+plain `python3` without PyYAML. Only documents whose top-level `kind` is
+`Service` or `ServiceMonitor` are parsed; every other manifest (Deployments with
+folded scalars, RBAC rules with same-indent sequences, and so on) is skipped, so
+the gate never fails on YAML syntax it does not need to understand.
 
 Usage: check-servicemonitor-targets.py <rendered.yaml> [more.yaml ...]
 Exit code 0 means every monitor has a scrape target, 1 means at least one
@@ -35,6 +38,7 @@ class ParseError(RuntimeError):
 
 KEY_RE = r"[A-Za-z0-9_][A-Za-z0-9_./-]*"
 BLOCK_SCALAR_MARKERS = ("|", "|-", "|+", ">", ">-", ">+")
+CHECKED_KINDS = ("Service", "ServiceMonitor")
 
 
 def _strip_quotes(value: str) -> str:
@@ -78,6 +82,22 @@ def _is_mapping_entry(text: str) -> bool:
     return rest == "" or rest[0].isspace()
 
 
+def _is_child_block(tokens, index, line_indent):
+    """True when tokens[index] starts a block nested under a key.
+
+    A block sequence may sit at the same indentation as its parent key
+    (`rules:` followed by `- apiGroups:`), which is valid YAML and the style
+    `kubectl kustomize` and `kubectl get -o yaml` emit. A same-indent mapping
+    entry is a sibling key, not a child block.
+    """
+    if index >= len(tokens):
+        return False
+    indent, text, _ = tokens[index]
+    if indent > line_indent:
+        return True
+    return indent == line_indent and text.startswith("-")
+
+
 def _tokenize(lines, origin):
     tokens = []
     for number, raw in enumerate(lines, start=1):
@@ -119,7 +139,7 @@ def _parse_map(tokens, index, indent):
             result[key] = "\n".join(block)
         elif rest:
             result[key] = _parse_scalar(rest)
-        elif index < len(tokens) and tokens[index][0] > line_indent:
+        elif _is_child_block(tokens, index, line_indent):
             value, index = _parse_block(tokens, index, tokens[index][0])
             result[key] = value
         else:
@@ -142,7 +162,15 @@ def _parse_list(tokens, index, indent):
             else:
                 result.append(None)
             continue
-        if _is_mapping_entry(rest):
+        if rest in BLOCK_SCALAR_MARKERS:
+            # A block scalar can be a sequence item (`command:` then `- |`),
+            # which the rendered manifests use for shell snippets.
+            block = []
+            while index < len(tokens) and tokens[index][0] > line_indent:
+                block.append(tokens[index][1])
+                index += 1
+            result.append("\n".join(block))
+        elif _is_mapping_entry(rest):
             item_indent = line_indent + 2
             item_tokens = [(item_indent, rest, number)]
             while index < len(tokens) and tokens[index][0] >= item_indent:
@@ -159,6 +187,17 @@ def _parse_list(tokens, index, indent):
     return result, index
 
 
+def _document_kind(chunk):
+    """Return the document's top-level `kind`, or None when it has none."""
+    for raw in chunk:
+        if not raw or raw[0] in " \t#-":
+            continue
+        key, sep, rest = raw.partition(":")
+        if sep and key.strip() == "kind":
+            return _strip_quotes(rest.strip())
+    return None
+
+
 def parse_documents(text, origin="<input>"):
     documents = []
     chunk = []
@@ -172,11 +211,16 @@ def parse_documents(text, origin="<input>"):
 
     parsed = []
     for chunk in documents:
+        # Skip manifests this checker does not reason about. Parsing them would
+        # make the gate fail on unrelated YAML constructs (multi-line plain
+        # scalars, same-indent rule sequences) without protecting any target.
+        if _document_kind(chunk) not in CHECKED_KINDS:
+            continue
         tokens = _tokenize(chunk, origin)
         if not tokens:
             continue
         try:
-            document, consumed = _parse_map(tokens, 0, tokens[0][0])
+            document, consumed = _parse_block(tokens, 0, tokens[0][0])
         except ParseError as exc:
             raise ParseError(f"{origin}: {exc}") from exc
         if consumed != len(tokens):
@@ -300,7 +344,130 @@ def check(documents):
     return errors
 
 
+_SELF_TEST_IGNORED = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          env:
+            - name: GIT_SSH_COMMAND
+              value: ssh -i /key -o UserKnownHostsFile=/known_hosts
+                -o IdentitiesOnly=yes
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rules-with-same-indent-sequence
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff
+  labels:
+    app.kubernetes.io/name: bff
+spec:
+  ports:
+    - name: http-metrics
+      port: 8090
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bff
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bff
+  endpoints:
+    - port: http-metrics
+"""
+
+_SELF_TEST_ORPHAN = """\
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff
+spec:
+  ports:
+    - name: http-metrics
+      port: 8090
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bff
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bff
+  endpoints:
+    - port: http-metrics
+"""
+
+_SELF_TEST_BAD_PORT = """\
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff
+  labels:
+    app.kubernetes.io/name: bff
+spec:
+  ports:
+    - name: http-metrics
+      port: 8090
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bff
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bff
+  endpoints:
+    - port: metrics
+"""
+
+
+def self_test():
+    """Prove the checker ignores unrelated manifests but still catches gaps."""
+    cases = [
+        ("unrelated manifests are ignored", _SELF_TEST_IGNORED, False),
+        ("monitor without a target fails", _SELF_TEST_ORPHAN, True),
+        ("monitor with a missing endpoint port fails", _SELF_TEST_BAD_PORT, True),
+    ]
+    failures = []
+    for label, text, expect_error in cases:
+        try:
+            errors = check(parse_documents(text, origin=label))
+        except ParseError as exc:
+            failures.append(f"{label}: unexpected parse error: {exc}")
+            continue
+        if bool(errors) != expect_error:
+            detail = "; ".join(errors) if errors else "no error reported"
+            failures.append(f"{label}: expected error={expect_error} but got {detail}")
+    return failures
+
+
 def main(argv):
+    if len(argv) == 2 and argv[1] == "--self-test":
+        failures = self_test()
+        for message in failures:
+            print(f"error: self-test: {message}", file=sys.stderr)
+        if failures:
+            return 1
+        print("service monitor target checker self-test ok")
+        return 0
+
     if len(argv) < 2:
         print("usage: check-servicemonitor-targets.py <rendered.yaml> [...]", file=sys.stderr)
         return 2
