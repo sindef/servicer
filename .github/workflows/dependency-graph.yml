@@ -33,8 +33,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          # Keep in sync with the `go` directive in go.mod.
-          go-version: "1.27.3"
+          # Keep the toolchain pin identical to the Validate job in
+          # .github/workflows/build.yml (1.27.4; the `go` directive in go.mod
+          # stays 1.27.3 as the language floor).
+          go-version: "1.27.4"
           cache: true
           cache-dependency-path: go.sum
 
