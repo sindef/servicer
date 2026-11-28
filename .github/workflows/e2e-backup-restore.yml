@@ -31,7 +31,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.27.3"
+          # Keep in sync with the Build workflow's Validate job toolchain
+          # (GO-2026-6859 in net/http is fixed in 1.27.4).
+          go-version: "1.27.4"
           cache: true
           cache-dependency-path: go.sum
 
